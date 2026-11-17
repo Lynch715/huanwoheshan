@@ -125,6 +125,7 @@ var TACTIC = (function () {
         <div class="vsx">战</div>
         ${side(B.defArmy ? GAME.armyName(B.defArmy) : c.name + '守军', eg, B.defF, B.D.units, `兵 ${fmt(GAME.sumStr(B.D.units))}　士气 ${Math.round(B.D.morale)}${c ? '　城防 ' + Math.round(c.wall) : ''}`)}</div>
         <div class="note" style="text-align:center">战场：${terr.name}${GEO.river[tile] ? '·临河' : ''}${terr.def ? '（守方 +' + Math.round(terr.def * 100) + '%）' : ''}${c ? '　攻城战' : ''}${B.water ? '　水战' : ''}</div>
+        ${B.fortMult > 1 ? '<div class="note" style="text-align:center">守方 · 筑垒 +10%</div>' : ''}
         <div class="odds"><span>胜算</span><div class="obar"><i style="width:${Math.round(pExp * 100)}%"></i></div><b>${Math.round(pExp * 100)}%</b></div>
         <div class="note" style="text-align:center">预计我军折损约 ${Math.round(pv.lossA * 100)}%，敌军折损约 ${Math.round(Math.min(0.95, pv.lossD) * 100)}%${plan ? `（计成时；计策成功率 ${Math.round(plan.chance * 100)}%）` : ''}</div>
         <div class="sec">计策 <span class="r note">${P.note || (eg ? `我将智 ${g.zhi} 对敌将智 ${eg.zhi}` : '敌无主将，计策易成')}</span></div>
@@ -151,7 +152,7 @@ var TACTIC = (function () {
           if (window.UI && UI.toast) UI.toast(`${plan.name}${ok ? '得手！' : '未成……'}`, ok ? 'big' : 'war');
         }
         if (k === 'auto') { close(); done({ mods, plan: planText }); }
-        else { close(); field(a, tile, mods, planText, done); }
+        else { close(); field(a, tile, Object.assign({}, mods, { dMult: (mods.dMult || 1) * B.fortMult }), planText, done); }
       };
     };
     render();
@@ -239,7 +240,7 @@ var TACTIC = (function () {
         if (x.t === 'bow') m *= 1 + GAME.itemSum(g, 'bow');
       } else m *= 0.9;
       { const tu = GAME.techFx(f).unit; m *= (1 + (tu[x.t] || 0)) * (1 + (tu.all || 0)); }
-      if (f !== S().player && f !== 'rebel') m *= [0.85, 1, 1.1, 1.2][S().difficulty] || 1;
+      if (f !== S().player && f !== 'rebel') m *= GAME.difficultyRules().aiBattle;
       m *= 0.6 + 0.4 * st.morale[x.side] / 100;
       if (x.side === 1) m *= st.dMult; else m *= st.aMult;
       return m;
@@ -564,6 +565,7 @@ var TACTIC = (function () {
         <div class="vsx">守</div>
         ${side(GAME.armyName(a), eg, a.f, a.units, `兵 ${fmt(GAME.sumStr(a.units))}　士气 ${Math.round(a.morale)}`)}</div>
         <div class="note" style="text-align:center">战场：${terr.name}${GEO.river[tile] ? '·临河' : ''}${terr.def ? '（守方 +' + Math.round(terr.def * 100) + '%）' : ''}${c ? '　守城战' : ''}${B.water ? '　水战' : ''}</div>
+        ${B.fortMult > 1 ? '<div class="note" style="text-align:center">我军 · 筑垒 +10%</div>' : ''}
         <div class="odds"><span>守住</span><div class="obar"><i style="width:${Math.round(pExp * 100)}%"></i></div><b>${Math.round(pExp * 100)}%</b></div>
         <div class="note" style="text-align:center">预计我军折损约 ${Math.round(Math.min(0.95, pv.lossD) * 100)}%，敌军折损约 ${Math.round(pv.lossA * 100)}%${plan ? `（计成时；计策成功率 ${Math.round(plan.chance * 100)}%）` : ''}</div>
         <div class="sec">守策 <span class="r note">${!g ? '守军无主将，计策难成' : eg ? `我将智 ${g.zhi} 对敌将智 ${eg.zhi}` : '敌无主将，计策易成'}</span></div>
@@ -590,7 +592,7 @@ var TACTIC = (function () {
         }
         close();
         if (k === 'auto') done({ mods, plan: planText });
-        else field(a, tile, mods, planText, done, 1);
+        else field(a, tile, Object.assign({}, mods, { dMult: (mods.dMult || 1) * B.fortMult }), planText, done, 1);
       };
     };
     render();

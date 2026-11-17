@@ -86,6 +86,10 @@ var EVENTS = (function () {
       title: '偏安江南',
       text: '岁至一二七九，江南犹奉宋朔，北望汴都，旧宫仍在封域之外。舟楫能通，仓廪尚存，州县按籍而治，宗祀未绝；然南渡父老多已谢世，子孙但从家牒知故乡之名。史臣掩卷良久，记曰：存社稷者有功，负收复之志者有憾。江山事业付于后人，今日所守，仍可为异日立足之地。',
     },
+    endingUnify: {
+      title: '海内一统',
+      text: '诸州尽奉宋朔，舆图归于一统。史臣展卷，次第录疆土、文治与武功，俾后人观一代得失。',
+    },
     endingDefeat: {
       title: '社稷倾覆',
       text: '末府失守，符节不复得通，奔走之臣各收诰敕、图籍以避乱。仓卒之际，百姓携老幼离城，朝廷已无一州可诏。史臣于灯下检诸军旧牍，见经略并非一日尽失，往往先耗于调度，继失于人心。遂书此章，以存守土之士与流离之民，俟异日读者知一国之亡所由。',
@@ -418,7 +422,8 @@ var EVENTS = (function () {
     endingProsperity: endingEvent('endingProsperity'),
     endingMaritime: endingEvent('endingMaritime'),
     endingRetreat: endingEvent('endingRetreat'),
-    endingDefeat: endingEvent('endingDefeat', '回看残局'),
+    endingUnify: { ...ENDINGS.endingUnify, choices: [{ t: '展卷论功', fn: () => {} }] },
+    endingDefeat: { ...ENDINGS.endingDefeat, choices: [{ t: '展卷论功', fn: () => {} }] },
     info: {
       title: p => p.title, text: p => p.text, choices: [{ t: '知道了', d: '', fn: () => {} }],
     },
@@ -1414,7 +1419,8 @@ var EVENTS = (function () {
   function recordTerminalEndings() {
     const S = G();
     if (S?.victory) reachEnding('victory', true);
-    if (S?.defeat) reachEnding('endingDefeat', true);
+    if (S?.settlement?.type === 'unify') reachEnding('endingUnify', true);
+    if (S?.defeat && !S.settlement?.continued) reachEnding('endingDefeat', true);
   }
   function checkEndings() {
     const S = G(), p = P();
@@ -1435,8 +1441,9 @@ var EVENTS = (function () {
   GAME.on('log', ({ text, type }) => {
     const S = G();
     // 原引擎在 EVENTS.turn 后可宣布统一，玩家亲自守城也可能在回合结算后覆亡。
-    if (type === 'big' && S.victory && text === '四海归一，万国来朝！') reachEnding('victory', true);
-    else if (type === 'big' && S.defeat && text === '社稷倾覆……') reachEnding('endingDefeat', true);
+    if (type === 'big' && S.victory && text === '史官记曰：万国来朝。') reachEnding('victory', true);
+    else if (type === 'big' && S.settlement?.type === 'unify' && text === '史官记曰：海内一统。') reachEnding('endingUnify', true);
+    else if (type === 'big' && S.defeat && !S.settlement?.continued && text === '社稷倾覆……') reachEnding('endingDefeat', true);
     else if (type === 'war' && /失守于【[^】]+】！$/.test(text) && S.flags.milestones?.prosperity) {
       S.flags.milestones.prosperity.loss = true;
     }
@@ -1447,34 +1454,92 @@ var EVENTS = (function () {
   // ---------- 本纪 ----------
   const ANNALS_LIMIT = 300;
   const ACHIEVEMENTS = [
-    ['firstWin', '首胜', '取得一场胜利', f => f.wins >= 1],
-    ['tenWins', '十战奏捷', '取得十场胜利', f => f.wins >= 10],
-    ['underdog', '以少胜多', '兵力未及敌半而胜十次', f => f.underdogs >= 10],
-    ['stratagems', '运筹帷幄', '施计成功五十次', f => f.plans >= 50],
-    ['firstCity', '初拓一城', '首次攻取一城', f => f.captures >= 1],
-    ['tenCities', '十克州城', '攻取城池十次', f => f.captures >= 10],
-    ['fortress', '铁壁', '据城击退来犯十次', f => f.holds >= 10],
-    ['manual', '临阵制胜', '亲自指挥获胜', f => f.manualWins >= 1],
-    ['bian', '收复汴京', '占领汴京', f => f.bian],
-    ['customs', '海港开埠', '一座港口设有市舶司', f => f.customs],
-    ['threeReigns', '三朝元老', '同一大臣在三位皇帝治下担任朝官', f => f.threeReigns],
-    ['distant', '千里奔袭', '距当朝都城至少二十格进攻获胜', f => f.distant],
-    ['veteran', '宿将', '本朝一位将领升至十级', f => f.veteran],
-    ['wealth', '府库充盈', '府库积钱一万贯', f => f.gold >= 10000],
-    ['population', '户口殷阜', '治下户口达到五百万', f => f.population >= 500],
-    ['scholarship', '格物大成', '拥有二十项科技', f => f.techs >= 20],
-    ['restoration', '两京归宋', '达成还我河山', f => f.endings.endingRestoration],
-    ['north', '北境勒功', '达成直捣黄龙', f => f.endings.endingHuanglong],
-    ['flourishing', '五稔丰宁', '达成中兴之治', f => f.endings.endingProsperity],
-    ['sea', '舶通四海', '达成海上称雄', f => f.endings.endingMaritime],
+    ['firstWin', '首胜', '取得一场胜利', f => f.wins >= 1, 10, '武功'],
+    ['tenWins', '十战奏捷', '取得十场胜利', f => f.wins >= 10, 25, '武功'],
+    ['underdog', '以少胜多', '兵力未及敌半而胜十次', f => f.underdogs >= 10, 50, '武功'],
+    ['stratagems', '运筹帷幄', '施计成功五十次', f => f.plans >= 50, 50, '武功'],
+    ['firstCity', '初拓一城', '首次攻取一城', f => f.captures >= 1, 10, '疆土'],
+    ['tenCities', '十克州城', '攻取城池十次', f => f.captures >= 10, 25, '疆土'],
+    ['fortress', '铁壁', '据城击退来犯十次', f => f.holds >= 10, 25, '武功'],
+    ['manual', '临阵制胜', '亲自指挥获胜', f => f.manualWins >= 1, 10, '武功'],
+    ['bian', '收复汴京', '占领汴京', f => f.bian, 25, '疆土'],
+    ['customs', '海港开埠', '一座港口设有市舶司', f => f.customs, 10, '文治'],
+    ['threeReigns', '三朝元老', '同一大臣在三位皇帝治下担任朝官', f => f.threeReigns, 50, '人物'],
+    ['distant', '千里奔袭', '距当朝都城至少二十格进攻获胜', f => f.distant, 25, '武功'],
+    ['veteran', '宿将', '本朝一位将领升至十级', f => f.veteran, 25, '人物'],
+    ['wealth', '府库充盈', '府库积钱一万贯', f => f.gold >= 10000, 25, '文治'],
+    ['population', '户口殷阜', '治下户口达到五百万', f => f.population >= 500, 25, '文治'],
+    ['scholarship', '格物大成', '拥有二十项科技', f => f.techs >= 20, 25, '文治'],
+    ['restoration', '两京归宋', '达成还我河山', f => f.endings.endingRestoration, 50, '疆土'],
+    ['north', '北境勒功', '达成直捣黄龙', f => f.endings.endingHuanglong, 50, '疆土'],
+    ['flourishing', '五稔丰宁', '达成中兴之治', f => f.endings.endingProsperity, 50, '文治'],
+    ['sea', '舶通四海', '达成海上称雄', f => f.endings.endingMaritime, 50, '外交'],
+    ['hundredWins', '百战百胜', '取得一百场胜利', f => f.wins >= 100, 50, '武功'],
+    ['eliminateArmy', '歼敌一军', '一战使敌军团覆没', f => f.annihilate, 25, '武功'],
+    ['outnumbered', '一敌三军', '兵力不及敌军三分之一而胜', f => f.threefold, 50, '武功'],
+    ['captureStreak', '岁内五捷', '一年之内攻取五城', f => f.captureStreak, 25, '武功'],
+    ['waterWin', '楼船奏捷', '在水上战场获胜', f => f.waterWin, 25, '武功'],
+    ['fullWall', '拔坚城', '攻克战前城防全满的城池', f => f.fullWall, 25, '武功'],
+    ['generalThirty', '名将三十捷', '一位将领独胜三十场', f => f.heroWins >= 30, 50, '武功'],
+    ['landSixty', '六十州图', '坐拥六十座城池', f => f.cities >= 60, 25, '疆土'],
+    ['landHundred', '百州归心', '坐拥一百座城池', f => f.cities >= 100, 50, '疆土'],
+    ['landTwoHundred', '二百州归宋', '坐拥二百座城池', f => f.cities >= 200, 50, '疆土'],
+    ['yanjing', '克复燕京', '占领燕京', f => f.owns.has('燕京'), 25, '疆土'],
+    ['baghdad', '兵临巴格达', '占领巴格达', f => f.owns.has('巴格达'), 50, '疆土'],
+    ['constantinople', '兵临拂菻', '占领君士坦丁堡', f => f.owns.has('君士坦丁堡'), 50, '疆土'],
+    ['danube', '饮马多瑙河', '占领多瑙河畔的埃斯泰尔戈姆', f => f.owns.has('埃斯泰尔戈姆'), 50, '疆土'],
+    ['india', '王师至天竺', '占领一座天竺诸邦原有的城池', f => f.india, 25, '疆土'],
+    ['allCapitals', '万国来朝', '占领诸国原都城', f => f.capitals, 100, '疆土'],
+    ['techThirty', '百工竞巧', '拥有三十项科技', f => f.techs >= 30, 25, '文治'],
+    ['techAll', '诸术毕备', '拥有全部科技', f => f.allTechs, 50, '文治'],
+    ['tenMillion', '户盈千万', '治下户口达到一千万', f => f.population >= 1000, 50, '文治'],
+    ['wealthThirty', '藏金三万', '府库积钱三万贯', f => f.gold >= 30000, 50, '文治'],
+    ['tenPeacefulYears', '十载无乱', '连续十年治下未生民变', f => f.peaceful >= 40, 50, '文治'],
+    ['tenVeterans', '十将并起', '麾下同时有十位十级将领', f => f.maxed >= 10, 50, '人物'],
+    ['tenRecruits', '降将归心', '招降十位敌将', f => f.recruits >= 10, 25, '人物'],
+    ['fullCourt', '六官咸备', '朝堂六官同时任满', f => f.fullCourt, 10, '人物'],
+    ['yueNatural', '武穆考终', '岳飞活过五十二岁，病逝于任上或退居时', f => f.yueNatural, 25, '人物'],
+    ['fiveAllies', '五国连盟', '同时与五国结盟', f => f.allies >= 5, 25, '外交'],
+    ['threeTributes', '三邦输币', '同时收入三国岁币', f => f.tributes >= 3, 25, '外交'],
+    ['fiveConquests', '五国归版图', '由我方攻灭五国', f => f.conquests >= 5, 25, '外交'],
+    ['tenConquests', '十国归版图', '由我方攻灭十国', f => f.conquests >= 10, 50, '外交'],
+    ['twentyConquests', '列国归版图', '由我方攻灭二十国', f => f.conquests >= 20, 50, '外交'],
+    ['thirtySites', '名迹三十访', '亲访三十处不同奇遇', f => f.visits >= 30, 25, '奇遇'],
+    ['fiveTreasures', '五宝在廷', '麾下将领集齐五种不同宝物', f => f.treasures >= 5, 25, '奇遇'],
+    ['hardUnify', '逆势一统', '以严苛或地狱难度一统天下', f => f.unify && f.difficulty >= 2, 100, '挑战'],
+    ['quickUnify', '百载定鼎', '百年之内一统天下', f => f.unify && f.elapsed <= 100, 100, '挑战'],
+    ['noTribute', '不输一贯', '一统天下，未曾向外邦纳岁币', f => f.unify && !f.paidTribute, 100, '挑战'],
+    ['safeCapital', '社稷无虞', '一统天下，而京师未尝陷落', f => f.unify && !f.capLost, 100, '挑战'],
   ];
   let recordingHistory = false;
+  const BATTLE_TOTALS = {
+    wins: 0, losses: 0, underdogs: 0, plans: 0, holds: 0, manualWins: 0, captures: 0,
+    distant: false, annihilate: false, threefold: false, waterWin: false, fullWall: false, heroWins: 0,
+  };
+  const INDIA_FACTIONS = new Set(DATA.FACTIONS.filter(f => f.culture === 'indian').map(f => f.id));
+  const INDIA_CITIES = new Set(DATA.CITIES.filter(c => INDIA_FACTIONS.has(c.f)).map(c => c.name));
+  function initAchievements(S) {
+    S.flags ||= {};
+    S.flags.capLost ??= false;
+    const defaults = { recruits: 0, conquests: 0, paidTribute: false, visits: {}, captureTimes: [], lastRevolt: S.T, yueNatural: false };
+    const book = S.flags.annals;
+    const progress = S.flags.achievementProgress = Object.assign(defaults, S.flags.achievementProgress);
+    if (!progress.capturedCapitals) {
+      const recorded = new Set((book?.events || []).map(([, , text]) => /^王师克复(.+)。$/.exec(text)?.[1]));
+      const foreign = new Set(DATA.CITIES.filter(c => c.cap && c.f !== S.player).map(c => c.name));
+      progress.capturedCapitals = {};
+      for (const c of S.cities) {
+        if (c.origCap && (recorded.has(c.name) || c.f === S.player && foreign.has(c.name))) progress.capturedCapitals[c.id] = true;
+      }
+    }
+    if (book) book.totals = Object.assign({}, BATTLE_TOTALS, book.totals);
+  }
 
   function annalsState() {
     const S = G();
     return S.flags.annals || (S.flags.annals = {
       start: [S.year, S.season], events: [], eventCount: 0, reigns: [], service: {}, honors: {}, ministers: {},
-      totals: { wins: 0, losses: 0, underdogs: 0, plans: 0, holds: 0, manualWins: 0, captures: 0 },
+      totals: { ...BATTLE_TOTALS },
     });
   }
   function writeAnnalsFact(book, text, battle) {
@@ -1567,42 +1632,75 @@ var EVENTS = (function () {
     if (plan) stats.plans++;
     if (underdog) stats.underdogs++;
     if (won && rep.manual) stats.manualWins++;
+    if (won) {
+      if (rep.enemyArmyEliminated) stats.annihilate = true;
+      const ours = attacking ? rep.before.a : rep.before.d, theirs = attacking ? rep.before.d : rep.before.a;
+      if (ours > 0 && ours * 3 <= theirs) stats.threefold = true;
+      if (Number.isInteger(rep.tile) && GEO.isWater(rep.tile)) stats.waterWin = true;
+    }
+    if (attacking && rep.fullWall && rep.city && rep.captured === rep.city) stats.fullWall = true;
     if (!attacking && won && rep.city && byName(rep.city)?.f === P()) stats.holds++;
     const cap = capital(P());
     if (attacking && won && cap && Number.isInteger(rep.tile) && GEO.dist(cap.tile, rep.tile) >= 20) stats.distant = true;
     if (g && g.f === P()) {
       const service = generalService(book, g);
       if (won) service.wins++; else service.losses++;
+      stats.heroWins = Math.max(stats.heroWins, g.wins || 0, service.wins);
       service.attributes = [g.tong, g.wu, g.zhi, g.zheng];
     }
     awardAchievements(book);
     return book;
   }
-  function awardAchievements(book) {
+  function awardAchievements(book, result) {
     if (Object.keys(book.honors).length === ACHIEVEMENTS.length) return;
     const S = G(), p = P(), F = fac(p), cities = GAME.citiesOf(p);
-    const facts = { ...book.totals, endings: S.flags.milestones?.reached || {}, threeReigns: book.threeReigns != null,
-      bian: byName('汴京')?.f === p, customs: cities.some(c => c.port && c.buildings.shibosi),
-      veteran: S.generals.some(g => g.f === p && g.lv >= 10), gold: F.gold, techs: Object.keys(F.techs).length,
-      population: cities.reduce((sum, c) => sum + c.pop, 0) };
-    for (const [id, name, , test] of ACHIEVEMENTS) {
-      if (!book.honors[id] && test(facts)) {
+    const progress = S.flags.achievementProgress;
+    const owns = new Set(cities.map(c => c.name));
+    const ranks = S.generals.filter(g => g.f === p && active(g));
+    const maxed = ranks.filter(g => g.lv >= 10).length;
+    let allies = 0, tributes = 0;
+    for (const f in S.factions) if (f !== p && f !== 'rebel' && alive(f)) {
+      const rel = GAME.getRel(p, f);
+      if (rel.ally) allies++;
+      if (rel.trib?.to === p && rel.trib.amt > 0) tributes++;
+    }
+    const techs = Object.keys(F.techs).length;
+    const times = progress.captureTimes;
+    const facts = { ...book.totals, ...progress, endings: S.flags.milestones?.reached || {}, threeReigns: book.threeReigns != null,
+      bian: owns.has('汴京'), customs: cities.some(c => c.port && c.buildings.shibosi),
+      veteran: maxed > 0, maxed, gold: F.gold, techs, allTechs: techs === Object.keys(DATA.TECHS).length,
+      population: cities.reduce((sum, c) => sum + c.pop, 0), cities: cities.length, owns,
+      india: cities.some(c => INDIA_CITIES.has(c.name)), capitals: S.victory || S.cities.every(c => !c.origCap || c.f === p),
+      peaceful: S.T - progress.lastRevolt, fullCourt: typeof COURT !== 'undefined' && COURT.OFFICES.every(o => COURT.holder(o.id)),
+      captureStreak: times.length === 5 && times[4] - times[0] <= 4, visits: Object.keys(progress.visits).length,
+      treasures: new Set(ranks.flatMap(g => g.items || [])).size, allies, tributes,
+      unify: result === 'unify', capLost: S.flags.capLost, difficulty: S.difficulty, elapsed: S.T / 4 };
+    for (const [id, name, , test, pts, cat] of ACHIEVEMENTS) {
+      if ((cat !== '挑战' || result) && !book.honors[id] && test(facts)) {
         book.honors[id] = GAME.dateStr();
-        GAME.log('功业 · ' + name, 'big');
+        GAME.log(`功业 · ${name} +${pts}`, 'big');
       }
     }
   }
-  GAME.on('log', ({ text, type }) => {
+  GAME.on('log', ({ text, type, tile }) => {
+    const S = G(), progress = S.flags.achievementProgress;
+    if (type === 'war' && /民变蜂起，乱民聚众/.test(text)) progress.lastRevolt = S.T;
+    if (type === 'info' && /^岳飞病逝，享年/.test(text)) progress.yueNatural = true;
     const captured = type === 'war' && /^王师克复([^，]+)，/.exec(text);
     const fallen = type === 'war' && /^([^，。！]+)阵亡。$/.exec(text);
     const milestone = type === 'big' && /^(史官记曰：|四海归一，万国来朝|社稷倾覆)/.test(text);
+    const conquest = type === 'big' && /^【[^】]+】亡国。$/.test(text);
     const opening = type === 'big' && /^绍兴十年七月，岳飞大破/.test(text);
     const lost = type === 'war' && /失守于【[^】]+】！$/.test(text);
-    if (!captured && !fallen && !milestone && !opening && !lost && !(recordingHistory && type === 'world')) return;
+    if (!captured && !fallen && !milestone && !conquest && !opening && !lost && !(recordingHistory && type === 'world')) return;
     const book = annalsState();
     recordReign(book);
     if (captured) {
       book.totals.captures++;
+      const city = GAME.cityAt(tile);
+      if (city?.origCap) progress.capturedCapitals[city.id] = true;
+      progress.captureTimes.push(S.T);
+      if (progress.captureTimes.length > 5) progress.captureTimes.shift();
       writeAnnalsFact(book, '王师克复' + captured[1] + '。');
     } else writeAnnalsFact(book, text);
     if (fallen) {
@@ -1626,7 +1724,7 @@ var EVENTS = (function () {
   }[char]));
   const annalDate = date => annalEsc(GAME.dateStr(date[0], date[1]));
   function annalPriority(text) {
-    if (/史官记曰|万国来朝|社稷倾覆|即位/.test(text)) return 3;
+    if (/史官记曰|万国来朝|社稷倾覆|即位|亡国。|岳飞大破/.test(text)) return 3;
     if (/克复|失守|阵亡|以少胜多|岳飞大破/.test(text)) return 2;
     return 1;
   }
@@ -1661,20 +1759,113 @@ var EVENTS = (function () {
     const rounded = value => Math.round(Math.round(value * 100) / 100);
     return `史臣据州县簿书而论，今辖 ${cities.length} 州，计户口 ${people} 万。${extent}库钱 ${rounded(F.gold)} 贯，仓粮 ${rounded(F.food)} 石。${funds}入卷以来，行阵得胜 ${wars.wins} 次，失利 ${wars.losses} 次，攻城 ${wars.captures} 次。军报之功，当与民力消长并观，方可知一代兴替。`;
   }
-  function generalBiographies(book) {
+  const SCORE_RULES = {
+    city: 10, population: 0.5, capital: 50, tech: 8, treasuryCap: 20000, treasuryDivisor: 100,
+    win: 2, loss: 1, conquest: 40, speedYears: 200, speedPoints: 5, unify: 1000, defeat: 0.5,
+    difficulties: [0.6, 1, 1.4, 2],
+    ratings: [[12000, '千古一帝'], [7000, '中兴英主'], [3500, '守成之君'], [900, '偏安之主'], [0, '亡国之君']],
+  };
+  const RESULT_TITLE = { unify: '海内一统', defeat: '社稷倾覆', retire: '禅位封卷' };
+  const scoreRating = score => (SCORE_RULES.ratings.find(([min]) => score >= min) || SCORE_RULES.ratings.at(-1))[1];
+  const speedBasis = elapsed => `(${SCORE_RULES.speedYears} − ${elapsed}) 年 × ${SCORE_RULES.speedPoints}` +
+    (elapsed > SCORE_RULES.speedYears ? '（最低 0）' : '');
+  function scoreBreakdown(result, factor, rows) {
+    const R = SCORE_RULES;
+    const rounded = rows.map(([label, value, basis]) => [label, Math.round(value), basis]);
+    const subtotal = rounded.reduce((sum, [, value]) => sum + value, 0);
+    const outcome = result === 'unify' ? R.unify : result === 'defeat' ? Math.round(subtotal * (R.defeat - 1)) : 0;
+    const beforeDifficulty = subtotal + outcome;
+    const total = Math.round(beforeDifficulty * factor);
+    rounded.push(
+      ['结局', outcome, result === 'defeat' ? `${subtotal} × (${R.defeat} − 1)` : RESULT_TITLE[result]],
+      ['难度调整', total - beforeDifficulty, `${beforeDifficulty} × (${factor.toFixed(1)} − 1)`],
+    );
+    return { rows: rounded, total, rating: scoreRating(total) };
+  }
+  function settlementScore(ending) {
+    const score = ending.score;
+    if (!score) return finalScore(ending.type);
+    if (score.rows.at(-1)?.[0] === '难度调整') return score;
+    // 旧档已有结算快照时，按保存的分项重算，保留当时的功业与评语。
+    const rows = score.rows.filter(([label]) => label !== '结局').map(row => {
+      if (ending.type !== 'unify' || row[0] !== '用时加成') return row;
+      const elapsed = row[1] > 0 ? SCORE_RULES.speedYears - row[1] / SCORE_RULES.speedPoints : score.years;
+      return [row[0], row[1], speedBasis(Math.round(elapsed * 100) / 100)];
+    });
+    return { ...score, ...scoreBreakdown(ending.type, score.factor, rows) };
+  }
+  function achievements() {
+    const honors = annalsState().honors;
+    const entries = ACHIEVEMENTS.map(([id, name, desc, , pts, cat]) => ({ id, name, desc, pts, cat, date: honors[id] || '' }));
+    const total = entries.reduce((sum, row) => sum + (row.date ? row.pts : 0), 0);
+    return { entries, total, rating: finalScore(null, false, total).rating };
+  }
+  function finalScore(result = G().settlement?.type, settle = true, progressPoints = null) {
+    const S = G(), player = P(), F = fac(player), book = annalsState(), R = SCORE_RULES;
+    if (settle && result) awardAchievements(book, result);
+    const earned = ACHIEVEMENTS.filter(([id]) => book.honors[id]);
+    const points = progressPoints ?? earned.reduce((sum, [, , , , pts]) => sum + pts, 0);
+    const cities = GAME.citiesOf(player), elapsed = S.T / 4;
+    const population = cities.reduce((sum, c) => sum + c.pop, 0);
+    const capitals = cities.filter(c => c.origCap).length;
+    const techs = Object.keys(F.techs).length, treasury = Math.min(F.gold, R.treasuryCap);
+    const { wins, losses } = book.totals, { conquests } = S.flags.achievementProgress;
+    const speed = result === 'unify' ? Math.max(0, R.speedYears - elapsed) : 0;
+    const round = n => Math.round(n * 100) / 100;
+    const rows = [
+      ['疆域', cities.length * R.city, `${cities.length} 城 × ${R.city}`],
+      ['户口', population * R.population, `${population} 万 × ${R.population}`],
+      ['都城', capitals * R.capital, `${capitals} 座 × ${R.capital}`],
+      ['文治', techs * R.tech, `${techs} 项 × ${R.tech}`],
+      ['府库', treasury / R.treasuryDivisor, `${round(treasury)} 贯 ÷ ${R.treasuryDivisor}`],
+      ['武功', Math.max(0, wins * R.win - losses * R.loss), `${wins} 胜 × ${R.win} − ${losses} 负 × ${R.loss}，最低 0`],
+      ['功业', points, `${earned.length} 项合计`],
+      ['灭国', conquests * R.conquest, `${conquests} 国 × ${R.conquest}`],
+      ['用时加成', speed * R.speedPoints, result === 'unify' ? speedBasis(round(elapsed)) : '一统时计入'],
+    ];
+    const factor = R.difficulties[S.difficulty] ?? 1;
+    return { type: result, title: RESULT_TITLE[result], ...scoreBreakdown(result, factor, rows),
+      factor, assessment: settle ? annalsAssessment(book) : '', turns: S.turn, years: Math.round(elapsed * 10) / 10,
+      start: book.start?.[0] || 1140, end: S.year, difficulty: S.difficulty, scale: S.scale,
+      honors: earned.map(([, name, , , pts]) => ({ name, pts })) };
+  }
+  function biographyStats(g, service) {
+    return g.status === 'dead' && !g.hist ? service?.attributes || [0, 0, 0, 0] : [g.tong, g.wu, g.zhi, g.zheng];
+  }
+  function generalBio(g) {
+    const stats = biographyStats(g, G()?.flags?.annals?.service?.[g.id]);
+    return ['善整军伍', '勇于锋镝', '长于谋划', '晓于民政'][stats.indexOf(Math.max(...stats))] || '功业尚待史笔';
+  }
+  function leadingGenerals(book, count) {
     const S = G();
-    const ranks = S.generals.filter(g => g.f === P() && !['future', 'cand', 'gone'].includes(g.status))
+    return S.generals.filter(g => g.f === P() && !['future', 'cand', 'gone'].includes(g.status))
       .map(g => {
         const service = book.service[g.id];
         return { g, service, wins: Math.max(g.hist ? g.wins || 0 : 0, service?.wins || 0) };
-      }).sort((a, b) => b.wins - a.wins || a.g.id - b.g.id).slice(0, 5);
-    return ranks.map(({ g, service, wins }) => {
-      const attributes = g.status === 'dead' && !g.hist ? service?.attributes || [0, 0, 0, 0] : [g.tong, g.wu, g.zhi, g.zheng];
-      const [tong, wu, zhi, zheng] = attributes;
-      const descriptions = [[tong, '善整军伍'], [wu, '勇于锋镝'], [zhi, '长于谋划'], [zheng, '晓于民政']];
-      descriptions.sort((a, b) => b[0] - a[0]);
+      }).sort((a, b) => b.wins - a.wins || a.g.id - b.g.id).slice(0, count);
+  }
+  function settlementChronicle() {
+    const book = annalsState();
+    const events = groupAnnalsBattles(book.events).map((event, index) => ({ event, index }));
+    events.sort((a, b) => annalPriority(b.event[2]) - annalPriority(a.event[2]) || b.index - a.index);
+    return {
+      events: events.slice(0, 12).sort((a, b) => a.event[0] - b.event[0] || a.event[1] - b.event[1] || a.index - b.index)
+        .map(({ event: [year, season, text] }) => {
+          const date = GAME.dateStr(year, season);
+          const reignYear = date.slice(0, -1);
+          if (!text.startsWith(reignYear)) return [date, text];
+          const body = text.slice(reignYear.length);
+          const suffix = /^(?:[春夏秋冬]季?|[正冬腊一二三四五六七八九十]{1,2}月(?:[初廿一二三四五六七八九十]{1,3}日?)?)?[，、,：:]\s*/.exec(body);
+          return [date, suffix ? body.slice(suffix[0].length) : text];
+        }),
+      generals: leadingGenerals(book, 3),
+    };
+  }
+  function generalBiographies(book) {
+    return leadingGenerals(book, 5).map(({ g, service, wins }) => {
+      const [tong, wu, zhi, zheng] = biographyStats(g, service);
       const end = service?.fallen ? '后殁于阵。' : g.status === 'dead' ? '其人已卒。' : '';
-      const text = `${descriptions[0][1]}，统 ${tong}、武 ${wu}、智 ${zhi}、政 ${zheng}。计胜 ${wins} 阵，本纪记败 ${service?.losses || 0} 阵。${end}`;
+      const text = `${generalBio(g)}，统 ${tong}、武 ${wu}、智 ${zhi}、政 ${zheng}。计胜 ${wins} 阵，本纪记败 ${service?.losses || 0} 阵。${end}`;
       return `<p><b>${annalEsc(g.name)}</b>　${annalEsc(text)}</p>`;
     }).join('');
   }
@@ -1702,16 +1893,13 @@ var EVENTS = (function () {
     const chronology = Array.from(years, ([year, entries]) => `<p><b>公元 ${annalEsc(year)} 年</b><br>` +
       entries.sort((a, b) => annalPriority(b[1]) - annalPriority(a[1])).slice(0, 3).sort((a, b) => a[0] - b[0])
         .map(([season, text]) => `<span class="note">${annalDate([year, season])}</span>　${annalEsc(text)}`).join('<br>') + '</p>').join('');
-    const honors = ACHIEVEMENTS.map(([id, name, description]) => {
-      const reached = book.honors[id];
-      return `<p class="${reached ? '' : 'note'}"><span class="chip">${reached ? annalEsc(reached) : '待成'}</span> <b>${name}</b>　${description}</p>`;
-    }).join('');
+    const honors = ACHIEVEMENTS.filter(([id]) => book.honors[id]).length;
     return `<div class="sec">史官评语</div><p class="story">${annalEsc(annalsAssessment(book))}</p>` +
       `<p class="note">本卷始录于${annalDate(book.start)}。${book.eventCount > book.events.length ? '本卷择录要事，不逾三百条。' : ''}</p>` +
       '<div class="sec">帝纪</div>' + (chapters || '<p class="note">本卷尚待入录。</p>') +
       '<div class="sec">大事年表</div>' + (chronology || '<p class="note">本卷尚无纪年大事。</p>') +
       '<div class="sec">将相列传</div>' + (generalBiographies(book) || '<p class="note">本卷尚无列传。</p>') +
-      '<div class="sec">功业成就</div>' + honors;
+      `<div class="sec">功业成就</div><p>已成 ${honors} / ${ACHIEVEMENTS.length} 项 <button class="btn sm" data-act="honors">详见功业</button></p>`;
   }
 
   // ---------- 每回合 ----------
@@ -1875,6 +2063,6 @@ var EVENTS = (function () {
     GAME.emit('change');
   }
   // 自动处理（无人值守/AI）
-  return { turn, onBattle, annals, view, resolve, DEFS, spawnArmy };
+  return { turn, onBattle, annals, generalBio, initAchievements, achievements, finalScore, settlementScore, settlementChronicle, view, resolve, DEFS, spawnArmy };
 })();
 if (typeof module !== 'undefined') module.exports = EVENTS;

@@ -1,6 +1,7 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.9.2';
+  const VERSION = '0.10.1';
+  const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
   const S = () => GAME.S;
@@ -12,6 +13,8 @@ var UI = (function () {
   let battleQueue = [], inTurn = false;
   let garrisonPick = new Set();
   const SAVE_PREFIX = 'hwhs_save_';
+  const HALL_KEY = 'hwhs_hall';
+  const DIFFICULTY_NAMES = DATA.DIFFICULTY.map(d => d.name);
   let difficulty = 1, timeScale = 7;
   let animSpeed = +(localStorage.getItem('hwhs_anim') || 1);
   const phone = matchMedia('(max-width: 600px), (max-height: 500px)');
@@ -33,17 +36,29 @@ var UI = (function () {
   }
   let deferredToasts = [];
   const TU = () => GAME.unitName();
+  const CULTURE_NAME = { han: '中原', jurchen: '女真', tangut: '党项', bai: '白族', tibetan: '吐蕃', khitan: '契丹',
+    mongol: '草原蒙古', korean: '高丽', japanese: '日本', viet: '交趾', cham: '占城', khmer: '高棉', burmese: '缅甸',
+    turkic: '突厥', persian: '波斯', indian: '天竺', arab: '大食', frankish: '法兰克', greek: '希腊', georgian: '格鲁吉亚',
+    rus: '斡罗思', cuman: '钦察', magyar: '马札儿', polish: '波兰', german: '日耳曼', english: '不列颠诸邦',
+    iberian: '伊比利亚', moorish: '马格里布', italian: '意大利', norse: '北欧', ethiopian: '埃塞俄比亚与努比亚', filipino: '南洋群岛' };
 
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmt = n => { n = Math.round(n); return n >= 10000 ? (n / 10000).toFixed(1) + '万' : String(n); };
+  const fmtShort = n => Math.abs(n) >= 10000 ? (n / 10000).toFixed(1) + '万' : Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + '千' : String(Math.round(n));
   const sgn = n => (n >= 0 ? '+' : '') + Math.round(n);
   function unitName(f, t) { const c = GAME.fac(f).culture; return (DATA.CULTURE_UNIT_NAME[c] && DATA.CULTURE_UNIT_NAME[c][t]) || U[t].name; }
   function facSeal(f, cls) { const F = GAME.fac(f); return `<span class="seal ${cls || 'sm'}" style="background:${F.color}">${F.seal}</span>`; }
   function facName(f) { const F = GAME.fac(f); return F ? F.name : '?'; }
+  function livingTileOwner(t) {
+    const f = GAME.tileOwner(t);
+    return GAME.fac(f)?.alive ? f : null;
+  }
   function meter(v, max, cls) { return `<div class="meter ${cls || ''}"><i style="width:${Math.max(0, Math.min(100, v / max * 100))}%"></i></div>`; }
 
   // ---------- 启动 ----------
   function boot() {
+    $('top').insertAdjacentHTML('beforeend', '<button id="mobile-research" type="button" data-act="tech"></button>');
+    $('topmenu').querySelector('[data-act="chron"]').insertAdjacentHTML('afterend', '<button type="button" data-act="honors">功业</button>');
     $('mobilebar').insertAdjacentHTML('beforeend', `
       <button id="cancelpreview" type="button" class="btn hidden" data-act="cancelpreview">取消预览</button>
       <div id="mapzoom" role="group" aria-label="地图缩放">
@@ -52,7 +67,15 @@ var UI = (function () {
       </div>`);
     RENDER.init($('map'), $('mini'));
     applySettings();
-    phone.addEventListener('change', () => { applyUISize(); setMenu(false); setMini(false); revealSelection(); });
+    phone.addEventListener('change', () => {
+      applyUISize(); refreshTop(); setMenu(false); setMini(false); revealSelection();
+      if (!$('modal-bg').classList.contains('hidden')) {
+        if ($('modal').querySelector('.tech-tree')) showTech();
+        if ($('modal').querySelector('[data-general-roster]')) showGenerals();
+        if ($('modal').querySelector('.court-page')) showCourt();
+        if ($('modal').querySelector('.dip-page')) showDiplomacy();
+      }
+    });
     titleScreen();
     withLoading('研墨铺纸，绘制天下舆图……', () => { GEO.generate(); ensureBase(); const [c, r] = GEO.nearestHex(100, 36); RENDER.centerOn(GEO.idx(c, r), 0.45); });
     bindInput();
@@ -72,14 +95,14 @@ var UI = (function () {
     requestAnimationFrame(paintScene);
     if (!titleScreen.bound) { titleScreen.bound = true; let tm = 0; addEventListener('resize', () => { clearTimeout(tm); tm = setTimeout(paintScene, 150); }); }
     const hasAuto = !!localStorage.getItem(SAVE_PREFIX + 'auto');
-    const names = ['宽仁', '中庸', '严苛', '地狱'];
     $('titlemenu').innerHTML = `
       ${hasAuto ? '<button data-t="continue">继续征程</button>' : ''}
       <button data-t="new">新开天下</button>
-      <div class="diff">${names.map((n, i) => `<button data-d="${i}" class="${i === difficulty ? 'on' : ''}">${n}</button>`).join('')}</div>
+      <div class="diff">${DATA.DIFFICULTY.map((d, i) => `<button data-d="${i}" class="${i === difficulty ? 'on' : ''}" title="${esc(difficultyDescription(d))}">${d.name}</button>`).join('')}</div>
       <div class="diff">${[[7, '一周'], [10, '一旬'], [30, '一月'], [90, '一季']].map(([v, n]) => `<button data-sc="${v}" class="${v === timeScale ? 'on' : ''}" title="每回合推进的时间">${n}</button>`).join('')}</div>
       <button data-t="load">读取存档</button>
       <button data-t="import">导入存档</button>
+      <button data-t="hall">功业榜</button>
       <button data-t="help">玩法说明</button>`;
     $('titlemenu').onclick = e => {
       const b = e.target.closest('button'); if (!b) return;
@@ -90,6 +113,7 @@ var UI = (function () {
       if (t === 'continue') loadSlot('auto');
       if (t === 'load') showSave(true);
       if (t === 'import') $('importfile').click();
+      if (t === 'hall') showHall();
       if (t === 'help') showHelp();
     };
   }
@@ -146,27 +170,69 @@ var UI = (function () {
   }
 
   // ---------- 顶栏 ----------
+  function researchProgress(F, inc) {
+    const tech = TECH[F.research];
+    const cost = tech ? GAME.techCost(P(), F.research) : 0;
+    const eta = tech && inc.sci > 0 ? Math.max(1, Math.ceil((cost - F.sci) / (inc.sci * GAME.E()))) : 0;
+    return { tech, cost, eta, pct: cost ? GAME.clamp(F.sci / cost * 100, 0, 100) : 0 };
+  }
+  function capitalProgress() {
+    const caps = S().cities.filter(c => c.origCap);
+    return caps.filter(c => c.f === P()).length + '/' + caps.length;
+  }
+  function cityProgress() {
+    return GAME.citiesOf(P()).length + '/' + S().cities.filter(c => c.f).length;
+  }
+  function showTreasury() {
+    const F = GAME.fac(P()), inc = F.income || {};
+    const { tech, cost, eta, pct } = researchProgress(F, inc);
+    const amount = n => (n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
+    const row = (label, value) => `<div class="row"><span class="grow">${label}</span><strong>${value}</strong></div>`;
+    const resource = (name, value, unit, detail) => `<section class="treasury-group"><div class="sec">${name}<span class="r">${amount(value)} ${unit}</span></div>${detail}</section>`;
+    const trib = inc.trib || 0;
+    const governance = inc.governance || 0;
+    openModal(`<h1>府库</h1>
+      <p class="note treasury-date">公元 ${S().year} 年 · ${GAME.dateStr()} · 第 ${S().turn + 1} ${TU()}</p>
+      <div class="treasury-grid">
+        ${resource('钱', F.gold, '贯', row('岁入 / 季', amount(inc.gold)) + row('军费、俸禄与营缮 / 季', amount((inc.upkeep || 0) - governance)) +
+          (governance ? row('治理支出 / 季', amount(governance)) : '') + row('岁币 / 季', trib ? sgn(trib) : 0))}
+        ${resource('粮', F.food, '石', row('诸州输粮 / 季', amount(inc.food)) + row('军粮 / 季', amount(inc.foodUp)))}
+        ${resource('兵源', F.man, '', row('增兵源 / 季', amount(inc.man)) + row('募兵每营', '耗 5（约五百人）'))}
+        ${resource('马', F.horse, '匹', row('入马 / 季', amount(inc.horse)) + row('骑兵每营', '耗 3 匹'))}
+        ${resource('铁', F.iron, '', row('入铁 / 季', amount(inc.iron)) + row('甲骑、火器每营', '耗 2'))}
+        <section class="treasury-group"><div class="sec">研究<span class="r">${tech ? esc(tech.name) : '未定'}</span></div>
+        ${row('文教 / 季', amount(inc.sci))}
+        ${tech ? row('研究进度', `${amount(F.sci)} / ${cost}${eta ? ' · 余 ' + eta + TU() : ''}`) + meter(pct, 100, 'gold') : ''}
+        ${row('原都城', capitalProgress())}${row('城池', cityProgress())}</section>
+      </div>`, { width: '620px' });
+  }
   function refreshTop() {
     if (!S()) return;
     const F = GAME.fac(P()), inc = F.income || {};
-    $('date').textContent = GAME.dateStr();
+    $('date').textContent = phone.matches ? GAME.dateStr(S().year, S().season) : GAME.dateStr();
     $('subdate').textContent = `公元 ${S().year} 年 · 第 ${S().turn + 1} ${TU()}`;
     $('endbtn').querySelector('span').textContent = inTurn ? '运筹中' : '下一' + TU();
     const C = S().court;
     $('courtbox').innerHTML = C ? `<span class="k">权威</span> <b>${Math.round(C.auth)}</b><div class="lean"><i style="left:${(C.lean + 100) / 2}%"></i></div><span class="k">${C.lean > 20 ? '朝议主战' : C.lean < -20 ? '朝议主和' : '朝议未决'}</span>` : '';
     const gnet = (inc.gold || 0) - (inc.upkeep || 0) + (inc.trib || 0), fnet = (inc.food || 0) - (inc.foodUp || 0);
-    const r = F.research ? TECH[F.research] : null;
-    const rc = F.research ? GAME.techCost(P(), F.research) : 0;
-    const eta = r && inc.sci ? Math.max(1, Math.ceil((rc - F.sci) / (inc.sci * GAME.E()))) : 0;
-    $('res').innerHTML = `
-      <div class="rbox" title="岁入 ${inc.gold || 0}，军费俸禄与营缮 ${inc.upkeep || 0}，岁币 ${inc.trib || 0}"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></div>
+    const { tech: r, eta, pct } = researchProgress(F, inc);
+    if (phone.matches) {
+      const stats = [['钱', F.gold, gnet], ['粮', F.food, fnet], ['兵', F.man, inc.man], ['马', F.horse, inc.horse], ['铁', F.iron, inc.iron]];
+      $('res').innerHTML = stats.map(([label, value, rate]) => `<button type="button" class="rbox resource-cell" data-act="treasury" aria-label="${label} ${fmtShort(value)}，查看府库">
+        <span class="k">${label}${rate ? ` <span aria-hidden="true" class="${rate > 0 ? 'pos' : 'neg'}">${rate > 0 ? '▲' : '▼'}</span>` : ''}</span>
+        <b>${fmtShort(value)}</b></button>`).join('');
+      $('mobile-research').style.setProperty('--research-pct', pct + '%');
+      $('mobile-research').textContent = r ? `${r.name} · ${eta ? '余 ' + eta + TU() : '待计'}` : '研究未定';
+    } else $('res').innerHTML = `
+      <div class="rbox" title="岁入 ${inc.gold || 0}，军费、俸禄、营缮与治理 ${inc.upkeep || 0}，岁币 ${inc.trib || 0}"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></div>
       <div class="rbox" title="诸州输粮 ${inc.food || 0}，军粮 ${inc.foodUp || 0}"><span class="k">粮</span> <b>${fmt(F.food)}</b> <span class="d ${fnet >= 0 ? 'pos' : 'neg'}">${sgn(fnet)}/季</span></div>
       <div class="rbox" title="每营需兵源 5（约五百人）；每季 +${inc.man || 0}"><span class="k">兵源</span> <b>${fmt(F.man)}</b></div>
       <div class="rbox" title="骑兵每营耗马 3；每季 +${inc.horse || 0}"><span class="k">马</span> <b>${fmt(F.horse)}</b></div>
       <div class="rbox" title="甲骑、火器每营耗铁 2；每季 +${inc.iron || 0}"><span class="k">铁</span> <b>${fmt(F.iron)}</b></div>
       <div class="rbox" data-act="tech" style="cursor:pointer" title="每季文教 ${inc.sci || 0}"><span class="k">研究</span> <b style="font-size:14px">${r ? r.name : '<span class=neg>未定</span>'}</b> <span class="d">${r ? eta + TU() : ''}</span>
-        <div class="bar"><i style="width:${r ? Math.min(100, F.sci / rc * 100) : 0}%"></i></div></div>
-      <div class="rbox" title="攻占诸国原都城即一统天下"><span class="k">都城</span> <b>${S().capProgress ? S().capProgress.own + '/' + S().capProgress.total : ''}</b></div>`;
+        <div class="bar"><i style="width:${pct}%"></i></div></div>
+      <div class="rbox" title="攻占诸国原都城可获万国来朝"><span class="k">都城</span> <b>${capitalProgress()}</b></div>
+      <div class="rbox" title="尽取有主之城即一统天下"><span class="k">城池</span> <b>${cityProgress()}</b></div>`;
     const idle = S().armies.filter(a => a.f === P() && a.mp > 0 && !(a.path && a.path.length) && !a.sentry).length;
     const routed = S().armies.filter(a => a.f === P() && a.path && a.path.length && a.mp > 0).length;
     const idleC = GAME.citiesOf(P()).filter(c => !c.queue.length).length;
@@ -213,12 +279,12 @@ var UI = (function () {
       const enemy = (ea && ea.f !== P() && GAME.atWar(P(), ea.f)) || (c && c.f !== P() && GAME.atWar(P(), c.f));
       const where = c ? c.name : GEO.TERRAIN[GEO.terrain[t]].name;
       const pt = RENDER.state.pathTurns || [];
-      const n = pt.length ? pt[pt.length - 1][1] : 1;
-      body = `<div class="ob-msg">${enemy ? '<span class="neg">进攻</span> ' : '前往 '}<b>${esc(where)}</b>　约 ${n} ${TU()}${enemy ? '　胜算 ' + odds(a, t) : ''}</div>
+      body = `<div class="ob-msg">${enemy ? '<span class="neg">进攻</span> ' : '前往 '}<b>${esc(where)}</b>　${arrivalText(t, pt)}${enemy ? '　胜算 ' + odds(a, t) : ''}</div>
         <div class="ob-btns"><button class="btn" data-act="cancelpreview">取消</button><button class="btn red ob-go" data-act="go">${enemy ? '进攻' : '出发'}</button></div>`;
     } else {
-      body = `<div class="ob-msg note">轻点地图，选择目的地</div>
-        <div class="ob-btns">${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn" data-act="sentry">驻守</button><button class="btn" data-act="drawertoggle">详情</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
+      const routed = !!a.path?.length;
+      body = `<div class="ob-msg note">${moveMode ? '轻点地图，择定去处' : '可轻点目标格预览路线'}</div>
+        <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}">行军</button><button class="btn" data-act="drawertoggle">详情</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
     }
     bar.innerHTML = head + body;
     bar.classList.remove('hidden');
@@ -335,7 +401,7 @@ var UI = (function () {
       if (document.elementFromPoint(e.clientX, e.clientY) !== cv) return;
       const t = RENDER.tileAtScreen(e.clientX, e.clientY);
       if (t < 0) return;
-      if (p.button === 2 || (p.button === 0 && moveMode)) orderMove(t);
+      if (p.button === 2 || (p.button === 0 && moveMode && !phone.matches)) orderMove(t);
       else if (p.button === 0) clickTile(t, p.type !== 'mouse');
       if (p.type !== 'mouse') {
         clearTimeout(tipTimer);
@@ -370,7 +436,7 @@ var UI = (function () {
       else if (k === 'ArrowDown' || k === 's') RENDER.pan(0, -120);
       else if (k === '=' || k === '+') zoomCenter(1.2);
       else if (k === '-') zoomCenter(1 / 1.2);
-      else if (k === ' ' && sel && sel.type === 'army') { const a = GAME.army(sel.id); if (a && a.f === P()) { a.sentry = true; a.path = []; nextIdle(); } e.preventDefault(); }
+      else if (k === ' ' && sel && sel.type === 'army') { const a = myArmySel(); if (a) { sentryOrder(a); nextIdle(); } e.preventDefault(); }
     });
     // 小地图
     const mm = $('minimap');
@@ -419,12 +485,12 @@ var UI = (function () {
     const tip = $('tip');
     if (t < 0 || !S().explored[t]) { tip.classList.add('hidden'); if (previewPath) RENDER.state.path = null; RENDER.markDirty(); return; }
     const tr = GEO.TERRAIN[GEO.terrain[t]];
-    const own = GAME.tileOwner(t), c = GAME.cityAt(t), a = GAME.armyAt(t);
+    const own = livingTileOwner(t), c = GAME.cityAt(t), a = GAME.armyAt(t);
     const y = GAME.tileYield(t);
     let h = `<b>${tr.name}</b>${GEO.river[t] ? ' · 临河' : ''}${GEO.resource[t] ? ' · <span class=skill>' + GEO.resource[t] + '</span>' : ''}`;
     if (!GEO.isWater(t)) h += `<br>粮 ${y.food}　工 ${y.prod}　钱 ${y.gold}${tr.def ? '　守 +' + Math.round(tr.def * 100) + '%' : ''}　行军耗 ${tr.move}`;
     if (own) h += `<br>${facSeal(own)} ${facName(own)}${own !== P() ? '　' + relText(own) : ''}`;
-    if (c) h += `<br>城：<b>${c.name}</b>　户口 ${c.pop} 万`;
+    if (c) h += `<br>${own ? '城' : '荒城'}：<b>${esc(c.name)}</b>　户口 ${c.pop} 万`;
     if (a && (a.f === P() || S().visible[t])) h += `<br>军：${esc(GAME.armyName(a))}（${a.units.length} 营，${fmt(GAME.sumStr(a.units))} 人）`;
     const site = GAME.siteAt(t);
     if (site) { const ST = DATA.SITES[site.type]; const cd = ST.repeat === 'season' && site.cd[P()] > S().T; h += `<br><b class="skill">${site.name}</b>　${ST.desc}${cd ? '　<span class=neg>（本季已访）</span>' : ''}`; }
@@ -442,7 +508,7 @@ var UI = (function () {
           RENDER.state.pathTurns = pathTurns(ar, full);
           const enemy = (a && a.f !== P() && GAME.atWar(P(), a.f)) || (c && c.f !== P() && GAME.atWar(P(), c.f));
           if (enemy) h += `<br><span class=neg>进攻！</span> 估算胜算：${odds(ar, t)}`;
-          else h += `<br>行军约 ${RENDER.state.pathTurns.length ? RENDER.state.pathTurns[RENDER.state.pathTurns.length - 1][1] : 1} ${TU()}`;
+          else h += `<br>${arrivalText(t, RENDER.state.pathTurns)}`;
         }
       }
     }
@@ -459,17 +525,35 @@ var UI = (function () {
     const out = []; let mp = a.mp, turn = 1;
     const max = GAME.armyMP(a);
     let prog = a.progTo === full[1] ? (a.prog || 0) : 0;
-    for (let k = 1; k < full.length; k++) {
-      const t = full[k];
-      const water = GEO.isWater(t);
-      let cost = water ? 6 / (6 + (GAME.techFx(a.f).seaMP || 0)) : GEO.TERRAIN[GEO.terrain[t]].move;
-      if (GEO.isWater(full[k - 1]) && !water) cost = Math.max(cost, 2);
-      let need = cost - prog; prog = 0;
-      while (need > mp + 1e-9) { need -= mp; out.push([full[k - 1], turn]); turn++; mp = max; }
-      mp -= need;
+    let from = full[0];
+    for (let k = 1; k < full.length;) {
+      const step = GAME.routeStep(a, from, full, k);
+      if (step.kind === 'blocked' || step.kind === 'wait') break;
+      if (step.kind === 'attack') {
+        if (mp <= 0) { out.push([from, turn]); turn++; }
+        from = step.to;
+        break;
+      }
+      if (step.kind === 'pass') {
+        if (step.cost > mp + 1e-9) {
+          if (step.cost > max + 1e-9) break;
+          out.push([from, turn]); turn++; mp = max;
+        }
+        mp = Math.max(0, mp - step.cost);
+      } else {
+        let need = step.cost - prog;
+        while (need > mp + 1e-9) { need -= mp; out.push([from, turn]); turn++; mp = max; }
+        mp = Math.max(0, mp - need);
+      }
+      prog = 0;
+      from = step.to; k = step.end + 1;
     }
-    out.push([full[full.length - 1], turn]);
+    out.push([from, turn]);
     return out.filter((x, i, arr) => i === arr.length - 1 || x[1] !== (arr[i + 1] || [])[1]);
+  }
+  function arrivalText(goal, turns) {
+    const last = turns.at(-1);
+    return last?.[0] === goal ? `约 ${last[1]} ${TU()}抵达` : '前路受阻';
   }
   function odds(a, t) {
     const ea = GAME.armyAt(t), c = GAME.cityAt(t);
@@ -485,7 +569,7 @@ var UI = (function () {
     if (r.war) return '<span class=neg>交战</span>';
     if (r.ally) return '<span class=pos>同盟</span>';
     if (r.truce > 0) return `和约（${Math.ceil(r.truce)}季）`;
-    return '和平';
+    return r.op >= 0 ? '通好' : '冷淡';
   }
 
   function clickTile(t, touch) {
@@ -497,11 +581,10 @@ var UI = (function () {
       if (pendingTarget === t) { orderMove(t); return; }
       const p = GAME.findPath(myA, t, 4000);
       if (!p || !p.length) { toast('无路可达'); return; }
-      setPendingTarget(t);
       const full = [myA.tile, ...p];
       RENDER.state.path = full; RENDER.state.pathTurns = pathTurns(myA, full);
-      const last = RENDER.state.pathTurns.length ? RENDER.state.pathTurns[RENDER.state.pathTurns.length - 1][1] : 1;
-      if (!phone.matches) toast(`路线已定：约 ${last} ${TU()}抵达。再点一次出发，${touch ? '可点「取消预览」撤回' : 'Esc 取消'}`);
+      setPendingTarget(t);
+      if (!phone.matches) toast(`路线已定 · ${arrivalText(t, RENDER.state.pathTurns)}。再点一次出发，${touch ? '可点「取消预览」撤回' : 'Esc 取消'}`);
       RENDER.markDirty();
       return;
     }
@@ -513,7 +596,8 @@ var UI = (function () {
   }
   function select(s) {
     sel = s; garrisonPick.clear(); setPendingTarget(-1);
-    if (!s || s.type !== 'army') moveMode = false;
+    moveMode = false;
+    $('map').style.cursor = 'default';
     RENDER.state.sel = s ? { tile: s.tile, army: s.type === 'army' ? s.id : null } : null;
     showSavedPath();
     refreshSide(); RENDER.markDirty();
@@ -523,9 +607,12 @@ var UI = (function () {
     if (!sel || sel.type !== 'army') return;
     const a = GAME.army(sel.id);
     if (!a || a.f !== P()) return;
-    setPendingTarget(-1);
-    a.sentry = false;
     const tgtArmy = GAME.armyAt(t), tgtCity = GAME.cityAt(t);
+    if (tgtArmy && tgtArmy.f === a.f && tgtArmy !== a) {
+      select({ type: 'army', id: tgtArmy.id, tile: t });
+      return;
+    }
+    setPendingTarget(-1);
     const other = (tgtArmy && tgtArmy.f !== P() && tgtArmy.f) || (tgtCity && tgtCity.f !== P() && tgtCity.f);
     if (other && !GAME.atWar(P(), other) && !GAME.allied(P(), other) && GEO.dist(a.tile, t) <= 1) {
       courtVote('war', other, () => { GAME.declareWar(P(), other); RENDER.buildPolitical(); doMove(a, t); });
@@ -543,7 +630,10 @@ var UI = (function () {
     if (res.ok) {
       const still = GAME.army(a.id);
       if (mp0 <= 0) toast(`${nm}本${TU()}行军力已尽（已行军或已交战），路线已定，下${TU()}按 C 继续`);
-      else if (still && still.tile === tile0 && !(res.battles && res.battles.length)) toast(`${nm}前路险阻，本${TU()}只推进了一段，下${TU()}按 C 继续`);
+      else if (still && still.tile === tile0 && !(res.battles && res.battles.length)) {
+        const passed = still.prog > 0 ? '只推进了一段' : '暂留原地';
+        toast(`${nm}前路险阻，本${TU()}${passed}，下${TU()}再行`);
+      }
     }
     moveMode = false; $('map').style.cursor = 'default';
     if (!res.ok) { GAME.takeAnim(); toast(res.msg || '无法抵达'); return; }
@@ -566,7 +656,7 @@ var UI = (function () {
     let battles = 0; const engs = [];
     for (const id of ids) { const r = GAME.continueArmy(id); for (const b of r) { if (b.engage) engs.push(b); else battles++; } }
     const evs = GAME.takeAnim();
-    if (!evs.length && !engs.length) { toast('诸军行军力已尽，下回合再行'); return; }
+    if (!evs.length && !engs.length) { showSavedPath(); refreshSide(); toast('本回合暂不能续行'); return; }
     RENDER.state.path = null;
     RENDER.play(snap, evs, Math.max(animSpeed, animSpeed ? 1 : 0), () => {
       afterAction(battles);
@@ -596,6 +686,14 @@ var UI = (function () {
     select({ type: 'army', id: a.id, tile: a.tile });
     RENDER.centerOn(a.tile);
   }
+  function sentryOrder(a) {
+    GAME.setSentry(a);
+    moveMode = false;
+    $('map').style.cursor = 'default';
+    cancelPreview();
+    refreshSide();
+    refreshTop();
+  }
   function nextIdleCity() {
     const list = GAME.citiesOf(P()).filter(c => !c.queue.length).sort((a, b) => b.pop - a.pop);
     if (!list.length) { toast('诸城皆有营造'); return; }
@@ -611,7 +709,10 @@ var UI = (function () {
     const el = $('side');
     if (!S()) return;
     if (!sel) { el.innerHTML = overviewHTML(); return; }
-    if (sel.type === 'city') { const c = GAME.city(sel.id); el.innerHTML = c.f === P() ? cityHTML(c) : foreignCityHTML(c); }
+    if (sel.type === 'city') {
+      const c = GAME.city(sel.id);
+      el.innerHTML = !GAME.fac(c.f)?.alive ? ruinHTML(c) : c.f === P() ? cityHTML(c) : foreignCityHTML(c);
+    }
     else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
     renderOrderBar();
@@ -632,10 +733,15 @@ var UI = (function () {
       <p class="note">${TOUCH.matches ? '轻点城池或军队查看；选中军队后轻点目的地看路线，点「出发」即行。单指拖动平移，双指缩放。' : '左键选取城池或军队；选中军队后左键点目标格显示路线，<b>再点一次</b>出发（右键可直接出发）。未走完的路线按 <kbd>C</kbd> 继续，<kbd>Shift+C</kbd> 全军继续。拖动平移，滚轮缩放，<kbd>Enter</kbd> 结束回合。'}</p>`;
   }
   function tileHTML(t) {
-    const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = GAME.tileOwner(t);
+    const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = livingTileOwner(t);
     return `<div class="ph"><div><h2>${tr.name}</h2><div class="sub">${GEO.river[t] ? '临河 · ' : ''}${GEO.resource[t] ? '物产：' + GEO.resource[t] : '无特产'}</div></div><button class="x" data-act="desel">×</button></div>
       <div class="stat"><div><b>${y.food}</b><span>粮</span></div><div><b>${y.prod}</b><span>工</span></div><div><b>${y.gold}</b><span>钱</span></div><div><b>${tr.move}</b><span>行军耗</span></div></div>
       ${own ? `<p>${facSeal(own)} 属【${facName(own)}】${own !== P() ? '　' + relText(own) : ''}</p>` : '<p class="note">无主之地</p>'}`;
+  }
+  function ruinHTML(c) {
+    return `<div class="ph"><span class="seal" style="background:#756e62">荒</span>
+      <div><h2>${esc(c.name)}</h2><div class="sub">荒城 · 户口 ${c.pop} 万</div></div><button class="x" data-act="desel">×</button></div>
+      <p class="note">城垣尚存，今无所隶。</p>`;
   }
 
   function cityHTML(c) {
@@ -695,7 +801,7 @@ var UI = (function () {
   }
   function foreignCityHTML(c) {
     const vis = S().visible[c.tile];
-    return `<div class="ph">${facSeal(c.f, '')}<div><h2>${c.name}</h2><div class="sub">【${facName(c.f)}】${c.cap ? '都城' : '城池'}</div></div><button class="x" data-act="desel">×</button></div>
+    return `<div class="ph">${facSeal(c.f, '')}<div><h2>${c.name}</h2><div class="sub"><button type="button" class="record-link" data-act="nation" data-arg="${c.f}">${esc(facName(c.f))}</button> · ${c.cap ? '都城' : '城池'}</div></div><button class="x" data-act="desel">×</button></div>
       <div class="stat"><div><b>${c.pop}</b><span>户口</span></div><div><b>${vis ? Math.round(c.wall) : '?'}</b><span>城防</span></div><div><b>${vis ? c.garrison.length : '?'}</b><span>守军(营)</span></div><div><b>${c.f === 'rebel' ? '—' : Math.round(GAME.getRel(P(), c.f).op)}</b><span>好感</span></div></div>
       <p>关系：${c.f === 'rebel' ? '<span class=neg>乱军</span>' : relText(c.f)}</p>
       ${vis ? '' : '<p class="note">此城不在视野之内，所见为旧日情报。</p>'}
@@ -703,18 +809,20 @@ var UI = (function () {
   }
   function genBlock(g, f) {
     if (!g) return `<div class="row"><span class="gseal" style="background:#777">军</span><span class="grow">偏师（无主将）<br><span class="note">统兵上限 4 营，战力 -10%</span></span></div>`;
-    return `<div class="row">${PORTRAIT.img(g, 64, 'style="width:64px;height:64px"')}<span class="grow"><b style="font-size:17px">${g.name}</b>${g.hist ? ' <span class="chip">史</span>' : ''} <span class="note">${S().year - g.birth}岁</span><br>
+    return `<div class="row card-link" data-act="genview" data-arg="${g.id}">${PORTRAIT.img(g, 64, 'alt=""')}<div class="grow"><button class="record-link" type="button"><b>${esc(g.name)}</b></button>${g.hist ? ' <span class="chip">史</span>' : ''} <span class="note">${S().year - g.birth}岁</span><br>
       <span class="gstats">统<b>${g.tong}</b> 武<b>${g.wu}</b> 智<b>${g.zhi}</b> 政<b>${g.zheng}</b></span>
       <div style="display:flex;align-items:center;gap:6px;font-size:12px">Lv${g.lv || 1}<div class="grow" style="flex:1">${meter((g.exp || 0) - 0, GAME.nextLv(g), 'gold')}</div><span class="cost">${Math.round(g.exp || 0)}/${GAME.nextLv(g)}</span></div>
-      ${GAME.skillList(g).map(k => `<span class="skill" title="${DATA.SKILLS[k] || ''}">【${k}】</span>`).join('')}${(g.items || []).map(i => `<span class="chip" title="${DATA.ITEMS[i].desc}">${DATA.ITEMS[i].name}</span>`).join(' ')}</span></div>`;
+      ${GAME.skillList(g).map(k => `<span class="skill" title="${esc(DATA.SKILLS[k] || '')}">【${esc(k)}】</span>`).join('')}${(g.items || []).map(i => `<span class="chip" title="${esc(DATA.ITEMS[i].desc)}">${esc(DATA.ITEMS[i].name)}</span>`).join(' ')}</div></div>`;
   }
   function armyHTML(a) {
     const c = GAME.cityAt(a.tile), inOwn = c && c.f === P();
     const near = S().armies.filter(o => o !== a && o.f === P() && GEO.dist(o.tile, a.tile) === 1);
+    const fortHint = '驻守满一回合，守方战力 +10%；在本国城中，士气恢复 +50%。';
     let h = `<div class="ph"><div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">${a.units.length}/${GAME.armyCap(a)} 营 · ${fmt(GAME.sumStr(a.units))} 人${inOwn ? ' · 驻' + c.name : ''}</div></div><button class="x" data-act="desel">×</button></div>`;
     h += genBlock(GAME.gen(a.gen), a.f);
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, 100, a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
-    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry">驻守${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
+    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
+    h += `<p class="note">${a.fortT != null ? (GAME.fortified(a) ? '已筑垒。' : '筑垒中。') : ''}${fortHint}</p>`;
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
     h += `<div class="sec">各营</div>`;
     h += a.units.map((u, i) => `<div class="row"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${u.s * 5} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
@@ -785,19 +893,42 @@ var UI = (function () {
       case 'nextcity': nextIdleCity(); break;
       case 'contall': continueAll(); break;
       case 'nextidle': nextIdle(); break;
-      case 'sentry': a.sentry = true; a.path = []; refreshTop(); nextIdle(); break;
+      case 'sentry': if (a && a.f === P()) sentryOrder(a); break;
       case 'genpick': pickGeneral(a.gen != null ? '更换主将' : '任命主将', g => true, g => g.tong, gid => { GAME.setArmyGeneral(a.id, gid); refreshSide(); }, true); break;
       case 'disband': GAME.disband(a.id); select({ type: 'city', id: GAME.cityAt(sel.tile).id, tile: sel.tile }); break;
-      case 'toCity': GAME.transferToCity(a.id, +arg); if (!GAME.army(a.id)) select({ type: 'city', id: GAME.cityAt(sel.tile).id, tile: sel.tile }); else refreshSide(); break;
-      case 'toArmy': if (!GAME.transferToArmy(a.id, +arg)) toast('军团已满'); refreshSide(); break;
-      case 'merge': if (GAME.mergeArmies(a.id, +arg)) { refreshSide(); RENDER.markDirty(); } break;
+      case 'toCity': GAME.transferToCity(a.id, +arg); if (!GAME.army(a.id)) select({ type: 'city', id: GAME.cityAt(sel.tile).id, tile: sel.tile }); else refreshSide(); RENDER.markDirty(); refreshTop(); break;
+      case 'toArmy': if (!GAME.transferToArmy(a.id, +arg)) toast('军团已满'); refreshSide(); RENDER.markDirty(); refreshTop(); break;
+      case 'merge': if (GAME.mergeArmies(a.id, +arg)) { refreshSide(); RENDER.markDirty(); refreshTop(); } break;
       case 'tech': showTech(); break;
+      case 'treasury': showTreasury(); break;
       case 'settech': GAME.setResearch(P(), arg); guide('research'); showTech(); refreshTop(); break;
+      case 'techfilter': techFilter = arg; showTech(); break;
+      case 'techfold': {
+        ev.preventDefault();
+        const group = el.parentElement;
+        group.open = !group.open;
+        techFolds.set(arg, group.open);
+        break;
+      }
+      case 'techcolumn': {
+        const open = el.getAttribute('aria-expanded') !== 'true';
+        techFolds.set('desktop:' + arg, open);
+        el.setAttribute('aria-expanded', open);
+        for (const col of $('modal').querySelectorAll(`.tech-era-cell[data-column="${arg}"] > div`)) col.classList.toggle('hidden', !open);
+        break;
+      }
+      case 'techdesc': el.setAttribute('aria-expanded', el.getAttribute('aria-expanded') !== 'true'); break;
       case 'gens': showGenerals(); break;
+      case 'genfilter': genFilter = arg; showGenerals(); break;
+      case 'genview': showGeneral(+arg); break;
       case 'dip': showDiplomacy(); break;
+      case 'dipfilter': dipFilter = arg; showDiplomacy(); break;
+      case 'nation': showNation(arg); break;
       case 'cities': showCities(); break;
       case 'armies': showArmies(); break;
       case 'chron': showChronicle(arg); break;
+      case 'honors': showHonors(); break;
+      case 'retire': confirmBox('禅位封卷，依当下功业结算本局。旧卷仍可从存档读取。', () => showSettlement('retire'), showSettings); break;
       case 'save': showSave(false); break;
       case 'help': showHelp(); break;
       case 'animx': animSpeed = (animSpeed + 1) % 3; localStorage.setItem('hwhs_anim', animSpeed); refreshTop(); toast('回合动画：' + ['关闭', '常速', '快速'][animSpeed]); break;
@@ -812,6 +943,7 @@ var UI = (function () {
     opts = opts || {};
     modalLocked = !!opts.lock; modalOnClose = opts.onClose || null;
     const modal = $('modal');
+    modal.onclick = null;
     modal.innerHTML = (opts.lock ? '' : '<button class="mclose" data-act="mclose" aria-label="关闭">×</button>') + '<div class="modal-content">' + html + '</div>';
     for (const table of modal.querySelectorAll('table.t')) {
       const scroll = document.createElement('div');
@@ -828,147 +960,446 @@ var UI = (function () {
     if (f) f();
     else setTimeout(processPending, 10);
   }
-  function confirmBox(text, yes) {
-    openModal(`<h1>请旨</h1><div class="story">${esc(text)}</div><div class="choices"><button class="choice" id="cy">准奏</button><button class="choice" id="cn">作罢</button></div>`, { width: '520px' });
-    $('cy').onclick = () => { closeModal(); yes(); }; $('cn').onclick = closeModal;
+  function confirmBox(text, yes, cancel) {
+    openModal(`<h1>请旨</h1><div class="story">${esc(text)}</div><div class="choices"><button class="choice" id="cy">准奏</button><button class="choice" id="cn">作罢</button></div>`, { width: '520px', onClose: cancel });
+    $('cy').onclick = () => { modalOnClose = null; closeModal(); yes(); }; $('cn').onclick = closeModal;
   }
   function pickGeneral(title, filter, sortKey, cb, allowNone) {
     const list = S().generals.filter(g => g.f === P() && g.status === 'idle' && filter(g)).sort((x, y) => sortKey(y) - sortKey(x));
-    let h = `<h1>${title}</h1><div class="scroll" style="max-height:60vh"><table class="t"><tr><th>姓名</th><th>年</th><th>统</th><th>武</th><th>智</th><th>政</th><th>特技</th><th>立场</th><th>统兵</th><th></th></tr>`;
-    if (allowNone) h += `<tr><td>（不设主将）</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>4</td><td><button class="btn sm" data-pg="-1">选</button></td></tr>`;
-    for (const g of list) h += `<tr><td>${PORTRAIT.img(g, 30)} <b>${g.name}</b>${g.hist ? ' <span class=chip>史</span>' : ''}</td><td>${S().year - g.birth}</td><td>${g.tong}</td><td>${g.wu}</td><td>${g.zhi}</td><td>${g.zheng}</td><td>${GAME.skillList(g).map(k => `<span class="skill" title="${DATA.SKILLS[k]}">${k}</span>`).join(' ')}</td><td>${stanceTag(g)}</td><td>${GAME.capFor(g.id)}</td><td><button class="btn sm red" data-pg="${g.id}">选</button></td></tr>`;
-    h += `</table>${list.length ? '' : '<p class="note">朝中暂无闲散之臣。可待科举取士、名士来投，或在将领名册中召回。</p>'}</div>`;
-    openModal(h, { width: '720px', onClose: () => {} });
-    $('modal').onclick = e => { const b = e.target.closest('[data-pg]'); if (!b) return; const id = +b.dataset.pg; $('modal').onclick = null; closeModal(); cb(id < 0 ? null : id); refreshTop(); };
+    const ready = '<p class="note">朝中暂无闲散之臣。可待科举取士、名士来投，或在将领名册中召回。</p>';
+    const choose = id => `<button class="btn sm red" type="button" data-pg="${id}">选</button>`;
+    if (phone.matches) {
+      const cards = list.map(g => recordCard(
+        `${PORTRAIT.img(g, 40, 'alt=""')}<button type="button" class="record-link" data-pg-gen="${g.id}">${generalName(g)}</button>
+        <span class="note">${stanceTag(g)} · 可统 ${GAME.capFor(g.id)} 营</span>`,
+        `<div class="chips">${generalStatChips(g)}</div>`, choose(g.id))).join('');
+      const none = allowNone ? recordCard('<b>不设主将</b> <span class="note">可统 4 营</span>', '', choose(-1)) : '';
+      openModal(`<h1>${title}</h1><div class="record-list">${none}${cards}${list.length ? '' : ready}</div>`, { width: '720px', onClose: () => {} });
+    } else {
+      let h = `<h1>${title}</h1><div class="scroll" style="max-height:60vh"><table class="t"><tr><th>姓名</th><th>年</th><th>统</th><th>武</th><th>智</th><th>政</th><th>特技</th><th>立场</th><th>统兵</th><th></th></tr>`;
+      if (allowNone) h += `<tr><td>（不设主将）</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td>4</td><td><button class="btn sm" data-pg="-1">选</button></td></tr>`;
+      for (const g of list) h += `<tr><td>${PORTRAIT.img(g, 30)} <b>${g.name}</b>${g.hist ? ' <span class=chip>史</span>' : ''}</td><td>${S().year - g.birth}</td><td>${g.tong}</td><td>${g.wu}</td><td>${g.zhi}</td><td>${g.zheng}</td><td>${GAME.skillList(g).map(k => `<span class="skill" title="${DATA.SKILLS[k]}">${k}</span>`).join(' ')}</td><td>${stanceTag(g)}</td><td>${GAME.capFor(g.id)}</td><td><button class="btn sm red" data-pg="${g.id}">选</button></td></tr>`;
+      h += `</table>${list.length ? '' : ready}</div>`;
+      openModal(h, { width: '720px', onClose: () => {} });
+    }
+    $('modal').onclick = e => {
+      const info = e.target.closest('[data-pg-gen]');
+      if (info) { showGeneral(+info.dataset.pgGen, { back: () => pickGeneral(title, filter, sortKey, cb, allowNone), readOnly: true }); return; }
+      const b = e.target.closest('[data-pg]'); if (!b) return; const id = +b.dataset.pg;
+      closeModal(); cb(id < 0 ? null : id); refreshTop();
+    };
   }
 
+  const TECH_BRANCHES = ['农桑', '工技', '兵学', '文治', '航海'];
+  const techFolds = new Map();
+  let techFilter = 'all';
+  function filterTabs(action, label, choices, selected) {
+    return `<div class="filter-tabs" role="group" aria-label="${label}">${choices.map(([id, name]) =>
+      `<button type="button" class="btn ${selected === id ? 'red' : ''}" data-act="${action}" data-arg="${id}" aria-pressed="${selected === id}">${name}</button>`).join('')}</div>`;
+  }
+  function techCard({ id, t, known, can, cur }, sci) {
+    const cost = GAME.techCost(P(), id);
+    const name = `<b>${esc(t.name)}</b>`;
+    const desc = esc(t.desc);
+    const choose = `data-act="settech" data-arg="${id}"`;
+    return `<article class="tech ${known ? 'known' : can ? 'avail' : 'lock'} ${cur ? 'cur' : ''}" ${can ? choose : ''}>
+      <div class="tech-title">${can ? `<button type="button" class="tech-pick" ${choose}>${name}</button>` : name}
+        ${known ? '<span aria-label="已学">✓</span>' : `<span class="cost">${cost}</span>`}</div>
+      ${phone.matches ? `<p class="tech-desc">${desc}</p>` : `<button type="button" class="tech-desc" data-act="techdesc" title="${desc}" aria-expanded="false"><span>${desc}</span></button>`}
+      ${t.req && !known ? `<span class="cost tech-req">需 ${t.req.map(r => esc(TECH[r].name)).join('、')}</span>` : ''}
+      ${cur ? meter(sci, cost, 'gold') : ''}</article>`;
+  }
   function showTech() {
     const F = GAME.fac(P());
-    const branches = ['农桑', '工技', '兵学', '文治', '航海'];
-    const av = GAME.availableTechs(P());
+    const av = new Set(GAME.availableTechs(P()));
     const dn = GAME.donateInfo(P());
-    let h = `<h1>格物致知</h1><div class="note" style="text-align:center">每季文教 ${F.income.sci || 0}　已积 ${Math.round(F.sci)}　点选可研之术以定方略</div>
-      <div class="note" style="text-align:center;margin-top:4px">捐资助学：每 ${dn.rate} 贯折文教 1，本季尚可捐 ${dn.left}（上限为半季文教）
-        <button class="btn sm" data-act="donate" data-arg="part" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>捐 ${Math.min(dn.left, Math.ceil(dn.cap / 4)) * dn.rate} 贯</button>
-        <button class="btn sm" data-act="donate" data-arg="all" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>尽捐 ${dn.cost} 贯</button></div><div class="scroll" style="max-height:70vh;margin-top:8px"><div class="techgrid">`;
-    for (const br of branches) {
-      h += `<div class="techcol"><h3>${br}</h3>`;
-      // 按时代、再按花费排列；有多个时代时插入时代小标题
-      const ids = Object.keys(TECH).filter(id => TECH[id].branch === br).sort((x, y) => ((TECH[x].era || 1) - (TECH[y].era || 1)) || (TECH[x].cost - TECH[y].cost));
-      const eraNames = DATA.ERAS || ['', '中兴', '开海', '万国'];
-      const multiEra = Object.values(TECH).some(t => (t.era || 1) > 1);
-      let lastEra = 0;
-      for (const id of ids) {
-        const t = TECH[id];
-        if (multiEra && (t.era || 1) !== lastEra) { lastEra = t.era || 1; h += `<div class="note" style="margin:6px 0 2px;border-bottom:1px dashed var(--ink2)">${eraNames[lastEra] || '第' + lastEra + '期'}</div>`; }
-        const known = GAME.hasTech(P(), id), can = av.includes(id), cur = F.research === id;
-        const cost = GAME.techCost(P(), id);
-        h += `<div class="tech ${known ? 'known' : can ? 'avail' : 'lock'} ${cur ? 'cur' : ''}" ${can ? `data-act="settech" data-arg="${id}"` : ''}><b>${t.name}</b> ${known ? '✓' : `<span class="cost">${cost}</span>`}<br>${t.desc}${t.req && !known ? `<br><span class="cost">需：${t.req.map(r => TECH[r].name).join('、')}</span>` : ''}${cur ? `<div class="meter gold" style="margin-top:3px"><i style="width:${Math.min(100, F.sci / cost * 100)}%"></i></div>` : ''}</div>`;
-      }
-      h += `</div>`;
-    }
-    h += `</div></div>`;
+    const eras = (DATA.ERAS || ['', '中兴', '开海', '万国']).slice(1);
+    const techs = Object.entries(TECH).map(([id, t]) => ({ id, t, known: !!F.techs[id], can: av.has(id), cur: F.research === id }));
+    techs.sort((a, b) => a.t.cost - b.t.cost);
+    const branchTech = TECH_BRANCHES.map(branch => techs.filter(x => x.t.branch === branch));
+    const active = TECH[F.research]?.branch || branchTech.find(group => group.some(x => x.can))?.[0]?.t.branch || TECH_BRANCHES[0];
+    const filtered = list => list.filter(x => techFilter === 'all' || (techFilter === 'available' ? x.can : x.known));
+    const cards = list => filtered(list).map(x => techCard(x, F.sci)).join('');
+    const branchTitle = (br, entries) => `<b>${br}</b> <span class="note">已学 ${entries.filter(x => x.known).length} / 共 ${entries.length}</span>
+      ${entries.some(x => x.cur) ? '<span class="tech-current" aria-label="研究中">研</span>' : ''}`;
+    const eraTech = (entries, index) => entries.filter(x => (x.t.era || 1) === index + 1);
+    const mobileBranch = (br, index) => {
+      const entries = branchTech[index];
+      return `<details class="tech-branch" ${(techFolds.get(br) ?? (br === active)) ? 'open' : ''}>
+        <summary data-act="techfold" data-arg="${br}">${branchTitle(br, entries)}</summary>
+        ${eras.map((era, i) => {
+          const list = eraTech(entries, i), content = cards(list);
+          if (!content) return '';
+          const key = br + ':' + i, open = techFolds.get(key) ?? !list.every(x => x.known);
+          return `<details class="tech-era" ${open ? 'open' : ''}><summary data-act="techfold" data-arg="${key}">${era}</summary>${content}</details>`;
+        }).join('') || '<p class="note">此分支暂无符合条件的科技。</p>'}</details>`;
+    };
+    const desktopOpen = TECH_BRANCHES.map((_, i) => techFolds.get('desktop:' + i) ?? true);
+    const desktopTree = () => `<div class="techgrid tech-columns">${TECH_BRANCHES.map((br, i) =>
+      `<button class="tech-column" type="button" data-act="techcolumn" data-arg="${i}" aria-expanded="${desktopOpen[i]}">${branchTitle(br, branchTech[i])}</button>`).join('')}</div>
+      ${eras.map((era, i) => {
+        const row = branchTech.map(entries => cards(eraTech(entries, i)));
+        if (!row.some(Boolean)) return '';
+        return `<section class="tech-era-row"><h2>${era}</h2><div class="techgrid">${row.map((content, col) =>
+          `<div class="tech-era-cell" data-column="${col}"><div ${desktopOpen[col] ? '' : 'class="hidden"'}>${content}</div></div>`).join('')}</div></section>`;
+      }).join('')}`;
+    const h = `<h1>格物致知</h1><div class="note tech-intro">每季文教 ${F.income.sci || 0}　已积 ${Math.round(F.sci)}</div>
+      <div class="note tech-intro">捐资助学 · 每 ${dn.rate} 贯折文教 1，本季尚可捐 ${dn.left}（上限为半季文教）
+        <div class="tech-donations"><button class="btn sm" data-act="donate" data-arg="part" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>捐 ${Math.min(dn.left, Math.ceil(dn.cap / 4)) * dn.rate} 贯</button>
+        <button class="btn sm" data-act="donate" data-arg="all" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>尽捐 ${dn.cost} 贯</button></div></div>
+      ${filterTabs('techfilter', '科技筛选', [['all', '全部'], ['available', '只看可研'], ['known', '只看已学']], techFilter)}
+      <div class="scroll tech-tree">${phone.matches ? TECH_BRANCHES.map(mobileBranch).join('') : desktopTree()}</div>`;
     openModal(h, { width: '1040px' });
   }
 
+  const GEN_STATUSES = [['idle', '候命'], ['army', '统军'], ['gov', '知州'], ['court', '朝臣']];
+  const GEN_SORT = [
+    ['total', '综合', g => g.tong + g.wu + g.zhi + g.zheng],
+    ...Object.entries(GAME.STAT_NAME).map(([k, title]) => [k, title, g => g[k]]),
+    ['lv', '级', g => g.lv || 1], ['loyalty', '忠诚', g => g.loyalty ?? 0], ['wins', '战绩', g => g.wins || 0],
+    ['age', '年龄', g => S().year - g.birth],
+  ];
+  let genFilter = 'all', genSort = 'total', genDir = -1;
+  function recordCard(head, detail, buttons, attrs = '') {
+    return `<article class="record-card ${attrs ? 'card-link' : ''}" ${attrs}><div class="record-head">${head}</div>
+      ${detail}${buttons ? `<div class="record-actions">${buttons}</div>` : ''}</article>`;
+  }
+  function sortControl(key, heading) {
+    const current = genSort === key;
+    return `<button type="button" class="${phone.matches ? 'btn sort-chip' : 'record-link'} ${current ? 'selected-sort' : ''}" data-g-sort="${key}"
+      aria-pressed="${current}">${heading}${current ? (genDir < 0 ? ' ▼' : ' ▲') : ''}</button>`;
+  }
+  function generalStatChips(g) {
+    return Object.entries(GAME.STAT_NAME).map(([key, label]) => `<span class="chip ${genSort === key ? 'red gen-sort-stat' : ''}">${label} <b>${g[key]}</b></span>`).join('');
+  }
   function statusText(g) {
     if (g.status === 'army') { const a = GAME.army(g.loc); return a ? '统 ' + esc(GAME.armyName(a)) : '统军'; }
-    if (g.status === 'gov') return '知 ' + GAME.city(g.loc).name;
+    if (g.status === 'gov') return '知 ' + esc(GAME.city(g.loc)?.name || '州府');
     if (g.status === 'idle') return '<span class="pos">候命</span>';
     if (g.status === 'court') { const o = COURT.OFFICES.find(o => o.id === COURT.officeOf(g)); return '<span class="skill">' + (o ? o.name : '朝臣') + '</span>'; }
-    return g.status;
+    return { captive: '被俘', dead: '已故', future: '未出仕', gone: '离任', cand: '待选' }[g.status] || '未详';
   }
   function stanceTag(g) { COURT.ensure(g); const c = g.stance === 'war' ? 'neg' : g.stance === 'peace' ? 'pos' : ''; return `<span class="${c}">${COURT.STANCE_NAME[g.stance]}</span>`; }
-  function showGenerals() {
-    const mine = S().generals.filter(g => g.f === P() && ['idle', 'army', 'gov', 'court'].includes(g.status)).map(g => COURT.ensure(g)).sort((a, b) => (b.tong + b.wu + b.zhi + b.zheng) - (a.tong + a.wu + a.zhi + a.zheng));
-    const caps = S().generals.filter(g => g.status === 'captive' && g.capBy === P());
-    let h = `<h1>文武百官</h1><div class="scroll" style="max-height:72vh"><table class="t"><tr><th>姓名</th><th>年</th><th>级</th><th>统</th><th>武</th><th>智</th><th>政</th><th>特技 / 宝物</th><th>立场</th><th>忠诚</th><th>职守</th><th>战绩</th><th></th></tr>`;
-    for (const g of mine) h += `<tr><td>${PORTRAIT.img(g, 30)} <b>${g.name}</b>${g.hist ? ' <span class=chip>史</span>' : ''}</td><td>${S().year - g.birth}</td><td>${g.lv || 1}</td><td>${g.tong}</td><td>${g.wu}</td><td>${g.zhi}</td><td>${g.zheng}</td><td>${GAME.skillList(g).map(k => `<span class="skill" title="${DATA.SKILLS[k]}">${k}</span>`).join(' ')}${(g.items || []).map(i => ` <span class="chip" title="${DATA.ITEMS[i].desc}">${DATA.ITEMS[i].name}</span>`).join('')}</td><td>${stanceTag(g)}</td><td class="${g.loyalty < 40 ? 'neg' : ''}">${Math.round(g.loyalty)}${g.loyal ? ' <span title="精忠：忠诚不会过低">忠</span>' : ''}</td><td>${statusText(g)}</td><td>${g.wins || 0} 胜</td>
-      <td><button class="btn sm" data-g="reward" data-id="${g.id}" title="赏赐 50 贯，忠诚 +12">赏</button> ${g.status === 'idle' ? `<button class="btn sm" data-g="gov" data-id="${g.id}">任知州</button>` : `<button class="btn sm" data-g="recall" data-id="${g.id}">召回</button>`}${g.status === 'army' ? ` <button class="btn sm" data-g="find" data-id="${g.id}">寻</button>` : ''}</td></tr>`;
-    h += `</table>`;
-    if (caps.length) {
-      h += `<h3 style="margin-top:16px">囚中敌将</h3><table class="t"><tr><th>姓名</th><th>原属</th><th>统</th><th>武</th><th>智</th><th>政</th><th>特技</th><th></th></tr>`;
-      for (const g of caps) h += `<tr><td>${PORTRAIT.img(g, 30)} <b>${g.name}</b></td><td>${facName(g.f)}</td><td>${g.tong}</td><td>${g.wu}</td><td>${g.zhi}</td><td>${g.zheng}</td><td>${g.skill || ''}</td><td><button class="btn sm red" data-g="recruit" data-id="${g.id}">招降</button> <button class="btn sm" data-g="release" data-id="${g.id}">释放</button> <button class="btn sm" data-g="exec" data-id="${g.id}">斩</button></td></tr>`;
-      h += `</table>`;
+  function generalName(g) {
+    return `<b>${esc(g.name)}</b>${g.hist ? ' <span class="chip">史</span>' : ''}`;
+  }
+  function generalTags(g) {
+    return GAME.skillList(g).map(k => `<span class="skill" title="${esc(DATA.SKILLS[k] || '')}">${esc(k)}</span>`).join(' ') +
+      (g.items || []).map(i => ` <span class="chip" title="${esc(DATA.ITEMS[i].desc)}">${esc(DATA.ITEMS[i].name)}</span>`).join('');
+  }
+  function generalLocation(g) {
+    if (g.status === 'army') {
+      const a = GAME.army(g.loc);
+      if (a && (a.f === P() || S().visible[a.tile])) return { type: 'army', id: a.id, tile: a.tile };
     }
-    h += `<p class="note">候命之将方可统军或任知州。文臣多由三年一度的科举选拔（每逢公元年份除三余二之春）。</p></div>`;
-    openModal(h, { width: '900px' });
+    if (g.status === 'gov') {
+      const c = GAME.city(g.loc);
+      if (c && (c.f === P() || S().explored[c.tile])) return { type: 'city', id: c.id, tile: c.tile };
+    }
+    return null;
+  }
+  function generalButtons(g, detail = false, readOnly = false) {
+    const button = (k, text, extra = '') => `<button type="button" class="btn sm ${k === 'recruit' || k === 'assign' ? 'red' : ''}" data-g="${k}" data-id="${g.id}" ${extra}>${text}</button>`;
+    if (g.status === 'captive' && g.capBy === P() && !readOnly) {
+      return button('recruit', '招降') + button('release', '释放') + button('exec', '斩');
+    }
+    if (readOnly || g.f !== P() || !GEN_STATUSES.some(([status]) => status === g.status)) return '';
+    return button('reward', '赏', 'aria-label="赏赐 50 贯" title="赏赐 50 贯，忠诚 +12"') +
+      (g.status === 'idle' ? button('gov', '任知州') + (detail ? button('assign', '任将') : '') : button('recall', '召回')) +
+      (generalLocation(g) ? button('find', '寻') : '');
+  }
+  function handleGeneralAction(k, id, redraw) {
+    const g = GAME.gen(id);
+    if (k === 'find') {
+      const where = generalLocation(g);
+      if (where) { closeModal(); select(where); RENDER.centerOn(where.tile); }
+      return;
+    }
+    if (k === 'gov') {
+      pickCity('任 ' + g.name + ' 为知州', () => true, cid => {
+        if (GAME.assignGovernor(id, cid)) { guide('gov'); toast(`${g.name}出知${GAME.city(cid).name}`); }
+        redraw();
+      }, redraw);
+      return;
+    }
+    if (k === 'assign') { pickArmyFor(g, redraw); return; }
+    if (k === 'recall') GAME.unassign(id);
+    if (k === 'reward') {
+      if (COURT.reward(id)) { toast(`赏赐${g.name}，忠诚升至 ${Math.round(g.loyalty)}`); guide('reward'); }
+      else toast('国库不足');
+    }
+    if (k === 'recruit') {
+      const r = GAME.recruitCaptive(id, P());
+      toast(r ? `${g.name}感恩归降！` : `${g.name}不屈，拒降。`);
+    }
+    if (k === 'release') { GAME.releaseCaptive(id); toast(`释放${g.name}，敌国感念`); }
+    if (k === 'exec') { GAME.executeCaptive(id); toast(`斩${g.name}于市`); }
+    refreshTop(); refreshSide(); RENDER.markDirty();
+    redraw();
+  }
+  function showGenerals() {
+    const mine = S().generals.filter(g => g.f === P() && GEN_STATUSES.some(([status]) => status === g.status)).map(g => COURT.ensure(g));
+    const caps = S().generals.filter(g => g.status === 'captive' && g.capBy === P());
+    const value = GEN_SORT.find(([id]) => id === genSort)[2];
+    const roster = mine.filter(g => genFilter === 'all' || g.status === genFilter)
+      .sort((a, b) => genDir * (value(a) - value(b)) || a.id - b.id);
+    const filters = [['all', '全部 ' + mine.length], ...GEN_STATUSES.map(([id, title]) => [id, title + ' ' + mine.filter(g => g.status === id).length])];
+    const sortHead = (key, label) => `<th aria-sort="${genSort === key ? (genDir < 0 ? 'descending' : 'ascending') : 'none'}">${sortControl(key, label)}</th>`;
+    const desktopName = g => `${PORTRAIT.img(g, 30, 'alt=""')} <button type="button" class="record-link">${generalName(g)}</button>`;
+    const card = g => recordCard(
+      `${PORTRAIT.img(g, 44, 'alt=""')} <div class="record-name"><button type="button" class="record-link">${generalName(g)}</button>
+       <span class="note">${g.status === 'captive' ? esc(facName(g.f)) + ' · 被俘' : statusText(g)}</span></div><span class="chip">Lv ${g.lv || 1}</span>`,
+      `<div class="chips">${generalStatChips(g)}</div>${generalTags(g) ? `<div class="record-tags">${generalTags(g)}</div>` : ''}`,
+      generalButtons(g), `data-general="${g.id}"`);
+    const list = phone.matches ? `<div class="record-list">${roster.map(card).join('')}</div>` :
+      `<table class="t general-table"><tr><th>姓名</th>${sortHead('total', '综合')}${sortHead('age', '年')}${sortHead('lv', '级')}
+        ${Object.entries(GAME.STAT_NAME).map(([k, n]) => sortHead(k, n)).join('')}<th>特技 / 宝物</th><th>立场</th>${sortHead('loyalty', '忠诚')}<th>职守</th>${sortHead('wins', '战绩')}<th></th></tr>
+      ${roster.map(g => `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${GEN_SORT[0][2](g)}</td>
+        <td>${S().year - g.birth}</td><td>${g.lv || 1}</td>${Object.keys(GAME.STAT_NAME).map(k => `<td>${g[k]}</td>`).join('')}
+        <td>${generalTags(g)}</td><td>${stanceTag(g)}</td><td class="${g.loyalty < 40 ? 'neg' : ''}">${Math.round(g.loyalty)}${g.loyal ? ' 忠' : ''}</td>
+        <td>${statusText(g)}</td><td>${g.wins || 0} 胜</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
+    const captiveList = phone.matches ? `<div class="record-list">${caps.map(card).join('')}</div>` :
+      `<table class="t"><tr><th>姓名</th><th>原属</th><th>四维</th><th>特技</th><th></th></tr>${caps.map(g =>
+        `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${esc(facName(g.f))}</td><td>${generalStatChips(g)}</td><td>${generalTags(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
+    openModal(`<h1>文武百官</h1>
+      ${filterTabs('genfilter', '职守筛选', filters, genFilter)}
+      ${phone.matches ? `<div class="sort-chips" role="group" aria-label="将领排序">${GEN_SORT.map(([key, title]) => sortControl(key, title)).join('')}</div>` : ''}
+      <div class="scroll" data-general-roster style="max-height:68vh">${roster.length ? list : '<p class="note">此列暂无将领。</p>'}
+      ${caps.length ? '<div class="sec">囚中敌将</div>' + captiveList : ''}</div>`, { width: '1040px' });
     $('modal').onclick = e => {
-      const b = e.target.closest('[data-g]'); if (!b) return;
-      const id = +b.dataset.id, k = b.dataset.g, g = GAME.gen(id);
-      if (k === 'recall') { GAME.unassign(id); showGenerals(); }
-      if (k === 'reward') { if (COURT.reward(id)) { toast(`赏赐${g.name}，忠诚升至 ${Math.round(g.loyalty)}`); guide('reward'); } else toast('国库不足'); showGenerals(); }
-      if (k === 'find') { const a = GAME.army(g.loc); closeModal(); if (a) { select({ type: 'army', id: a.id, tile: a.tile }); RENDER.centerOn(a.tile); } }
-      if (k === 'gov') pickCity('任 ' + g.name + ' 为知州', c => true, cid => { GAME.assignGovernor(id, cid); guide('gov'); toast(`${g.name}出知${GAME.city(cid).name}`); });
-      if (k === 'recruit') { const r = GAME.recruitCaptive(id, P()); toast(r ? `${g.name}感恩归降！` : `${g.name}不屈，拒降。`); showGenerals(); }
-      if (k === 'release') { GAME.releaseCaptive(id); toast(`释放${g.name}，敌国感念`); showGenerals(); }
-      if (k === 'exec') { GAME.executeCaptive(id); toast(`斩${g.name}于市`); showGenerals(); }
-      refreshTop();
+      const sort = e.target.closest('[data-g-sort]');
+      if (sort) {
+        const key = sort.dataset.gSort;
+        genDir = genSort === key ? -genDir : -1; genSort = key;
+        showGenerals();
+        return;
+      }
+      const button = e.target.closest('[data-g]');
+      if (button) { handleGeneralAction(button.dataset.g, +button.dataset.id, showGenerals); return; }
+      const row = e.target.closest('[data-general]');
+      if (row) showGeneral(+row.dataset.general);
     };
   }
-  function pickCity(title, filter, cb) {
+  function showGeneral(id, { back = showGenerals, readOnly = false } = {}) {
+    const g = GAME.gen(id);
+    if (!g) return;
+    if (g.f === P()) COURT.ensure(g);
+    const service = S().flags.annals?.service?.[g.id];
+    const chips = `<span class="chip">${Math.max(0, S().year - g.birth)} 岁</span><span class="chip">${esc(facName(g.f))}</span><span class="chip">${esc(CULTURE_NAME[g.cul || GAME.fac(g.f)?.culture] || '未详')}</span>`;
+    const statBar = (label, val, max, css = '', suffix = '') => `<div class="row"><b>${label}</b><div class="grow">${meter(val, max, css)}</div><span>${val}${suffix}</span></div>`;
+    const names = (pairs, empty) => pairs.length ? pairs.map(([name, desc]) => `<p class="general-term"><b>${esc(name)}</b> ${esc(desc)}</p>`).join('') : `<p class="note">${empty}</p>`;
+    const skills = GAME.skillList(g).map(k => [k, DATA.SKILLS[k] || '']);
+    const items = (g.items || []).map(i => DATA.ITEMS[i]).filter(Boolean).map(i => [i.name, i.desc]);
+    const buttons = generalButtons(g, true, readOnly);
+    const next = GAME.nextLv(g);
+    openModal(`<h1>将领详情</h1><div class="scroll general-detail" style="max-height:72vh">
+      <div class="record-head general-profile">${PORTRAIT.img(g, 96, 'alt=""')}
+        <div class="record-name"><h2>${generalName(g)}</h2><div class="chips">${chips}</div><div class="general-duty">${statusText(g)}
+         ${generalLocation(g) ? `<button type="button" class="btn sm" data-g="find" data-id="${g.id}">前往</button>` : ''}</div></div></div>
+      <div class="general-bars">${Object.entries(GAME.STAT_NAME).map(([k, label]) => statBar(label, g[k] || 0, 100)).join('')}
+        ${statBar('等级 ' + (g.lv || 1), Math.round(g.exp || 0), next, 'gold', ' / ' + next)}</div>
+      <div class="general-detail-grid">
+        <section><div class="sec">特技</div>${names(skills, '暂无特技。')}</section>
+        <section><div class="sec">宝物</div>${names(items, '未佩宝物。')}</section>
+      </div>
+      <div class="sec">心志</div><div class="chips">
+        <span class="chip">立场 ${COURT.STANCE_NAME[g.stance] || '未详'}</span>
+        <span class="chip">忠诚 ${g.loyalty == null ? '未详' : Math.round(g.loyalty)}</span>
+        <span class="chip">野心 ${g.amb ?? '未详'}</span><span class="chip">精忠 ${g.loyal == null && g.f !== P() ? '未详' : g.loyal ? '是' : '否'}</span>
+      </div><p class="note">立场关乎廷议，忠诚关系去留，野心越盛越易争权，精忠之臣较少离心。</p>
+      <div class="sec">战绩</div><div class="chips"><span class="chip">胜 ${g.wins || 0} 阵</span>
+        ${service ? `<span class="chip">本纪 · 胜 ${service.wins || 0} / 败 ${service.losses || 0}</span>` : ''}</div>
+      <p class="note">史臣曰，${esc(EVENTS.generalBio(g))}。</p>
+      <div class="record-actions"><button class="btn" type="button" data-general-back>返回</button>${buttons}</div></div>`, { width: '640px' });
+    $('modal').onclick = e => {
+      if (e.target.closest('[data-general-back]')) { back(); return; }
+      const button = e.target.closest('[data-g]');
+      if (!button) return;
+      const k = button.dataset.g;
+      const redraw = k === 'release' || k === 'exec' ? back : () => showGeneral(id, { back, readOnly });
+      handleGeneralAction(k, id, redraw);
+    };
+  }
+  function pickArmyFor(g, back) {
+    const armies = S().armies.filter(a => a.f === P());
+    const cap = GAME.capFor(g.id);
+    const rows = armies.map(a => {
+      const leader = GAME.gen(a.gen);
+      return `<div class="row"><div class="grow"><b>${esc(GAME.armyName(a))}</b><br><span class="note">${a.units.length} 营 · ${leader ? '现任 ' + esc(leader.name) : '主将空缺'}</span></div>
+        <button class="btn sm" type="button" data-assign-army="${a.id}">${leader ? '改任' : '任将'}</button></div>`;
+    }).join('');
+    openModal(`<h1>择军任将</h1><p class="note">${esc(g.name)}可统 ${cap} 营。</p><div class="scroll" style="max-height:60vh">${rows || '<p class="note">暂无军团。</p>'}</div>
+      <div class="record-actions"><button type="button" class="btn" data-general-back>返回</button></div>`, { width: '560px' });
+    $('modal').onclick = e => {
+      if (e.target.closest('[data-general-back]')) { back(); return; }
+      const button = e.target.closest('[data-assign-army]');
+      if (!button) return;
+      const a = GAME.army(+button.dataset.assignArmy);
+      if (!a || a.f !== P() || g.status !== 'idle') return;
+      const appoint = () => {
+        GAME.setArmyGeneral(a.id, g.id); refreshSide(); refreshTop(); RENDER.markDirty(); back();
+      };
+      if (a.units.length <= cap) { appoint(); return; }
+      const home = GAME.cityAt(a.tile)?.f === P();
+      confirmBox(`本军有 ${a.units.length} 营，超出统率的 ${a.units.length - cap} 营将${home ? '归入城中' : '离军'}。仍准改任？`, appoint);
+    };
+  }
+  function pickCity(title, filter, cb, onBack) {
     const list = GAME.citiesOf(P()).filter(filter).sort((a, b) => b.pop - a.pop);
     let h = `<h1>${title}</h1><div class="scroll" style="max-height:60vh"><table class="t"><tr><th>城</th><th>户口</th><th>民心</th><th>现任知州</th><th></th></tr>`;
     for (const c of list) { const g = GAME.gen(c.governor); h += `<tr><td><b>${c.name}</b></td><td>${c.pop}</td><td>${Math.round(c.loyalty)}</td><td>${g ? g.name + '（政' + g.zheng + '）' : '—'}</td><td><button class="btn sm red" data-pc="${c.id}">选</button></td></tr>`; }
     h += `</table></div>`;
-    openModal(h, { width: '600px', onClose: () => {} });
-    $('modal').onclick = e => { const b = e.target.closest('[data-pc]'); if (!b) return; $('modal').onclick = null; closeModal(); cb(+b.dataset.pc); refreshSide(); };
+    openModal(h, { width: '600px', onClose: onBack || (() => {}) });
+    $('modal').onclick = e => {
+      const b = e.target.closest('[data-pc]'); if (!b) return;
+      if (onBack) modalOnClose = null;
+      closeModal(); cb(+b.dataset.pc); refreshSide();
+    };
   }
 
-  function showDiplomacy() {
-    const me = GAME.fac(P());
-    const list = Object.keys(me.met).filter(f => GAME.fac(f) && GAME.fac(f).alive && f !== 'rebel');
-    const myPow = GAME.totalPower(P());
-    list.sort((a, b) => (GAME.atWar(P(), b) - GAME.atWar(P(), a)) || (GAME.totalPower(b) - GAME.totalPower(a)));
-    let h = `<h1>鸿胪寺</h1><div class="scroll" style="max-height:72vh"><table class="t"><tr><th></th><th>国</th><th>城</th><th>国力</th><th>好感</th><th>关系</th><th>岁币</th><th>操作</th></tr>`;
-    for (const f of list) {
-      const r = GAME.getRel(P(), f), pw = GAME.totalPower(f);
-      const ratio = pw / (myPow + 1);
-      const trib = r.trib ? (r.trib.from === P() ? `<span class=neg>纳 ${r.trib.amt}</span>` : `<span class=pos>收 ${r.trib.amt}</span>`) + `·${Math.ceil(r.trib.turns)}季` : '';
-      h += `<tr><td>${facSeal(f)}</td><td><b>${facName(f)}</b></td><td>${GAME.citiesOf(f).length}</td><td>${ratio > 1.5 ? '<span class=neg>远胜我</span>' : ratio > 1 ? '略胜我' : ratio > 0.5 ? '略逊' : '<span class=pos>弱小</span>'}</td><td>${Math.round(r.op)}</td><td>${relText(f)}</td><td>${trib}</td><td>
-        <button class="btn sm" data-d="envoy" data-f="${f}">遣使(${GAME.envoyCost(P())})</button>
-        ${r.war ? `<button class="btn sm red" data-d="peace" data-f="${f}">议和</button>` : `<button class="btn sm" data-d="war" data-f="${f}" ${r.truce > 0 ? 'title="和约未满，背约将失信于天下"' : ''}>宣战</button> ${r.ally ? '' : `<button class="btn sm" data-d="ally" data-f="${f}">结盟</button>`} <button class="btn sm" data-d="trib" data-f="${f}">索贡</button>`}
-      </td></tr>`;
+  let dipFilter = 'all';
+  function landNeighbors() {
+    const near = new Set(), p = P();
+    for (let tile = 0; tile < S().tileCity.length; tile++) {
+      if (GAME.tileOwner(tile) !== p) continue;
+      for (const next of GEO.NBR[tile]) {
+        const neighbor = GAME.tileOwner(next);
+        if (neighbor && neighbor !== p) near.add(neighbor);
+      }
     }
-    h += `</table><p class="note">交战诸国之外，凡已结识者皆在此列。好感随遣使、通商而升，随战事而降。和约期内宣战，天下诸国好感大降。</p></div>`;
-    openModal(h, { width: '960px' });
+    return near;
+  }
+  function powerText(f, myPower) {
+    const ratio = GAME.totalPower(f) / (myPower + 1);
+    return ratio > 1.5 ? '<span class="neg">远胜我</span>' : ratio > 1 ? '略胜我' :
+      ratio > 0.5 ? '略逊' : '<span class="pos">弱小</span>';
+  }
+  function tributeText(r) {
+    if (!r.trib) return '无';
+    const pay = r.trib.from === P();
+    return `<span class="${pay ? 'neg' : 'pos'}">${pay ? '纳' : '收'} ${r.trib.amt} 贯/季</span> · 余 ${Math.ceil(r.trib.turns)} 季`;
+  }
+  function opinionText(r) {
+    const op = Math.round(r.op), width = Math.min(100, Math.abs(op)) / 2;
+    const color = op >= 0 ? 'pos' : 'neg';
+    return `<span class="opinion ${color}">${op ? sgn(op) : 0}<span class="opinion-bar" aria-hidden="true"><i style="width:${width}%;left:${op < 0 ? 50 - width : 50}%"></i></span></span>`;
+  }
+  function diplomacyButtons(f) {
+    const r = GAME.getRel(P(), f);
+    const btn = (action, text, main, extra = '') => `<button type="button" class="btn sm ${main ? 'red' : ''}" data-d="${action}" data-f="${f}" ${extra}>${text}</button>`;
+    const envoy = btn('envoy', `遣使 ${GAME.envoyCost(P())}`, !r.war);
+    if (r.war) return btn('peace', '议和', true) + envoy;
+    const truce = r.truce > 0 ? 'title="和约未满，背约将失信于天下"' : '';
+    return envoy + btn('war', '宣战', false, truce) + (r.ally ? '' : btn('ally', '结盟')) + btn('trib', '索贡');
+  }
+  function diplomacyAction(action, f, redraw) {
+    const finish = result => { toast(result.msg); refreshTop(); redraw(); };
+    if (action === 'envoy') { finish(GAME.sendEnvoy(P(), f)); return; }
+    if (action === 'ally') { finish(GAME.proposeAlliance(P(), f)); return; }
+    if (action === 'trib') { finish(GAME.demandTribute(P(), f)); return; }
+    if (action === 'war') {
+      const r = GAME.getRel(P(), f);
+      courtVote('war', f, () => {
+        if (r.truce > 0) for (const x in S().factions) if (x !== P() && x !== 'rebel') GAME.getRel(P(), x).op -= 15;
+        GAME.declareWar(P(), f); RENDER.buildPolitical(); refreshTop(); redraw();
+      }, r.truce > 0 ? '（背弃和约，诸国好感 −15）' : '', redraw);
+      return;
+    }
+    if (action === 'peace') courtVote('peace', f, () => {
+      const result = GAME.proposePeace(P(), f);
+      if (!result.ok && result.counter) {
+        confirmBox(`${result.msg}　允否？`, () => finish(GAME.proposePeace(P(), f, result.counter)), redraw);
+      } else finish(result);
+    }, '', redraw);
+  }
+  function showDiplomacy() {
+    const me = GAME.fac(P()), myPower = GAME.totalPower(P());
+    const near = dipFilter === 'neighbors' ? landNeighbors() : null;
+    const list = Object.keys(me.met).filter(f => f !== P() && f !== 'rebel' && GAME.fac(f)?.alive)
+      .filter(f => dipFilter === 'all' || (dipFilter === 'war' ? GAME.atWar(P(), f) :
+        dipFilter === 'allies' ? GAME.allied(P(), f) : near.has(f)));
+    list.sort((a, b) => (GAME.atWar(P(), b) - GAME.atWar(P(), a)) || (GAME.totalPower(b) - GAME.totalPower(a)));
+    const choices = [['war', '交战中'], ['allies', '盟友'], ['neighbors', '邻国'], ['all', '全部']];
+    const rows = list.map(f => {
+      const r = GAME.getRel(P(), f), cities = GAME.citiesOf(f).length;
+      const name = `<button type="button" class="record-link"><b>${esc(facName(f))}</b></button>`;
+      const relation = relText(f), power = powerText(f, myPower), opinion = opinionText(r), tribute = tributeText(r);
+      if (phone.matches) return recordCard(
+        `${facSeal(f)} <div class="record-name">${name}</div><span class="chip">${relation}</span>`,
+        `<div class="chips"><span class="chip">城 ${cities}</span><span class="chip">国力 ${power}</span><span class="chip">好感 ${opinion}</span>
+          <span class="chip">岁币 ${tribute}</span></div>`, diplomacyButtons(f), `data-nation="${f}"`);
+      return `<tr class="card-link" data-nation="${f}"><td>${facSeal(f)}</td><td>${name}</td><td>${cities}</td><td>${power}</td><td>${opinion}</td>
+        <td>${relation}</td><td>${tribute}</td><td><div class="record-actions">${diplomacyButtons(f)}</div></td></tr>`;
+    }).join('');
+    const listHTML = !rows ? '<p class="note">此列暂无邦国。</p>' : phone.matches ? `<div class="record-list">${rows}</div>` :
+      `<table class="t dip-table"><tr><th></th><th>国</th><th>城</th><th>国力</th><th>好感</th><th>关系</th><th>岁币</th><th>操作</th></tr>${rows}</table>`;
+    openModal(`<h1>鸿胪寺</h1>${filterTabs('dipfilter', '外交筛选', choices, dipFilter)}
+      <div class="scroll dip-page" style="max-height:70vh">${listHTML}
+      <p class="note">列已结识之邦，邻国以陆地接壤为准。好感随遣使、通商而升，和约未满而宣战则失信于诸国。</p></div>`, { width: '980px' });
     $('modal').onclick = e => {
-      const b = e.target.closest('[data-d]'); if (!b) return;
-      const f = b.dataset.f, k = b.dataset.d;
-      let res;
-      if (k === 'envoy') res = GAME.sendEnvoy(P(), f);
-      if (k === 'war') {
-        const r = GAME.getRel(P(), f);
-        courtVote('war', f, () => {
-          if (r.truce > 0) for (const x in S().factions) if (x !== P() && x !== 'rebel') GAME.getRel(P(), x).op -= 15;
-          GAME.declareWar(P(), f); RENDER.buildPolitical(); refreshTop(); showDiplomacy();
-        }, r.truce > 0 ? '（背弃和约，诸国好感 −15）' : '');
+      const action = e.target.closest('[data-d]');
+      if (action) { diplomacyAction(action.dataset.d, action.dataset.f, showDiplomacy); return; }
+      const row = e.target.closest('[data-nation]');
+      if (row) showNation(row.dataset.nation);
+    };
+  }
+  function showNation(f) {
+    const F = GAME.fac(f);
+    if (!F || f === P()) return;
+    const redraw = () => showNation(f);
+    const original = DATA.FACTIONS.find(x => x.id === f)?.name;
+    const nationName = original && original !== F.name ? `${F.name}（${original}）` : F.name;
+    const history = DATA.FACTION_INFO[f + '@' + F.name] || DATA.FACTION_INFO[f];
+    const cs = GAME.citiesOf(f), cap = GAME.city(F.capital);
+    const population = cs.reduce((total, c) => total + c.pop, 0);
+    const aggr = F.aggr >= 0.7 ? '好战' : F.aggr >= 0.5 ? '尚武' : F.aggr >= 0.3 ? '守成' : '恭顺';
+    const r = GAME.getRel(P(), f);
+    const front = [], allies = [];
+    for (const [key, rel] of Object.entries(S().rel)) {
+      const [a, b] = key.split('|');
+      const other = a === f ? b : b === f ? a : null;
+      if (!other || other === 'rebel' || !GAME.fac(other)?.alive) continue;
+      if (rel.war) front.push(facName(other));
+      if (rel.ally) allies.push(facName(other));
+    }
+    const value = GEN_SORT[0][2];
+    const leaders = S().generals.filter(g => g.f === f && ['army', 'gov', 'court'].includes(g.status))
+      .sort((a, b) => value(b) - value(a) || a.id - b.id).slice(0, 3);
+    const leaderLinks = leaders.map(g => `<button type="button" class="record-link nation-leader" data-nation-gen="${g.id}">
+      ${PORTRAIT.img(g, 36, 'alt=""')} ${generalName(g)}</button>`).join('');
+    const row = (label, content) => `<div class="row"><b>${label}</b><span class="grow">${content}</span></div>`;
+    openModal(`<h1>国家简介</h1><div class="scroll nation-detail" style="max-height:72vh">
+      <div class="record-head general-profile">${facSeal(f, 'nation-seal')}<div class="record-name"><h2>${esc(nationName)}</h2>
+        <div class="chips"><span class="chip">${esc(CULTURE_NAME[F.culture] || '未详')}</span><span class="chip">${aggr}</span></div></div></div>
+      <div class="nation-grid">${row('都城', esc(cap?.name || '未定'))}${row('城数', cs.length)}
+        ${row('户口', population + ' 万')}${row('国力', powerText(f, GAME.totalPower(P())))}</div>
+      <div class="sec">与我关系</div><div class="chips"><span class="chip">${f === 'rebel' ? '交战' : relText(f)}</span>
+        <span class="chip">好感 ${opinionText(r)}</span><span class="chip">岁币 ${tributeText(r)}</span></div>
+      ${row('交战中', esc(front.join('、') || '无'))}${row('盟友', esc(allies.join('、') || '无'))}
+      <div class="sec">名将</div><div class="nation-leaders">${leaderLinks || '<span class="note">未闻其将。</span>'}</div>
+      <div class="sec">史略</div><p class="nation-history">${esc(history || '此为群起的义军，未有一朝可纪。')}</p>
+      <div class="record-actions"><button type="button" class="btn sm" data-nation-back>返回</button><button type="button" class="btn sm" data-nation-map>舆图上查看</button>
+        ${f !== 'rebel' && F.alive ? diplomacyButtons(f) : ''}</div><p class="note" role="status" id="nation-tip"></p>
+      </div>`, { width: '660px' });
+    $('modal').onclick = e => {
+      if (e.target.closest('[data-nation-back]')) { showDiplomacy(); return; }
+      if (e.target.closest('[data-nation-map]')) {
+        if (!cap || !S().explored[cap.tile]) { $('nation-tip').textContent = '尚未探明其地'; return; }
+        closeModal(); select({ type: 'city', id: cap.id, tile: cap.tile }); RENDER.centerOn(cap.tile);
         return;
       }
-      if (k === 'peace' && !b.dataset.voted) {
-        courtVote('peace', f, () => { const bb = document.createElement('i'); bb.dataset.d = 'peace'; bb.dataset.f = f; bb.dataset.voted = 1; showDiplomacy(); setTimeout(() => $('modal').onclick({ target: { closest: () => bb } }), 0); });
-        return;
-      }
-      if (k === 'peace') {
-        res = GAME.proposePeace(P(), f);
-        if (!res.ok && res.counter) {
-          const amt = res.counter;
-          confirmBox(`${res.msg}　允否？`, () => { const r2 = GAME.proposePeace(P(), f, amt); toast(r2.msg); refreshTop(); showDiplomacy(); });
-          return;
-        }
-      }
-      if (k === 'ally') res = GAME.proposeAlliance(P(), f);
-      if (k === 'trib') res = GAME.demandTribute(P(), f);
-      if (res) toast(res.msg);
-      refreshTop(); showDiplomacy();
+      const leader = e.target.closest('[data-nation-gen]');
+      if (leader) { showGeneral(+leader.dataset.nationGen, { back: redraw, readOnly: true }); return; }
+      const action = e.target.closest('[data-d]');
+      if (action) diplomacyAction(action.dataset.d, f, redraw);
     };
   }
   // ---------- 廷议 ----------
-  function courtVote(motion, f, onPass, extra) {
+  function courtVote(motion, f, onPass, extra, onCancel) {
     const res = COURT.vote(motion);
     const lean = S().court.lean;
     if (res.pass && ((motion === 'war' && lean > 40) || (motion === 'peace' && lean < -40))) { COURT.applyVote(res, false); toast('群臣附议，准奏施行'); refreshTop(); onPass(); return; }
-    const list = arr => arr.map(([g, w]) => `<span class="vm" title="${COURT.STANCE_NAME[g.stance]} · 忠诚 ${Math.round(g.loyalty)}">${PORTRAIT.img(g, 26)}${g.name}${w > 1 ? '<sup>' + w + '</sup>' : ''}</span>`).join('') || '<span class="note">无</span>';
+    const list = arr => arr.map(([g, w]) => `<button type="button" class="vm record-link" data-v-gen="${g.id}" title="${COURT.STANCE_NAME[g.stance]} · 忠诚 ${Math.round(g.loyalty)}">${PORTRAIT.img(g, 26, 'alt=""')}${esc(g.name)}${w > 1 ? '<sup>' + w + '</sup>' : ''}</button>`).join('') || '<span class="note">无</span>';
     const tot = res.sw + res.ow || 1;
     const subj = motion === 'war' ? `向【${facName(f)}】宣战` : `与【${facName(f)}】议和`;
     let h = `<h1>廷　议</h1><div class="story" style="text-align:center;padding-bottom:4px">议题：<b>${subj}</b>${extra ? '<br><span class="note">' + extra + '</span>' : ''}</div>
@@ -981,40 +1412,62 @@ var UI = (function () {
     if (res.pass) h += `<button class="choice" data-v="pass">群臣附议，准奏施行<small>权威 +2</small></button>`;
     else h += `<button class="choice" data-v="force">乾纲独断，执意施行<small>权威 −12，反对者忠诚 −8</small></button>`;
     h += `<button class="choice" data-v="no">${res.pass ? '暂且作罢' : '从众作罢'}</button></div>`;
-    openModal(h, { width: '720px', onClose: () => {} });
-    $('modal').onclick = e => {
-      const b = e.target.closest('[data-v]'); if (!b) return;
-      $('modal').onclick = null;
-      const v = b.dataset.v;
-      closeModal();
-      if (v === 'no') return;
-      COURT.applyVote(res, v === 'force');
-      refreshTop();
-      onPass();
+    const present = () => {
+      openModal(h, { width: '720px', onClose: onCancel || (() => {}) });
+      $('modal').onclick = e => {
+        const info = e.target.closest('[data-v-gen]');
+        if (info) { showGeneral(+info.dataset.vGen, { back: present, readOnly: true }); return; }
+        const b = e.target.closest('[data-v]'); if (!b) return;
+        const v = b.dataset.v;
+        if (v !== 'no') modalOnClose = null;
+        closeModal();
+        if (v === 'no') return;
+        COURT.applyVote(res, v === 'force');
+        refreshTop();
+        onPass();
+      };
     };
+    present();
   }
   function showCourt() {
     const C = S().court, emp = COURT.emperor();
     const fake = { id: 900000 + (C.emp || 0), name: emp.name, f: P(), birth: emp.birth, tong: 40, wu: 30, zhi: 70, zheng: 75, cul: 'han' };
     const mem = COURT.members().map(x => x[0]);
     const cnt = k => mem.filter(g => g.stance === k).length;
-    let h = `<h1>朝　堂</h1><div class="scroll" style="max-height:74vh">
-      <div class="court-top"><div style="text-align:center">${PORTRAIT.img(fake, 80)}<div><b style="font-size:18px">${emp.title}</b></div><div class="note">${emp.name} · ${S().year - emp.birth}岁<br>${emp.note}</div></div>
-      <div style="flex:1">
-        <div class="row"><span style="width:76px">皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
-        <div class="row"><span style="width:76px">朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
-        <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受帝意、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
-        <div class="chips"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip" style="color:var(--green);border-color:var(--green)">主和 ${cnt('peace')}</span></div>
-      </div></div>
-      <div class="sec">百官</div><table class="t"><tr><th>官职</th><th>职掌</th><th>现任</th><th>立场</th><th>忠诚</th><th>效果</th><th></th></tr>`;
-    for (const o of COURT.OFFICES) {
+    const offices = COURT.OFFICES.map(o => {
       const g = COURT.holder(o.id);
-      h += `<tr><td><b>${o.name}</b></td><td class="note">${o.desc}</td><td>${g ? PORTRAIT.img(g, 28) + ' ' + g.name + `（${GAME.STAT_NAME[o.stat]}${g[o.stat]}）` : '<span class="note">空缺</span>'}</td><td>${g ? stanceTag(g) : ''}</td><td>${g ? Math.round(g.loyalty) : ''}</td><td>${g ? '+' + Math.round(COURT.bonus(o.id) * 100) + '%' : ''}</td>
-        <td><button class="btn sm red" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? ` <button class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}</td></tr>`;
-    }
-    h += `</table><div class="sec">近日朝堂</div><div class="loglist">${S().log.filter(e => /罢|独断|相位|叛|挂冠|即皇帝位|登第/.test(e.text)).slice(-6).reverse().map(e => `<div><span class="d">${e.d}</span>${esc(e.text)}</div>`).join('') || '<div class="note">无事</div>'}</div></div>`;
+      const pct = Math.round(COURT.bonus(o.id) * 100);
+      const score = GAME.STAT_NAME[o.stat];
+      const title = `<b>${o.name}</b>`;
+      const holder = g ? `<button type="button" class="record-link" data-court-gen="${g.id}">${PORTRAIT.img(g, 32, 'alt=""')} ${esc(g.name)}</button>` : '<span class="note">虚位以待</span>';
+      const actions = `<button type="button" class="btn sm red" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? `<button type="button" class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}`;
+      if (phone.matches) {
+        return recordCard(title + `<span class="court-effect">效果 +${pct}%</span>`,
+          `<p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}${g ? `<span class="note">（看${score}：${g[o.stat]}）</span>
+          <span class="chip">${stanceTag(g)}</span><span class="chip">忠诚 ${Math.round(g.loyalty)}</span>` : ''}</div>`, actions);
+      }
+      return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td>${holder}${g ? `（${score}${g[o.stat]}）` : ''}</td>
+        <td>${g ? stanceTag(g) : ''}</td><td>${g ? Math.round(g.loyalty) : ''}</td><td>${g ? '+' + pct + '%' : ''}</td>
+        <td class="record-actions-cell">${actions}</td></tr>`;
+    }).join('');
+    const logs = S().log.filter(e => /罢|独断|相位|叛|挂冠|即皇帝位|登第/.test(e.text)).slice(-6).reverse()
+      .map(e => `<div><span class="d">${e.d}</span><span>${esc(e.text)}</span></div>`).join('');
+    const h = `<h1>朝　堂</h1><div class="scroll court-page" style="max-height:74vh">
+      <div class="court-top"><div class="court-emperor">${PORTRAIT.img(fake, 80, 'alt=""')}<h2>${emp.title}</h2><div class="note">${emp.name} · ${S().year - emp.birth}岁<br>${emp.note}</div></div>
+      <div class="court-stats">
+        <div class="row court-metric"><span>皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
+        <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
+        <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受帝意、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
+        <div class="chips court-stances"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip pos">主和 ${cnt('peace')}</span></div>
+      </div></div>
+      <div class="sec">百官</div>
+      ${phone.matches ? `<div class="record-list office-list">${offices}</div>` :
+        `<table class="t court-table"><tr><th>官职</th><th>职掌</th><th>现任</th><th>立场</th><th>忠诚</th><th>效果</th><th></th></tr>${offices}</table>`}
+      <div class="sec">近日朝堂</div><div class="loglist court-log">${logs || '<div class="note">无事</div>'}</div></div>`;
     openModal(h, { width: '980px' });
     $('modal').onclick = e => {
+      const info = e.target.closest('[data-court-gen]');
+      if (info) { showGeneral(+info.dataset.courtGen, { back: showCourt }); return; }
       const b = e.target.closest('[data-o]'); if (!b) return;
       const k = b.dataset.k, O = COURT.OFFICES.find(o => o.id === k);
       if (b.dataset.o === 'off') { const g = COURT.holder(k); COURT.vacate(k); if (g) g.loyalty -= 10; showCourt(); refreshTop(); return; }
@@ -1032,13 +1485,14 @@ var UI = (function () {
       ${row('界面字号', opt('ui', 0.9, '小') + opt('ui', 1, '中') + opt('ui', 1.15, '大') + opt('ui', 1.3, '特大'))}
       ${row('地图显示', opt('showRes', !SET.showRes, SET.showRes ? '隐藏物产' : '显示物产') + opt('showSites', !SET.showSites, SET.showSites ? '隐藏奇遇点' : '显示奇遇点') + opt('showNames', !SET.showNames, SET.showNames ? '隐藏国名' : '显示国名'))}
       ${row('新手引导', `<button class="btn sm" data-guide="1">${S() && S().guide && S().guide.off ? '重新显示' : '隐藏'}</button>`)}
+      ${row('终局', `<button class="btn sm" data-act="retire" ${S().settlement ? 'disabled' : ''}>禅位·盖棺定论</button>`)}
       <p class="note">设置保存在本浏览器中。</p>
       <section class="settings-about" aria-labelledby="about-title">
         <h2 id="about-title" class="sec">关于</h2>
         <p><strong>还我河山</strong> <span class="note">v${VERSION}</span></p>
         <p class="note">大宋征服天下</p>
-        <div class="row"><span>制作人</span><strong>大老师</strong></div>
-        <div class="row"><span>微信</span><strong id="about-wechat">lynchrrr</strong>
+        <div class="row"><span>制作人</span><strong>${CREATOR}</strong></div>
+        <div class="row"><span>微信</span><strong id="about-wechat">${WECHAT}</strong>
           <button type="button" class="btn sm" data-copy-wechat>复制</button></div>
         <p class="note">试玩中，欢迎加微信反馈问题与建议。</p>
       </section></div>`;
@@ -1159,14 +1613,28 @@ var UI = (function () {
     withLoading('展读旧卷……', () => { closeModalQuiet(); GAME.deserialize(d); ensureBase(); enterGame(); select(null); centerCapital(); toast('读档完成：' + GAME.dateStr()); processPending(); });
   }
   function closeModalQuiet() { $('modal-bg').classList.add('hidden'); modalOnClose = null; modalLocked = false; }
+  function returnToTitle() {
+    closeModalQuiet();
+    select(null);
+    for (const id of ['top', 'side', 'endturn', 'minimap', 'tip', 'mobilebar', 'orderbar']) $(id).classList.add('hidden');
+    titleScreen();
+  }
   function exportSave() {
     const data = GAME.serialize();
     const blob = new Blob([data], { type: 'application/json' });
+    downloadBlob(blob, `还我河山_${S().year}_${GAME.dateStr()}.json`);
+  }
+  function downloadBlob(blob, name) {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `还我河山_${S().year}_${GAME.dateStr()}.json`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    const url = URL.createObjectURL(blob);
+    a.href = url; a.download = name;
+    try {
+      document.body.appendChild(a);
+      a.click();
+    } finally {
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
   }
   function showSave(fromTitle) {
     const slots = ['auto', '1', '2', '3', '4', '5'];
@@ -1187,16 +1655,31 @@ var UI = (function () {
       if (s === 'del') { localStorage.removeItem(SAVE_PREFIX + k); localStorage.removeItem(SAVE_PREFIX + k + '_meta'); showSave(fromTitle); }
       if (s === 'export') exportSave();
       if (s === 'import') $('importfile').click();
-      if (s === 'title') { closeModalQuiet(); for (const id of ['top', 'side', 'endturn', 'minimap', 'tip', 'mobilebar']) $(id).classList.add('hidden'); titleScreen(); }
+      if (s === 'title') returnToTitle();
     };
+  }
+  function difficultyDescription(d) {
+    const { coalition: co, command: ai, occupation: c, debt } = d;
+    return `他国工钱 ${Math.round(d.aiYield * 100)}%、战力 ${Math.round(d.aiBattle * 100)}%。` +
+      `金夏开局守营 +${d.northGarrison}、野战军最多加 ${d.northArmy} 营，对宋军团上限 +${ai.armies}。` +
+      `开局前 ${co.warDelay} 季有宣战保护，威胁度达 ${Math.round(co.threat * 1000) / 10}% 后，接壤诸国合纵所需国力为我朝 ${Math.round(co.ratio * 100)}%。` +
+      `诸国军队再攻同一宋城，须相隔约 ${Math.round(ai.siegeInterval * 90)} 日。` +
+      `新附城产出最多减 ${Math.round(c.production * 100)}%，历 ${c.seasons} 季。` +
+      (debt.governance ? `四十城外每多一城，治理支出按基础支出的 ${Math.round(debt.governance * 1000) / 10}% 加计。` : '') +
+      `欠饷每季士气减 ${debt.morale}，欠粮者民心下降${debt.famine ? '，久则户口减少' : ''}。` +
+      (d.eraRecruit ? `他国迈入新时代可募 ${d.eraRecruit} 营。` : '') +
+      (d.startReserve < 1 ? '大宋初始钱粮减半。' : d.startReserve > 1 ? `大宋初始钱粮增加 ${Math.round((d.startReserve - 1) * 100)}%。` : '');
   }
   function showHelp() {
     openModal(`<h1>玩法说明</h1><div class="scroll help" style="max-height:72vh;max-width:760px">
-      <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你执掌南宋，经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>攻占诸国原都城</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
+      <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你执掌南宋，经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>占领所有有主城池</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
+      <h3>难度</h3><p>以大宋城数占比与国力名次定威胁。弱城与新附城易遭敌军窥伺，委任知州、赈济可缓和新附之患。</p>
+      <ul class="difficulty-help">${DATA.DIFFICULTY.map(d => `<li><b>${d.name}</b>　${difficultyDescription(d)}</li>`).join('')}</ul>
       <h3>回合动画</h3><p>结束回合后，视野内的行军、交战会依次演示：兵锋推进、刀兵相交、伤亡跳字与胜负印章。点击地图或按空格可跳过；顶栏“动画”按钮可切换常速/快速/关闭。</p>
       ${TOUCH.matches ? '<h3>手机操作</h3><ul><li>单指拖动平移，双指捏合缩放，轻点选取城池或军队。</li><li>选中我军后，底部出现<b>军令条</b>：轻点地图上的目的地，军令条显示路程与胜算，点<b>「出发」</b>（或再点一次该格）即行军；点「取消」重选。</li><li>「详情」可展开军团或城池的全部信息；右下「下一周」结束回合。</li></ul>' : ''}
-      <h3>${TOUCH.matches ? '键盘鼠标操作' : '操作'}</h3><ul><li>左键选城池/军队；拖动平移地图；滚轮缩放；点小地图跳转。</li><li>选中军队后<b>右键</b>目标格即行军，目标为交战之敌则发起进攻；或按 <kbd>M</kbd> 后左键。远途会自动分季行进。</li>
+      <h3>${TOUCH.matches ? '键盘鼠标操作' : '操作'}</h3><ul><li>左键选城池/军队；拖动平移地图；滚轮缩放；点小地图跳转。</li><li>选中军队后<b>右键</b>目标格即行军，目标为交战之敌则发起进攻；或按 <kbd>M</kbd> 后左键。</li>
       <li>选中军队后<b>左键点目标格</b>先显示路线与抵达时间，<b>再点一次</b>即出发（右键可直接出发）。远途路线会保留，下回合按 <kbd>C</kbd> 或点“继续行军”接着走，<kbd>Shift+C</kbd>／“全军继续”令所有有路线的军团一齐前进。</li>
+      <li>本回合行军力足以穿过本国军团并落在空格时，可由友军所在格经过。若行军力不足，驻足于友军之前，下回合可继续。</li>
       <li><kbd>Enter</kbd> 下一回合，<kbd>Tab</kbd> 下一支待命军，<kbd>空格</kbd> 令其驻守，<kbd>Esc</kbd> 取消。</li></ul>
       <h3>内政</h3><ul><li>城池按户口耕作周边地块，产出粮、工、钱、文。余粮使户口增长；工用于营建与征兵；钱用于军饷、加急；文推动科技。</li>
       <li>民心低于 25 易生民变。寺观、常平仓、知州、奢侈物产（茶丝瓷香料）可安民；战事日久则厌战。</li>
@@ -1221,16 +1704,327 @@ var UI = (function () {
       <h3>存档</h3><p>每季自动存档；可手动存于五栏，并可导出为文件长期保存。</p></div>`, { width: '820px' });
   }
 
+  function showHonors() {
+    const { entries, total, rating } = EVENTS.achievements();
+    const cats = ['武功', '疆土', '文治', '人物', '外交', '奇遇', '挑战'];
+    const groups = cats.map((cat, i) => {
+      const group = entries.filter(x => x.cat === cat);
+      const achieved = group.filter(x => x.date).length;
+      const cards = group.map(x => {
+        const hidden = !x.date && cat === '挑战';
+        const name = hidden ? '？？' : x.name;
+        const text = hidden ? '终局时依本局功业揭晓。' : x.desc;
+        return recordCard(`<b>${name}</b><span class="chip ${x.date ? 'red' : ''}">+${x.pts}</span>`,
+          `<div class="${x.date ? '' : 'note'}">${text}</div><span class="note">${esc(x.date || '待成')}</span>`, '');
+      }).join('');
+      return `<details class="honor-group" ${i === 0 ? 'open' : ''}><summary><b>${cat}</b> <span class="note">${achieved} / ${group.length}</span></summary>
+        <div class="record-list honor-cards">${cards}</div></details>`;
+    }).join('');
+    openModal(`<h1>功业</h1><div class="honor-summary"><b>${total}</b> 功业分 <span class="chip red">${rating}</span></div>
+      <div class="scroll honor-page" style="max-height:70vh">${groups}</div>`, { width: '760px' });
+  }
+  function hallEntries() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(HALL_KEY) || '[]');
+      return Array.isArray(raw) ? raw.filter(x => x && Number.isFinite(x.total)).slice(0, 20) : [];
+    } catch (e) { return []; }
+  }
+  function showHall() {
+    const hall = hallEntries();
+    const rows = hall.map(row => recordCard(
+      `<b>${esc(row.rating)}</b><span class="chip red">${row.total} 分</span><span class="note">${esc(row.date)}</span>`,
+      `<span class="note">${esc(row.result)} · ${DIFFICULTY_NAMES[row.difficulty] || DIFFICULTY_NAMES[1]} · ${GAME.SCALE_NAME[row.scale] || '回合'}制 · ${row.years} 年</span>`, '')).join('');
+    openModal(`<h1>功业榜</h1><div class="scroll" style="max-height:72vh">${rows ? '<div class="record-list">' + rows + '</div>' :
+      '<p class="note">此卷尚无题名。</p>'}</div>`, { width: '640px' });
+  }
+  function drawSettlementScroll(score) {
+    const sheet = document.createElement('canvas');
+    sheet.id = 'settlement-scroll';
+    sheet.width = 1080;
+    sheet.setAttribute('role', 'img');
+    sheet.setAttribute('aria-label', `还我河山结算长卷，${score.title}，${score.rating}，${score.total} 分`);
+    const ctx = sheet.getContext('2d');
+    const draws = [], lettering = [];
+    const ink = '#342b20', muted = '#6f5d44', cinnabar = '#a23227', paper = '#f5ead2';
+    const left = 66, right = sheet.width - left, middle = sheet.width / 2, width = right - left;
+    let y = 0;
+    const face = (size, bold = false) => `${bold ? 'bold ' : ''}${size}px ${RENDER.FONT}`;
+    const text = (value, x, top, size, opts = {}) => {
+      draws.push(() => {
+        ctx.font = face(size, opts.bold);
+        ctx.textAlign = opts.align || 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = opts.color || ink;
+        ctx.fillText(value, x, top, opts.width ?? sheet.width);
+        lettering.push(value);
+      });
+    };
+    const line = (x1, x2, top, color = '#c5b28b') => draws.push(() => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x1, top);
+      ctx.lineTo(x2, top);
+      ctx.stroke();
+    });
+    const section = title => {
+      y += 48;
+      text(title, left, y, 48, { bold: true });
+    };
+    const paragraph = (value, x, available, size, leading) => {
+      ctx.font = face(size);
+      let part = '';
+      for (const char of value) {
+        if (part && ctx.measureText(part + char).width > available) {
+          text(part, x, y, size);
+          y += leading;
+          part = '';
+        }
+        part += char;
+      }
+      if (part) {
+        text(part, x, y, size);
+        y += leading;
+      }
+    };
+
+    text('还我河山', middle, 136, 118, { align: 'center', bold: true });
+    const seal = { unify: '一统', retire: '禅位', defeat: '社稷倾覆' }[score.type];
+    draws.push(() => {
+      ctx.save();
+      ctx.translate(861, 143);
+      ctx.rotate(-.105);
+      const size = seal.length === 4 ? 98 : 86;
+      ctx.fillStyle = cinnabar;
+      ctx.fillRect(-size / 2, -size / 2, size, size);
+      ctx.strokeStyle = paper;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(6 - size / 2, 6 - size / 2, size - 12, size - 12);
+      ctx.font = face(35, true);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = paper;
+      if (seal.length === 4) {
+        ctx.fillText(seal.slice(0, 2), 0, -19);
+        ctx.fillText(seal.slice(2), 0, 19);
+      } else ctx.fillText(seal, 0, 0);
+      ctx.restore();
+      lettering.push(seal);
+    });
+    text(`${score.rating}　·　${score.total} 分`, middle, 241, 54, { align: 'center', color: cinnabar, bold: true });
+    const difficultyName = DIFFICULTY_NAMES[score.difficulty] || DIFFICULTY_NAMES[1];
+    text(`公元 ${score.start}—${score.end} 年　·　历 ${score.years} 年　·　${difficultyName}　·　${GAME.SCALE_NAME[score.scale] || '回合'}制`,
+      middle, 314, 33, { align: 'center', color: muted, width });
+    y = 339;
+    line(left, right, y, muted);
+
+    const cities = GAME.citiesOf(P());
+    const captured = Object.keys(S().flags.achievementProgress.capturedCapitals).map(id => GAME.city(+id)).filter(Boolean);
+    const capital = cities.find(c => c.id === GAME.fac(P()).capital);
+    const map = document.createElement('canvas');
+    map.width = width;
+    map.height = Math.round(width * RENDER.BH / RENDER.BW);
+    RENDER.drawOverview(map.getContext('2d'), map.width, map.height, { captured, capital });
+    section('占领舆图');
+    const mapTop = y + 37;
+    draws.push(() => ctx.drawImage(map, left, mapTop));
+    y = mapTop + map.height + 34;
+    let territory = 0;
+    for (let tile = 0; tile < S().tileCity.length; tile++) if (GAME.tileOwner(tile) === P()) territory++;
+    const people = cities.reduce((sum, c) => sum + c.pop, 0);
+    const landShare = (territory / S().tileCity.length * 100).toFixed(1);
+    text(`城池 ${cities.length} / ${S().cities.length}　·　户口 ${people} 万　·　疆域占全图 ${landShare}%`,
+      left, y, 34, { color: muted, width });
+    y += 38;
+    line(left, right, y);
+
+    section('积分');
+    // 旧版结算档保存了分项数值，仍可从当时的局面读回同值分项的依据。
+    const priorRows = score.rows.some(row => row.length < 3) ? EVENTS.finalScore(score.type, false).rows : [];
+    for (const [i, [label, value, basis]] of score.rows.entries()) {
+      const prior = priorRows[i];
+      const matched = prior?.[0] === label && Math.abs(prior[1] - value) < .01 ? prior[2] : null;
+      y += 58;
+      text(label, left, y, 36);
+      text(basis || matched || '依结算簿', left + 194, y, 33, { color: muted, width: 575 });
+      text(String(value), right, y, 36, { align: 'right' });
+      line(left, right, y + 29);
+    }
+    y += 66;
+    text(`难度系数 ×${score.factor.toFixed(1)}`, left, y, 38);
+    text(`总分 ${score.total}`, right, y, 46, { bold: true, color: cinnabar, align: 'right' });
+    y += 34;
+
+    section('本局功业');
+    const honors = [...score.honors].sort((a, b) => b.pts - a.pts);
+    const listed = honors.slice(0, 12);
+    if (!honors.length) {
+      y += 56;
+      text('本卷尚无功业。', left, y, 34, { color: muted });
+    }
+    for (const [i, honor] of listed.entries()) {
+      if (i % 2 === 0) y += 55;
+      const x = i % 2 === 0 ? left : middle + 12;
+      text(honor.name, x, y, 36, { width: 310 });
+      text(`+${honor.pts}`, x + width / 2 - 27, y, 33, { color: cinnabar, align: 'right' });
+    }
+    if (honors.length > listed.length) {
+      y += 50;
+      text(`共 ${honors.length} 项，余 ${honors.length - listed.length} 项未列`, left, y, 34, { color: muted });
+    }
+    y += 42;
+    line(left, right, y);
+
+    const chronicle = EVENTS.settlementChronicle();
+    section('大事记');
+    y += 60;
+    if (!chronicle.events.length) paragraph('本卷未记大事。', left, width, 35, 50);
+    for (const [date, fact] of chronicle.events) {
+      text(date, left, y, 33, { color: cinnabar, width: 268 });
+      paragraph(fact, left + 294, width - 294, 35, 49);
+      y += 8;
+    }
+    y += 8;
+    text('史官评语', left, y, 36, { bold: true, color: cinnabar });
+    y += 55;
+    paragraph(score.assessment, left, width, 35, 52);
+    y += 12;
+    line(left, right, y);
+    section('将相列传');
+    y += 84;
+    for (const [i, { g, wins }] of chronicle.generals.entries()) {
+      const x = left + i * width / 3, top = y - 32;
+      draws.push(() => {
+        ctx.drawImage(PORTRAIT.get(g), x, top, 78, 78);
+        ctx.strokeStyle = '#c5b28b';
+        ctx.strokeRect(x, top, 78, 78);
+      });
+      text(g.name, x + 92, y - 7, 36, { bold: true, width: width / 3 - 105 });
+      text(`胜 ${wins} 场`, x + 92, y + 34, 33, { color: muted });
+    }
+    if (!chronicle.generals.length) text('本卷尚无列传。', left, y, 34, { color: muted });
+    y += 88;
+    line(left, right, y);
+    text(`制作人 ${CREATOR} · 微信 ${WECHAT}`, middle, y + 42, 31, { align: 'center', color: muted });
+    text('更多游戏　小红书搜索「模拟游戏大全」', middle, y + 88, 31, { align: 'center', color: muted });
+    sheet.height = y + 148;
+    const wash = ctx.createLinearGradient(0, 0, sheet.width, 0);
+    wash.addColorStop(0, '#e3cba1');
+    wash.addColorStop(.09, paper);
+    wash.addColorStop(.91, paper);
+    wash.addColorStop(1, '#e3cba1');
+    ctx.fillStyle = wash;
+    ctx.fillRect(0, 0, sheet.width, sheet.height);
+    for (const [inset, weight, color] of [[19, 4, ink], [28, 1.5, muted]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = weight;
+      ctx.strokeRect(inset, inset, sheet.width - inset * 2, sheet.height - inset * 2);
+    }
+    for (const draw of draws) draw();
+    sheet._lettering = lettering;
+    return sheet;
+  }
+  function previewSettlementPng(blob) {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'settlement-preview';
+    dialog.innerHTML = '<header><span>长按图片保存到相册</span><button type="button" class="btn">关闭</button></header><img alt="还我河山结算长卷">';
+    const url = URL.createObjectURL(blob);
+    function cleanup() { dialog.remove(); URL.revokeObjectURL(url); }
+    try {
+      dialog.querySelector('img').src = url;
+      dialog.querySelector('button').onclick = () => dialog.close();
+      dialog.addEventListener('close', cleanup, { once: true });
+      document.body.append(dialog);
+      dialog.showModal();
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  }
+  async function saveSettlementScroll(canvas, score, button) {
+    button.disabled = true;
+    try {
+      const blob = await new Promise((resolve, reject) => canvas.toBlob(
+        png => png?.size ? resolve(png) : reject(new Error('空白长卷')), 'image/png'));
+      if (!canvas.isConnected) return;
+      const filename = `还我河山-结算-公元${score.end}-${score.rating}.png`;
+      if (phone.matches || TOUCH.matches) {
+        try {
+          const data = { files: [new File([blob], filename, { type: 'image/png' })] };
+          if (navigator.share && navigator.canShare?.(data)) {
+            await navigator.share(data);
+            return;
+          }
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          toast('分享未成，请长按图片保存。', 'scroll-error');
+        }
+        if (canvas.isConnected) previewSettlementPng(blob);
+      } else downloadBlob(blob, filename);
+    } catch (error) {
+      toast('长卷未能保存，请再试。', 'scroll-error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+  function showSettlement(result) {
+    const ending = GAME.finishGame(result);
+    const score = ending.score = EVENTS.settlementScore(ending);
+    let canvas;
+    try { canvas = drawSettlementScroll(score); }
+    catch (error) { toast('长卷未能绘成。', 'scroll-error'); }
+    openModal(`<div class="scroll settlement-page">${canvas ? '' : `<h1>${esc(score.title)}</h1><p class="note">${esc(score.rating)} · ${score.total} 分</p>`}</div>
+      <div class="record-actions">
+        <button type="button" class="btn" data-settlement="title">再开天下</button>
+        ${ending.type === 'unify' ? '<button type="button" class="btn" data-settlement="continue">继续经营</button>' : ''}
+        <button type="button" class="btn" data-settlement="record" ${ending.recorded ? 'disabled' : ''}>${ending.recorded ? '已录入功业榜' : '录入功业榜'}</button>
+        ${canvas ? '<button type="button" class="btn red" data-settlement="save">保存长卷</button>' : ''}
+      </div><p class="note settlement-feedback" role="status"></p>`, { width: '820px', lock: true });
+    if (canvas) $('modal').querySelector('.settlement-page').append(canvas);
+    $('modal').onclick = e => {
+      const b = e.target.closest('[data-settlement]');
+      if (!b) return;
+      if (b.dataset.settlement === 'save') { saveSettlementScroll(canvas, score, b); return; }
+      if (b.dataset.settlement === 'title') { returnToTitle(); return; }
+      if (b.dataset.settlement === 'continue') {
+        ending.continued = true;
+        closeModal();
+        return;
+      }
+      if (ending.recorded) return;
+      const entry = { date: new Date().toLocaleDateString('zh-CN'), rating: score.rating, total: score.total,
+        difficulty: score.difficulty, scale: score.scale, result: score.title, years: score.years };
+      const status = $('modal').querySelector('.settlement-feedback');
+      try {
+        localStorage.setItem(HALL_KEY, JSON.stringify([entry, ...hallEntries()].slice(0, 20)));
+        ending.recorded = true;
+        b.disabled = true; b.textContent = '已录入功业榜';
+        status.textContent = '本局已题名。';
+      } catch (e) {
+        status.textContent = '未能入榜，请检查本浏览器存储空间。';
+      }
+    };
+  }
+
   // ---------- 事件 ----------
   function processPending() {
-    if (!S() || !$('modal-bg').classList.contains('hidden')) return;
+    if (!S() || !$('title').classList.contains('hidden') || !$('modal-bg').classList.contains('hidden')) return;
     if (battleQueue.length) { flushBattles(true); return; }
+    if (S().defeat && !S().settlement) GAME.finishGame('defeat');
+    const settlement = S().settlement;
+    if (settlement && !settlement.continued) {
+      const ev = settlement.type === 'unify' ? 'endingUnify' : 'endingDefeat';
+      const index = S().pending.findIndex(p => p.ev === ev);
+      if (index >= 0) showEvent(S().pending.splice(index, 1)[0], settlement.type);
+      else showSettlement(settlement.type);
+      return;
+    }
     const p = S().pending.shift();
     if (!p) { refreshTop(); refreshSide(); return; }
     if (p.ev === 'peaceoffer' && !GAME.atWar(P(), p.from)) return processPending();
     showEvent(p);
   }
-  function showEvent(p) {
+  function showEvent(p, ending) {
     const v = EVENTS.view(p);
     if (v.type === 'pick') {
       const chosen = new Set();
@@ -1261,6 +2055,7 @@ var UI = (function () {
       const b = e.target.closest('[data-ch]'); if (!b) return;
       $('modal').onclick = null;
       EVENTS.resolve(p, +b.dataset.ch);
+      if (ending) { showSettlement(ending); return; }
       closeModal();
       RENDER.buildPolitical(); RENDER.buildFog(); refreshSide(); refreshTop();
     };
@@ -1307,7 +2102,6 @@ var UI = (function () {
         GAME.takeAnim();
         snap = RENDER.snapshot();
         GAME.endTurn();
-        for (const a of S().armies) if (a.f === P() && a.sentry && GAME.armyAt(a.tile) === a) { /* keep sentry */ }
         RENDER.buildPolitical(); RENDER.buildFog();
         if (SET.autosave === 'turn' || (SET.autosave === 'season' && S().newSeason)) saveSlot('auto', true);
         guide('turns');
@@ -1361,6 +2155,6 @@ var UI = (function () {
     setTimeout(() => { el.style.transition = 'opacity .5s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 500); }, type === 'big' ? 2200 : 3800);
   }
 
-  return { boot, select, toast, processPending, engage };
+  return { boot, select, toast, processPending, engage, showSettlement };
 })();
 window.addEventListener('load', () => UI.boot());

@@ -12,8 +12,8 @@ var AI = (function () {
     research(f);
     const enemies = enemiesOf(f);
     economy(f, cities, enemies);
-    if (f !== 'rebel') diplomacy(f, cities, enemies);
-    military(f, cities, enemies);
+    const declared = f !== 'rebel' && diplomacy(f, enemies);
+    military(f, cities, declared ? enemiesOf(f) : enemies);
   }
 
   function enemiesOf(f) {
@@ -166,30 +166,49 @@ var AI = (function () {
     return list;
   }
 
-  function diplomacy(f, cities, enemies) {
+  function diplomacy(f, enemies) {
     const F = GAME.fac(f), P = S().player;
+    const rules = GAME.difficultyRules().coalition;
+    let changed = false;
     // 与电脑议和
     for (const e of enemies) {
       if (e === P || e === 'rebel') continue;
-      if (rand() < 0.2 * GAME.E() && GAME.aiWantsPeace(f, e) > 15 && GAME.aiWantsPeace(e, f) > -5) GAME.makePeace(f, e);
+      const commonFoe = f !== P && enemies.includes(P) && GAME.atWar(e, P);
+      if (rand() < (commonFoe ? rules.peaceRate : 0.2) * GAME.E() &&
+          GAME.aiWantsPeace(f, e) > (commonFoe ? -5 : 15) && GAME.aiWantsPeace(e, f) > (commonFoe ? -20 : -5)) {
+        GAME.makePeace(f, e);
+        changed = true;
+      }
     }
-    // 宣战
-    const realWars = enemies.filter(e => e !== 'rebel').length;
-    if (realWars >= 2 || S().T - F.lastWar < 10) return;
-    if (rand() > F.aggr * 0.06 * GAME.E()) return;
+    const realWars = enemies.filter(e => e !== 'rebel' && GAME.atWar(f, e)).length;
+    const threat = f !== P ? GAME.playerThreat() : null;
+    if (threat?.active && threat.border.has(f) && S().T >= rules.warDelay && realWars < 3) {
+      const r = GAME.getRel(f, P);
+      if (!r.war && !r.ally && r.truce <= 0 && r.op < rules.opinion &&
+          rand() < (0.25 + F.aggr * 0.2) * GAME.E()) {
+        let combined = GAME.totalPower(f);
+        for (const o in S().factions) if (o !== P && o !== f && o !== 'rebel' &&
+          GAME.fac(o).alive && GAME.allied(f, o) && GAME.atWar(o, P)) combined += GAME.totalPower(o);
+        if (combined >= threat.power * rules.ratio) { GAME.declareWar(f, P); return true; }
+      }
+    }
+    // 常规拓边
+    if (realWars >= 2 || S().T - F.lastWar < 10) return changed;
+    if (rand() > F.aggr * 0.06 * GAME.E()) return changed;
     const myP = GAME.totalPower(f);
     const cands = neighbors(f).filter(o => {
       const OF = GAME.fac(o);
       if (!OF.alive) return false;
       const r = GAME.getRel(f, o);
       if (r.war || r.ally || r.truce > 0 || r.op > 25) return false;
-      if (o === P && S().T < 6) return false;
+      if (o === P && (S().T < rules.warDelay || (threat?.active && threat.border.has(f)))) return false;
       const ratio = myP / (GAME.totalPower(o) + 1);
       return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
     });
-    if (!cands.length) return;
+    if (!cands.length) return changed;
     cands.sort((a, b) => GAME.totalPower(a) - GAME.totalPower(b));
     GAME.declareWar(f, cands[0]);
+    return true;
   }
 
   // ---------- 军事 ----------
@@ -203,8 +222,11 @@ var AI = (function () {
   function military(f, cities, enemies) {
     const F = GAME.fac(f);
     const atWarNow = enemies.length > 0;
+    const fightSong = f !== S().player && f !== 'rebel' && enemies.includes(S().player);
+    const rules = f !== S().player && f !== 'rebel' ? GAME.difficultyRules().command : null;
     let armies = S().armies.filter(a => a.f === f);
-    const maxArmies = Math.max(1, Math.round(cities.length / 3) + (atWarNow ? 1 : 0) + (F.mongolBoost ? 3 : 0) + Math.round(2 * richness(F)));
+    const maxArmies = Math.max(1, Math.round(cities.length / 3) + (atWarNow ? 1 : 0) + (F.mongolBoost ? 3 : 0) +
+      Math.round(2 * richness(F)) + (fightSong ? rules.armies : 0));
     // 组建
     if (armies.length < maxArmies) {
       const cs = cities.slice().sort((a, b) => b.garrison.length - a.garrison.length);
@@ -228,22 +250,30 @@ var AI = (function () {
       if (g && g.tong > g.zheng - 10) GAME.setArmyGeneral(a.id, g.id);
     }
     const es = new Set(enemies);
-    const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f)), defs: new Map(), frontier: undefined };
+    const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f)),
+      defs: new Map(), frontier: undefined, rules, fightSong };
     for (const a of armies) {
       if (!S().armies.includes(a)) continue;
       try { armyAct(a, cities, enemies, ctx); } catch (e) { console.error('AI army', e); }
     }
   }
 
-  function nearestOwnCity(a, cities) {
+  function nearestOwnCity(a, cities, free = false) {
     let best = null, bd = 1e9;
-    for (const c of cities) { const d = GEO.dist(c.tile, a.tile); if (d < bd) { bd = d; best = c; } }
+    for (const c of cities) {
+      if (c.f !== a.f || (free && c.tile !== a.tile && GAME.armyAt(c.tile))) continue;
+      const d = GEO.dist(c.tile, a.tile);
+      if (d < bd) { bd = d; best = c; }
+    }
     return best;
+  }
+
+  function siegeReady(c, rules) {
+    return c?.f !== S().player || S().T + 1e-9 >= (c.lastSiege ?? -Infinity) + rules.siegeInterval;
   }
 
   function armyAct(a, cities, enemies, ctx) {
     const f = a.f;
-    const avg = a.units.reduce((s, u) => s + u.s, 0) / Math.max(1, a.units.length);
     const here = GAME.cityAt(a.tile);
     // 城中补员
     if (here && here.f === f) {
@@ -253,10 +283,13 @@ var AI = (function () {
         GAME.transferToArmy(a.id, bi);
       }
     }
+    const avg = a.units.reduce((s, u) => s + u.s, 0) / Math.max(1, a.units.length);
     const myP = armyPower(a);
+    const rules = ctx.rules;
     let goal = null;
-    if (avg < 45 || a.morale < 30) {
-      const c = nearestOwnCity(a, cities);
+    if (avg < (rules?.retreat ?? 45) || a.morale < (rules?.morale ?? 30) ||
+        (rules && a.units.length <= 2 && a.units.length < GAME.armyCap(a) / 2)) {
+      const c = nearestOwnCity(a, cities, !!rules);
       if (c && c.tile !== a.tile) goal = c.tile;
       else return;
     } else if (enemies.length) {
@@ -265,7 +298,7 @@ var AI = (function () {
       for (const o of ctx.eArmies) {
         if (!S().armies.includes(o)) continue;
         const d = GEO.dist(o.tile, a.tile);
-        if (d > 9) continue;
+        if (d > 9 || ctx.fightSong && !siegeReady(GAME.cityAt(o.tile), rules)) continue;
         const nearMine = cities.some(c => GEO.dist(c.tile, o.tile) <= 3);
         const op = armyPower(o);
         if (op < myP * 1.15 && (nearMine || d <= 4) && d < td) { td = d; threat = o; }
@@ -278,8 +311,15 @@ var AI = (function () {
         if (d > 22) continue;
         if (a.badTargets && a.badTargets[c.id] > S().T) continue;
         let def = ctx.defs.get(c.id); if (def === undefined) { def = cityDefense(c); ctx.defs.set(c.id, def); }
-        if (myP < def * 0.9 && !(def < 30 && a.units.some(u => u.t === 'siege'))) continue;
-        const score = d + def / 15 - (c.cap ? 3 : 0);
+        const againstSong = ctx.fightSong && c.f === S().player;
+        if (againstSong && !siegeReady(c, rules)) continue;
+        const reconquest = rules && c.recentCapture?.from === f && S().T - c.recentCapture.t < rules.reconquest;
+        if (myP < def * (againstSong ? rules.assault : 0.9) && !(def < 30 && a.units.some(u => u.t === 'siege'))) continue;
+        const border = againstSong && cities.some(home => GEO.dist(home.tile, c.tile) <= 7);
+        const north = f === 'jin' && border && S().T < 20 ? rules.northPush : 0;
+        const weakness = border && c.recentCapture && S().T - c.recentCapture.t < rules.reconquest ? (100 - c.loyalty) * rules.unrestWeight : 0;
+        const score = d + def / 15 * (border ? rules.defenseWeight : 1) - (c.cap ? 3 : 0) -
+          north - weakness - (reconquest ? 8 : 0);
         if (score < best) { best = score; tgt = c; }
       }
       if (threat && (!tgt || td < GEO.dist(tgt.tile, a.tile))) goal = threat.tile;
@@ -318,7 +358,14 @@ var AI = (function () {
       }
       a.path = p; a.aiGoal = goal;
     }
-    GAME.advance(a);
+    // 通过行军入口确认确实即将交战。排入待守队列时也计一次，免得同回合重复派兵。
+    GAME.advance(a, ctx.fightSong ? (tile, defender) => {
+      if (defender !== S().player) return true;
+      const city = GAME.cityAt(tile);
+      if (!siegeReady(city, rules)) return false;
+      if (city?.f === S().player) city.lastSiege = S().T;
+      return true;
+    } : null);
   }
 
   function rebelArmies() {

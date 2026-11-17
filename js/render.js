@@ -12,6 +12,7 @@ var RENDER = (function () {
   let gestureUntil = 0;
   const FONT = '"Kaiti SC","STKaiti","KaiTi","楷体","BiauKai","Noto Serif CJK SC","Songti SC",serif';
   const PAPER = [236, 228, 208];
+  const RUIN_INK = '#756e62';
 
   function tx(i) { const c = i % W, r = (i / W) | 0; return OX + HS * SQ3 * (c + 0.5 * (r & 1)); }
   function ty(i) { const r = (i / W) | 0; return OY + HS * 1.5 * r; }
@@ -339,6 +340,28 @@ var RENDER = (function () {
     if (dead.size) for (const [k, e] of [...chunkCache]) if (dead.has(k.split('@')[0])) { chunkCache.delete(k); chunkPixels -= e.c.width * e.c.height; }
     prevOwn = own;
   }
+  function cityFaction(id) {
+    const faction = GAME.fac(id);
+    return faction?.alive ? faction : null;
+  }
+  function politicalOwners(S) {
+    const cities = S.cities.map(c => cityFaction(c.f)?.id || null);
+    return Array.from(S.tileCity, id => cities[id] ?? null);
+  }
+  function territoryPaths(owners, explored) {
+    // 合并同色各格，避免分别填色留下格线。
+    const paths = {};
+    for (let i = 0; i < owners.length; i++) {
+      const owner = owners[i];
+      if (!owner || !explored[i]) continue;
+      const path = paths[owner] || (paths[owner] = new Path2D());
+      const cs = corners(i, HS + 0.4);
+      path.moveTo(...cs[0]);
+      for (let k = 1; k < cs.length; k++) path.lineTo(...cs[k]);
+      path.closePath();
+    }
+    return paths;
+  }
   function buildPolitical() {
     const S = GAME.S;
     const scale = PS * layerScale;
@@ -348,17 +371,10 @@ var RENDER = (function () {
     p.clearRect(0, 0, polit.width, polit.height);
     p.setTransform(scale, 0, 0, scale, 0, 0);
     const N = W * H;
-    const own = new Array(N);
-    for (let i = 0; i < N; i++) { const c = S.tileCity[i]; own[i] = c >= 0 ? S.cities[c].f : null; }
+    const own = politicalOwners(S);
     invalidateChunks(own.map((f, i) => f && S.explored[i] ? f : null));
     // 按势力合并为一条路径整体填色，避免逐格叠色留下格线
-    const paths = {}, edges = {};
-    for (let i = 0; i < N; i++) {
-      const f = own[i]; if (!f || !S.explored[i]) continue;
-      const P2 = paths[f] || (paths[f] = new Path2D());
-      const cs = corners(i, HS + 0.4);
-      P2.moveTo(cs[0][0], cs[0][1]); for (let k = 1; k < 6; k++) P2.lineTo(cs[k][0], cs[k][1]); P2.closePath();
-    }
+    const paths = territoryPaths(own, S.explored), edges = {};
     borderSegs = [];
     for (let i = 0; i < N; i++) {
       const f = own[i]; if (!f || !S.explored[i]) continue;
@@ -390,7 +406,10 @@ var RENDER = (function () {
     }
     // 国名
     const groups = {};
-    for (const c of S.cities) { if (!S.explored[c.tile]) continue; (groups[c.f] = groups[c.f] || []).push(c); }
+    for (const c of S.cities) {
+      if (!S.explored[c.tile] || !cityFaction(c.f)) continue;
+      (groups[c.f] = groups[c.f] || []).push(c);
+    }
     p.textAlign = 'center'; p.textBaseline = 'middle';
     for (const f in groups) {
       if (!opts.showNames) break;
@@ -405,6 +424,72 @@ var RENDER = (function () {
       p.fillText(name, sx / sw, sy / sw + HS * 1.4);
     }
     miniDirty = true; markDirty();
+  }
+  function drawOverview(context, width, height, { captured, capital }) {
+    const S = GAME.S, kx = width / BW, ky = height / BH;
+    const paint = territoryPaths(politicalOwners(S), S.explored);
+    const visible = territoryPaths(Array(W * H).fill('visible'), S.explored).visible;
+    const paper = '#f1e5cb', red = '#a83c32';
+    context.save();
+    context.fillStyle = paper;
+    context.fillRect(0, 0, width, height);
+    if (visible) {
+      context.save();
+      context.scale(kx, ky);
+      context.clip(visible);
+      if (base) context.drawImage(base, 0, 0, BW, BH);
+      for (const [f, path] of Object.entries(paint)) {
+        context.fillStyle = f === S.player ? hexA(red, .78) : hexA(GAME.fac(f).color, .32);
+        context.fill(path);
+      }
+      context.restore();
+    }
+    context.strokeStyle = '#97856b';
+    context.strokeRect(.5, .5, width - 1, height - 1);
+    context.font = `bold 18px ${FONT}`;
+    context.textBaseline = 'middle';
+    context.textAlign = 'left';
+    const used = [];
+    const markers = capital ? [capital, ...captured.filter(c => c !== capital)] : captured;
+    drawRuins(context, width, height, 4);
+    for (const c of markers) {
+      const x = tx(c.tile) * kx, y = ty(c.tile) * ky, ruler = cityFaction(c.f);
+      const isCapital = c === capital && ruler, mark = ruler ? red : RUIN_INK;
+      const textWidth = Math.ceil(context.measureText(c.name).width);
+      const slot = (left, mid) => [Math.max(4, Math.min(width - textWidth - 4, left)), Math.max(12, Math.min(height - 12, mid))];
+      const slots = [slot(x + 9, y), slot(x - textWidth - 9, y)];
+      for (const gap of [16, -16, 32, -32, 48, -48]) {
+        slots.push(slot(x + 9, y + gap), slot(x - textWidth - 9, y + gap), slot(x - textWidth / 2, y + gap));
+      }
+      const [left, mid] = slots.find(([lx, ly]) => used.every(([ux, uy, uw]) =>
+        Math.abs(ly - uy) >= 20 || lx + textWidth + 4 < ux || lx > ux + uw + 4)) || slots[0];
+      used.push([left, mid, textWidth]);
+      if (Math.abs(mid - y) > 8) {
+        context.strokeStyle = hexA(mark, .64);
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(Math.max(left, Math.min(x, left + textWidth)), mid);
+        context.stroke();
+      }
+      context.fillStyle = mark;
+      context.strokeStyle = paper;
+      context.lineWidth = 2;
+      if (isCapital) {
+        context.fillRect(x - 6, y - 6, 12, 12);
+        context.strokeRect(x - 6, y - 6, 12, 12);
+      } else {
+        context.beginPath();
+        context.arc(x, y, 3.5, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+      }
+      context.lineWidth = 3.5;
+      context.strokeText(c.name, left, mid);
+      context.fillStyle = ruler ? '#682a22' : RUIN_INK;
+      context.fillText(c.name, left, mid);
+    }
+    context.restore();
   }
   function hexA(hex, a) {
     const n = parseInt(hex.slice(1), 16);
@@ -449,6 +534,16 @@ var RENDER = (function () {
 
   // ---------- 小地图 ----------
   let miniCanvas = null;
+  function drawRuins(context, width, height, size) {
+    const S = GAME.S;
+    if (!S) return;
+    context.fillStyle = RUIN_INK;
+    for (const c of S.cities) {
+      if (!S.explored[c.tile] || cityFaction(c.f)) continue;
+      const x = tx(c.tile) * width / BW, y = ty(c.tile) * height / BH;
+      context.fillRect(x - size / 2, y - size / 2, size, size);
+    }
+  }
   function buildMini() {
     if (!miniCanvas || !base) return;
     const m = miniCanvas.getContext('2d');
@@ -470,6 +565,7 @@ var RENDER = (function () {
     }
     if (polit) m.drawImage(polit, 0, 0, miniCanvas.width, miniCanvas.height);
     if (fog) m.drawImage(fog, 0, 0, miniCanvas.width, miniCanvas.height);
+    drawRuins(m, miniCanvas.width, miniCanvas.height, 3);
   }
 
   // ---------- 主绘制 ----------
@@ -667,35 +763,36 @@ var RENDER = (function () {
       if (!S.explored[c.tile]) continue;
       const [x, y] = w2s(tx(c.tile), ty(c.tile));
       if (!onScreen(x, y, 60)) continue;
-      const F = GAME.fac(anim ? (anim.cityF.get(c.id) || c.f) : c.f);
-      const big = c.cap || c.pop >= 10;
-      if (z < 0.42 && !big) { ctx.fillStyle = F.color; ctx.fillRect(x - 2.5, y - 2.5, 5, 5); continue; }
-      const s = c.cap ? sz * 1.25 : sz;
+      const f = anim?.cityF.has(c.id) ? anim.cityF.get(c.id) : c.f;
+      const F = cityFaction(f), capital = !!F && c.cap, color = F?.color || RUIN_INK;
+      const big = capital || c.pop >= 10;
+      if (z < 0.42 && !big) { ctx.fillStyle = color; ctx.fillRect(x - 2.5, y - 2.5, 5, 5); continue; }
+      const s = capital ? sz * 1.25 : sz;
       // 印章
       ctx.save();
       ctx.translate(x, y);
-      ctx.fillStyle = F.color;
+      ctx.fillStyle = color;
       ctx.strokeStyle = 'rgba(20,18,16,0.8)'; ctx.lineWidth = 1;
       roundRect(ctx, -s / 2, -s / 2, s, s, s * 0.14); ctx.fill(); ctx.stroke();
-      if (c.cap) { ctx.strokeStyle = 'rgba(245,236,214,0.9)'; ctx.lineWidth = 1.2; roundRect(ctx, -s / 2 + 2.5, -s / 2 + 2.5, s - 5, s - 5, s * 0.1); ctx.stroke(); }
+      if (capital) { ctx.strokeStyle = 'rgba(245,236,214,0.9)'; ctx.lineWidth = 1.2; roundRect(ctx, -s / 2 + 2.5, -s / 2 + 2.5, s - 5, s - 5, s * 0.1); ctx.stroke(); }
       ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(s * 0.68)}px ${FONT}`;
-      ctx.fillText(c.name[0], 0, 1);
+      ctx.fillText(F ? c.name[0] : '荒', 0, 1);
       ctx.restore();
       // 城名
       if (z >= 0.5 || big) {
         const fs = Math.max(11, Math.min(18, 9 + 5 * z));
-        ctx.font = `${c.cap ? 'bold ' : ''}${fs}px ${FONT}`;
+        ctx.font = `${capital ? 'bold ' : ''}${fs}px ${FONT}`;
         const label = c.name + (z > 0.9 ? ' ' + c.pop : '');
-        pushLabel(label, x, y + s / 2 + fs * 0.7, ctx.font, 'rgba(25,22,20,0.95)', (c.cap ? 90 : big ? 60 : 40) + (c.f === S.player ? 5 : 0), 3.5);
+        pushLabel(label, x, y + s / 2 + fs * 0.7, ctx.font, F ? 'rgba(25,22,20,0.95)' : RUIN_INK, (capital ? 90 : big ? 60 : 40) + (F?.id === S.player ? 5 : 0), 3.5);
       }
       // 城防残损
-      if (z > 0.7 && c.wall < GAME.maxWall(c) * 0.6) {
+      if (F && z > 0.7 && c.wall < GAME.maxWall(c) * 0.6) {
         const w = s; const r = c.wall / GAME.maxWall(c);
         ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(x - w / 2, y - s / 2 - 5, w, 3);
         ctx.fillStyle = 'rgba(180,40,30,0.9)'; ctx.fillRect(x - w / 2, y - s / 2 - 5, w * r, 3);
       }
       // 资源角标：守军数
-      if (z > 1.6 && c.f === S.player) {
+      if (z > 1.6 && F?.id === S.player) {
         ctx.font = `10px ${FONT}`; ctx.fillStyle = 'rgba(40,30,20,0.8)';
         ctx.fillText('戍' + c.garrison.length, x + s * 0.9, y - s * 0.4);
       }
@@ -765,7 +862,7 @@ var RENDER = (function () {
     if (a.progTo != null && a.progFrac > 0 && GEO.dist(a.tile, a.progTo) === 1) { const k = Math.min(0.62, a.progFrac * 0.75); x += (tx(a.progTo) - x) * k; y += (ty(a.progTo) - y) * k; }
     return [x, y];
   }
-  function dispOf(a) { const [x, y] = transitXY(a); return { id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units), idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0, routed: !!(a.path && a.path.length) }; }
+  function dispOf(a) { const [x, y] = transitXY(a); return { id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units), idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0, routed: !!(a.path && a.path.length), sentry: !!a.sentry }; }
   function drawArmies(S, z, now) {
     const list = anim ? [...anim.disp.values()] : S.armies.map(dispOf);
     for (const d of list) {
@@ -775,6 +872,13 @@ var RENDER = (function () {
       if (d.dying) { alpha = Math.max(0, 1 - (now - d.dying) / d.dyingDur); }
       drawArmyEntry(d, z, now, alpha);
     }
+  }
+  function drawSentryMark(x, y) {
+    ctx.save();
+    ctx.font = `bold 11px ${FONT}`;
+    ctx.lineWidth = 2.5; ctx.strokeStyle = '#f6eedb'; ctx.fillStyle = '#463427';
+    ctx.strokeText('垒', x, y); ctx.fillText('垒', x, y);
+    ctx.restore();
   }
   function drawArmyEntry(d, z, now, alpha) {
     const S = GAME.S;
@@ -798,6 +902,7 @@ var RENDER = (function () {
       ctx.strokeStyle = sel ? 'rgba(220,170,40,1)' : 'rgba(20,18,16,0.7)'; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
       ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(s * 0.5)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(g ? g.name[0] : '军', x + s * 0.05, y - s * 0.44);
+      if (d.sentry) drawSentryMark(x + s, y - s * 0.44);
       ctx.restore(); return;
     }
     const R = Math.max(10, Math.min(19, 6 + 8 * z));
@@ -812,6 +917,7 @@ var RENDER = (function () {
     ctx.lineTo(fx0 + R * 0.8, fy0 - R * 0.62 + wave * 0.5); ctx.quadraticCurveTo(fx0 + R * 0.4, fy0 - R * 0.62, fx0, fy0 - R * 0.62); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R * 0.48)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(F.seal, fx0 + R * 0.42, fy0 - R * 0.93);
+    if (d.sentry) drawSentryMark(fx0 + R + 7, fy0 - R * 0.93);
     // 画像圆章
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 1.5, y + 2, R, 0, 7); ctx.fill();
     ctx.save();
@@ -1071,7 +1177,7 @@ var RENDER = (function () {
   }
 
   return {
-    opts, init, buildBase, buildPolitical, buildFog, buildMini, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty,
+    opts, init, buildBase, buildPolitical, buildFog, buildMini, drawOverview, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty,
     flash: (tile) => { state.flash = { tile, t: performance.now() }; markDirty(); }, minZoom,
   };
 })();
