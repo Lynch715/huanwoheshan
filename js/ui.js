@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.9.1';
+  const VERSION = '0.9.2';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
   const S = () => GAME.S;
@@ -15,6 +15,9 @@ var UI = (function () {
   let difficulty = 1, timeScale = 7;
   let animSpeed = +(localStorage.getItem('hwhs_anim') || 1);
   const phone = matchMedia('(max-width: 600px), (max-height: 500px)');
+  // 触屏：不显示键盘快捷键提示
+  const TOUCH = matchMedia('(pointer: coarse)');
+  const kb = key => TOUCH.matches ? '' : ' ' + key;
   const SET = Object.assign({ defend: 'all', follow: true, autosave: 'turn', ui: 1, showRes: true, showSites: true, showNames: true }, (() => { try { return JSON.parse(localStorage.getItem('hwhs_settings') || '{}'); } catch (e) { return {}; } })());
   function applyUISize() {
     const zoom = phone.matches ? '' : SET.ui;
@@ -177,6 +180,7 @@ var UI = (function () {
   function setPendingTarget(t) {
     pendingTarget = t;
     $('cancelpreview').classList.toggle('hidden', t < 0);
+    renderOrderBar();
   }
   function cancelPreview() { setPendingTarget(-1); showSavedPath(); RENDER.markDirty(); }
   function zoomCenter(factor) { RENDER.zoomAt(innerWidth / 2, innerHeight / 2, factor); }
@@ -191,15 +195,60 @@ var UI = (function () {
     button.setAttribute('aria-expanded', open);
     button.textContent = open ? '收起详情' : '详情';
     $('side').classList.toggle('drawer-closed', !open);
-    if (open) requestAnimationFrame(revealSelection);
+    renderOrderBar();
+    requestAnimationFrame(revealSelection);
+  }
+  // ---------- 手机军令条：选中我军后代替详情抽屉，地图保持可见 ----------
+  function myArmySel() { if (!sel || sel.type !== 'army') return null; const a = GAME.army(sel.id); return a && a.f === P() ? a : null; }
+  function renderOrderBar() {
+    const bar = $('orderbar');
+    const a = phone.matches && S() ? myArmySel() : null;
+    const drawerOpen = !$('side').classList.contains('drawer-closed') && !$('side').classList.contains('hidden');
+    if (!a || drawerOpen) { bar.classList.add('hidden'); return; }
+    const g = a.gen != null ? GAME.gen(a.gen) : null;
+    const head = `<div class="ob-head">${g ? PORTRAIT.img(g, 34) : ''}<div><b>${esc(GAME.armyName(a))}</b><span class="note">${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人 · 行军力 ${Math.round(a.mp * 10) / 10}/${GAME.armyMP(a)} · 士气 ${Math.round(a.morale)}</span></div></div>`;
+    let body;
+    if (pendingTarget >= 0) {
+      const t = pendingTarget, c = GAME.cityAt(t), ea = GAME.armyAt(t);
+      const enemy = (ea && ea.f !== P() && GAME.atWar(P(), ea.f)) || (c && c.f !== P() && GAME.atWar(P(), c.f));
+      const where = c ? c.name : GEO.TERRAIN[GEO.terrain[t]].name;
+      const pt = RENDER.state.pathTurns || [];
+      const n = pt.length ? pt[pt.length - 1][1] : 1;
+      body = `<div class="ob-msg">${enemy ? '<span class="neg">进攻</span> ' : '前往 '}<b>${esc(where)}</b>　约 ${n} ${TU()}${enemy ? '　胜算 ' + odds(a, t) : ''}</div>
+        <div class="ob-btns"><button class="btn" data-act="cancelpreview">取消</button><button class="btn red ob-go" data-act="go">${enemy ? '进攻' : '出发'}</button></div>`;
+    } else {
+      body = `<div class="ob-msg note">轻点地图，选择目的地</div>
+        <div class="ob-btns">${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn" data-act="sentry">驻守</button><button class="btn" data-act="drawertoggle">详情</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
+    }
+    bar.innerHTML = head + body;
+    bar.classList.remove('hidden');
+    requestAnimationFrame(revealSelection);
+  }
+  // 平滑移镜，避免画面一下子跳开
+  let panAnim = 0;
+  function smoothPan(dy) {
+    cancelAnimationFrame(panAnim);
+    const t0 = performance.now(), dur = 240; let done = 0;
+    const step = now => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      RENDER.pan(0, (e - done) * dy); done = e;
+      if (k < 1) panAnim = requestAnimationFrame(step);
+    };
+    panAnim = requestAnimationFrame(step);
   }
   function revealSelection() {
     if (!phone.matches || !sel || $('side').classList.contains('hidden')) return;
-    const drawer = $('side').getBoundingClientRect();
-    if (!drawer.height) return;
+    // 底部遮挡物：详情抽屉或军令条，取较高者
+    let bottom = innerHeight;
+    for (const id of ['side', 'orderbar']) {
+      const el = $(id); if (el.classList.contains('hidden') || el.classList.contains('drawer-closed')) continue;
+      const r = el.getBoundingClientRect(); if (r.height) bottom = Math.min(bottom, r.top);
+    }
+    if (bottom >= innerHeight) return;
     const top = $('top').getBoundingClientRect().bottom;
     const sy = (RENDER.ty(sel.tile) - RENDER.cam.y) * RENDER.cam.z;
-    if (sy > drawer.top - 22 || sy < top + 18) RENDER.pan(0, (top + drawer.top) / 2 - sy);
+    // 只在选中格确实被挡住时才移镜，且平滑过渡
+    if (sy > bottom - 30 || sy < top + 24) smoothPan((top + bottom) / 2 - sy);
   }
   function preventPageZoom() {
     const stopZoom = e => { if (e.cancelable) e.preventDefault(); };
@@ -452,7 +501,7 @@ var UI = (function () {
       const full = [myA.tile, ...p];
       RENDER.state.path = full; RENDER.state.pathTurns = pathTurns(myA, full);
       const last = RENDER.state.pathTurns.length ? RENDER.state.pathTurns[RENDER.state.pathTurns.length - 1][1] : 1;
-      toast(`路线已定：约 ${last} ${TU()}抵达。再点一次出发，${touch ? '可点「取消预览」撤回' : 'Esc 取消'}`);
+      if (!phone.matches) toast(`路线已定：约 ${last} ${TU()}抵达。再点一次出发，${touch ? '可点「取消预览」撤回' : 'Esc 取消'}`);
       RENDER.markDirty();
       return;
     }
@@ -468,7 +517,7 @@ var UI = (function () {
     RENDER.state.sel = s ? { tile: s.tile, army: s.type === 'army' ? s.id : null } : null;
     showSavedPath();
     refreshSide(); RENDER.markDirty();
-    if (phone.matches) setDrawer(!!s);
+    if (phone.matches) setDrawer(!!s && !myArmySel());
   }
   function orderMove(t) {
     if (!sel || sel.type !== 'army') return;
@@ -565,6 +614,7 @@ var UI = (function () {
     if (sel.type === 'city') { const c = GAME.city(sel.id); el.innerHTML = c.f === P() ? cityHTML(c) : foreignCityHTML(c); }
     else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
+    renderOrderBar();
   }
   function overviewHTML() {
     const F = GAME.fac(P());
@@ -579,7 +629,7 @@ var UI = (function () {
       ${guideHTML()}
       <div class="sec">近事</div>
       <div class="loglist">${recent.map(logRow).join('')}</div>
-      <p class="note">左键选取城池或军队；选中军队后左键点目标格显示路线，<b>再点一次</b>出发（右键可直接出发）。未走完的路线按 <kbd>C</kbd> 继续，<kbd>Shift+C</kbd> 全军继续。拖动平移，滚轮缩放，<kbd>Enter</kbd> 结束回合。</p>`;
+      <p class="note">${TOUCH.matches ? '轻点城池或军队查看；选中军队后轻点目的地看路线，点「出发」即行。单指拖动平移，双指缩放。' : '左键选取城池或军队；选中军队后左键点目标格显示路线，<b>再点一次</b>出发（右键可直接出发）。未走完的路线按 <kbd>C</kbd> 继续，<kbd>Shift+C</kbd> 全军继续。拖动平移，滚轮缩放，<kbd>Enter</kbd> 结束回合。'}</p>`;
   }
   function tileHTML(t) {
     const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = GAME.tileOwner(t);
@@ -664,7 +714,7 @@ var UI = (function () {
     let h = `<div class="ph"><div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">${a.units.length}/${GAME.armyCap(a)} 营 · ${fmt(GAME.sumStr(a.units))} 人${inOwn ? ' · 驻' + c.name : ''}</div></div><button class="x" data-act="desel">×</button></div>`;
     h += genBlock(GAME.gen(a.gen), a.f);
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, 100, a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
-    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军 M</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军 C</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry">驻守 ␣</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
+    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry">驻守${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
     h += `<div class="sec">各营</div>`;
     h += a.units.map((u, i) => `<div class="row"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${u.s * 5} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
@@ -673,7 +723,7 @@ var UI = (function () {
       h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}　${u.s * 5} 人</span><span class="cost">补入 ›</span></div>`).join('');
     }
     if (near.length) h += `<div class="sec">相邻友军</div>` + near.map(o => `<div class="row"><span class="grow">${esc(GAME.armyName(o))}（${o.units.length} 营）</span><button class="btn sm" data-act="merge" data-arg="${o.id}">并入本军</button></div>`).join('');
-    h += `<p class="note">选中后右键目标格行军；目标为交战之敌则进攻。城外每季休整 +8，入城 +20；粮尽则减员。</p>`;
+    h += `<p class="note">${TOUCH.matches ? '轻点目标格看路线，再点一次（或点「出发」）即行军' : '选中后右键目标格行军，或左键点两次'}；目标为交战之敌则进攻。城外每季休整 +8，入城 +20；粮尽则减员。</p>`;
     return h;
   }
   function foreignArmyHTML(a) {
@@ -697,6 +747,7 @@ var UI = (function () {
       case 'zoomin': zoomCenter(1.2); break;
       case 'zoomout': zoomCenter(1 / 1.2); break;
       case 'cancelpreview': cancelPreview(); break;
+      case 'go': if (pendingTarget >= 0) orderMove(pendingTarget); break;
       case 'desel': select(null); break;
       case 'ctab': cityTab = arg; refreshSide(); break;
       case 'build': GAME.queueBuilding(c.id, arg); guide('build'); refreshSide(); break;
@@ -1143,7 +1194,8 @@ var UI = (function () {
     openModal(`<h1>玩法说明</h1><div class="scroll help" style="max-height:72vh;max-width:760px">
       <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你执掌南宋，经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>攻占诸国原都城</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
       <h3>回合动画</h3><p>结束回合后，视野内的行军、交战会依次演示：兵锋推进、刀兵相交、伤亡跳字与胜负印章。点击地图或按空格可跳过；顶栏“动画”按钮可切换常速/快速/关闭。</p>
-      <h3>操作</h3><ul><li>左键选城池/军队；拖动平移地图；滚轮缩放；点小地图跳转。</li><li>选中军队后<b>右键</b>目标格即行军，目标为交战之敌则发起进攻；或按 <kbd>M</kbd> 后左键。远途会自动分季行进。</li>
+      ${TOUCH.matches ? '<h3>手机操作</h3><ul><li>单指拖动平移，双指捏合缩放，轻点选取城池或军队。</li><li>选中我军后，底部出现<b>军令条</b>：轻点地图上的目的地，军令条显示路程与胜算，点<b>「出发」</b>（或再点一次该格）即行军；点「取消」重选。</li><li>「详情」可展开军团或城池的全部信息；右下「下一周」结束回合。</li></ul>' : ''}
+      <h3>${TOUCH.matches ? '键盘鼠标操作' : '操作'}</h3><ul><li>左键选城池/军队；拖动平移地图；滚轮缩放；点小地图跳转。</li><li>选中军队后<b>右键</b>目标格即行军，目标为交战之敌则发起进攻；或按 <kbd>M</kbd> 后左键。远途会自动分季行进。</li>
       <li>选中军队后<b>左键点目标格</b>先显示路线与抵达时间，<b>再点一次</b>即出发（右键可直接出发）。远途路线会保留，下回合按 <kbd>C</kbd> 或点“继续行军”接着走，<kbd>Shift+C</kbd>／“全军继续”令所有有路线的军团一齐前进。</li>
       <li><kbd>Enter</kbd> 下一回合，<kbd>Tab</kbd> 下一支待命军，<kbd>空格</kbd> 令其驻守，<kbd>Esc</kbd> 取消。</li></ul>
       <h3>内政</h3><ul><li>城池按户口耕作周边地块，产出粮、工、钱、文。余粮使户口增长；工用于营建与征兵；钱用于军饷、加急；文推动科技。</li>
@@ -1309,6 +1361,6 @@ var UI = (function () {
     setTimeout(() => { el.style.transition = 'opacity .5s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 500); }, type === 'big' ? 2200 : 3800);
   }
 
-  return { boot, select, toast, processPending };
+  return { boot, select, toast, processPending, engage };
 })();
 window.addEventListener('load', () => UI.boot());
