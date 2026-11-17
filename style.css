@@ -240,7 +240,6 @@ table.t td .pimg { margin-right: 4px; }
 .settings-body { min-width: 520px; }
 .settings-about { margin-top: 14px; padding-bottom: 12px; }
 .settings-about p { margin: 6px 0; }
-.settings-about a { color: var(--red); }
 #about-wechat { -webkit-user-select: text; user-select: text; }
 body:has(#modal-bg:not(.hidden) .settings-about) #toasts { z-index: 31; }
 

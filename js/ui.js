@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.9.0';
+  const VERSION = '0.9.1';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
   const S = () => GAME.S;
@@ -990,7 +990,6 @@ var UI = (function () {
         <div class="row"><span>微信</span><strong id="about-wechat">lynchrrr</strong>
           <button type="button" class="btn sm" data-copy-wechat>复制</button></div>
         <p class="note">试玩中，欢迎加微信反馈问题与建议。</p>
-        <p><a href="https://github.com/Lynch715/huanwoheshan" target="_blank" rel="noopener">GitHub 仓库</a></p>
       </section></div>`;
     openModal(h, { width: '620px' });
     $('modal').onclick = async e => {
