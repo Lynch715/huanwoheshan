@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>还我河山 · 大宋征服天下</title>
+<meta name="theme-color" content="#efe6cf">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="还我河山">
+<link rel="icon" href="icons/favicon-16.png" sizes="16x16" type="image/png">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icons/icon.svg" sizes="any" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css?v=0.9.0">
+</head>
+<body>
+<canvas id="map"></canvas>
+
+<div id="top" class="hidden">
+  <div class="brand"><span class="seal" id="pseal">宋</span><div><div id="date">绍兴十年夏</div><div id="subdate" class="dim"></div></div></div>
+  <div class="res" id="res"></div>
+  <div class="rbox court" id="courtbox" data-act="court" style="cursor:pointer" title="朝堂：皇帝权威与朝议倾向"></div>
+  <button id="menutoggle" class="btn" data-act="menutoggle" aria-label="政务菜单" aria-expanded="false" aria-controls="topmenu">☰</button>
+  <div class="menu" id="topmenu">
+    <button data-act="tech">科技</button>
+    <button data-act="gens">将领</button>
+    <button data-act="court">朝堂</button>
+    <button data-act="dip">外交</button>
+    <button data-act="cities">城池</button>
+    <button data-act="armies">军队</button>
+    <button data-act="chron">史册</button>
+    <button data-act="save">存档</button>
+    <button data-act="settings">设置</button>
+    <button data-act="help">说明</button>
+  </div>
+</div>
+
+<div id="side" class="hidden"></div>
+
+<div id="mobilebar" class="hidden">
+  <button id="maptoggle" class="btn" data-act="maptoggle" aria-controls="minimap" aria-expanded="false">舆图</button>
+  <button id="drawertoggle" class="btn" data-act="drawertoggle" aria-controls="side" aria-expanded="true">收起详情</button>
+</div>
+
+<div id="endturn" class="hidden">
+  <div id="idlehint"></div>
+  <button id="endbtn" title="结束本回合 (Enter)"><span>下一周</span></button>
+</div>
+
+<div id="minimap" class="hidden"><canvas id="mini" width="300" height="132"></canvas><div id="miniview"></div></div>
+<div id="tip" class="hidden"></div>
+<div id="toasts"></div>
+
+<div id="modal-bg" class="hidden"><div id="modal"></div></div>
+
+<div id="title">
+  <canvas id="titlescene"></canvas>
+  <div class="title-inner">
+    <div class="title-art">
+      <div class="vtitle">还我河山</div>
+      <div class="vsub">大宋征服天下</div>
+      <div class="tseal">绍兴<br>十年</div>
+    </div>
+    <div class="title-menu" id="titlemenu"></div>
+    <div class="title-foot">回合制策略 · 经营南宋 · 北伐中原 · 横扫欧亚</div>
+  </div>
+</div>
+
+<div id="loading" class="hidden"><div class="ink-spin"></div><div id="loadtext">研墨铺纸……</div></div>
+
+<input type="file" id="importfile" accept=".json,application/json" class="hidden">
+
+<script src="js/geo.js?v=0.9.0"></script>
+<script src="js/data.js?v=0.9.0"></script>
+<script src="js/game.js?v=0.9.0"></script>
+<script src="js/events.js?v=0.9.0"></script>
+<script src="js/court.js?v=0.9.0"></script>
+<script src="js/ai.js?v=0.9.0"></script>
+<script src="js/portrait.js?v=0.9.0"></script>
+<script src="js/inkart.js?v=0.9.0"></script>
+<script src="js/render.js?v=0.9.0"></script>
+<script src="js/stratagems.js?v=0.9.0"></script>
+<script src="js/battle.js?v=0.9.0"></script>
+<script src="js/ui.js?v=0.9.0"></script>
+</body>
+</html>
