@@ -103,6 +103,14 @@ var TACTIC = (function () {
       (no.length ? `<button type="button" class="note plan-more" data-more="1" aria-expanded="${showAllPlans}">${showAllPlans ? '▾ 收起' : '▸'} 不合形势之策 ${no.length} 条</button>` + (showAllPlans ? `<div class="plans">${no.map(btn).join('')}</div>` : '') : '');
   }
   // ---------- 战前军议 ----------
+  function terrainRowsHTML(rows) {
+    if (!rows.length) return '<p class="note terrain-neutral">此处交兵，地形无加减。</p>';
+    const sides = { att: '攻方', def: '守方', both: '两军' };
+    return '<ul class="terrain-mods" aria-label="地形修正">' + rows.map(({ role, label, mult }) => {
+      const pct = Math.round(Math.abs(mult - 1) * 1000) / 10;
+      return `<li><span class="note">${sides[role]}</span> ${esc(label)} <b class="${mult > 1 ? 'pos' : 'neg'}">${mult > 1 ? '+' : '−'}${pct}%</b></li>`;
+    }).join('') + '</ul>';
+  }
   function prebattle(a, tile, done) {
     const B = GAME.battleSides(a, tile);
     const P = plansFor(a, tile, 'att');
@@ -124,9 +132,10 @@ var TACTIC = (function () {
         <div class="tvs">${side(GAME.armyName(a), g, a.f, a.units, `兵 ${fmt(GAME.sumStr(a.units))}　士气 ${Math.round(a.morale)}`)}
         <div class="vsx">战</div>
         ${side(B.defArmy ? GAME.armyName(B.defArmy) : c.name + '守军', eg, B.defF, B.D.units, `兵 ${fmt(GAME.sumStr(B.D.units))}　士气 ${Math.round(B.D.morale)}${c ? '　城防 ' + Math.round(c.wall) : ''}`)}</div>
-        <div class="note" style="text-align:center">战场：${terr.name}${GEO.river[tile] ? '·临河' : ''}${terr.def ? '（守方 +' + Math.round(terr.def * 100) + '%）' : ''}${c ? '　攻城战' : ''}${B.water ? '　水战' : ''}</div>
+        <div class="note" style="text-align:center">战场 · ${terr.name}${GEO.river[tile] ? '·临河' : ''}${c ? '　攻城战' : ''}${B.water ? '　水战' : ''}</div>
         ${B.fortMult > 1 ? '<div class="note" style="text-align:center">守方 · 筑垒 +10%</div>' : ''}
         <div class="odds"><span>胜算</span><div class="obar"><i style="width:${Math.round(pExp * 100)}%"></i></div><b>${Math.round(pExp * 100)}%</b></div>
+        ${terrainRowsHTML(GAME.battleTerrainRows(B, plan?.mods))}
         <div class="note" style="text-align:center">预计我军折损约 ${Math.round(pv.lossA * 100)}%，敌军折损约 ${Math.round(Math.min(0.95, pv.lossD) * 100)}%${plan ? `（计成时；计策成功率 ${Math.round(plan.chance * 100)}%）` : ''}</div>
         <div class="sec">计策 <span class="r note">${P.note || (eg ? `我将智 ${g.zhi} 对敌将智 ${eg.zhi}` : '敌无主将，计策易成')}</span></div>
         ${planGrid(P.list, pick)}</div>
@@ -229,13 +238,16 @@ var TACTIC = (function () {
     const frac = side => alive(side).reduce((s, x) => s + x.hp, 0) / Math.max(1, st.total0[side]);
 
     // ---- 战力计算 ----
-    function mult(x, role, foe) {
+    function combatPower(x, role, foe) {
       const g = st.gens[x.side], f = st.facs[x.side];
-      let m = 1;
+      const armyRole = x.side === 0 ? 'att' : 'def';
+      let m = GAME.terrainPower(x.t, role, armyRole, B.ctx, g);
+      if (armyRole === 'def') m *= GAME.terrainDefense(B.ctx, mods.noTerrain);
       if (g) {
         m *= role === 'att' ? 1 + (g.wu - 50) / 180 + (g.tong - 50) / 300 : 1 + (g.tong - 50) / 180 + (g.zhi - 50) / 300;
         const ter = grid[(role === 'def' ? x : foe).r][(role === 'def' ? x : foe).c];
-        m *= GAME.skillMult(g, { t: x.t }, { city: ter === TER.WALL || (city && role === 'att' && x.side === 0), rough: ter === TER.HILL || ter === TER.FOREST, river: ter === TER.RIVER, water: false }, role);
+        const skillCtx = { ...B.ctx, city: ter === TER.WALL || (city && role === 'att' && x.side === 0) };
+        m *= GAME.skillMult(g, x, skillCtx, role, armyRole);
         if (role === 'def') m *= 1 + GAME.itemSum(g, 'armor');
         if (x.t === 'bow') m *= 1 + GAME.itemSum(g, 'bow');
       } else m *= 0.9;
@@ -246,15 +258,12 @@ var TACTIC = (function () {
       return m;
     }
     function damage(att, def, ranged) {
-      let A = U[att.t].atk * mult(att, 'att', def), D = U[def.t].def * mult(def, 'def', att);
+      let A = combatPower(att, 'att', def), D = combatPower(def, 'def', att);
       if ((DATA.BEATS[att.t] || []).includes(def.t)) A *= 1.4;
       if ((DATA.BEATS[def.t] || []).includes(att.t)) A *= 0.75;
-      const dt = grid[def.r][def.c], atT = grid[att.r][att.c];
-      if (dt === TER.HILL) D *= 1.25; if (dt === TER.FOREST) D *= ranged ? 1.35 : 1.2; if (dt === TER.RIVER) D *= 0.8;
+      const dt = grid[def.r][def.c];
       if (dt === TER.WALL) D *= att.t === 'siege' ? 1.15 : 1.6;
-      if (att.t === 'siege') A *= dt === TER.WALL ? 3 : 0.7;
-      if (atT === TER.RIVER) A *= 0.75;
-      if (att.t === 'navy') A *= 0.5;
+      if (att.t === 'siege' && dt === TER.WALL) A *= U.siege.siege;
       const flank = nbrs(def.c, def.r).filter(([c, r]) => { const o = at(c, r); return o && o.side === att.side && o !== att; }).length;
       A *= 1 + 0.12 * Math.min(2, flank);
       let d = 24 * Math.pow(A / D, 0.8) * (0.4 + 0.6 * att.hp / 100) * rnd(0.85, 1.15);
@@ -341,7 +350,7 @@ var TACTIC = (function () {
       const spots = [[x.c, x.r], ...reach(x)];
       for (const [c, r] of spots) for (const [nc, nr] of nbrs(c, r)) {
         const o = at(nc, nr); if (!o || o.side === x.side) continue;
-        let sc = score(o) - (c === x.c && r === x.r ? 0 : 20) + (grid[r][c] === TER.HILL ? 80 : 0);
+        let sc = score(o) - (c === x.c && r === x.r ? 0 : 20);
         if (holdWall && !(c === x.c && r === x.r)) sc -= 400;
         if (sc > bs) { bs = sc; best = [c, r, o]; }
       }
@@ -564,9 +573,10 @@ var TACTIC = (function () {
         <div class="tvs">${side(defName, g, B.defF, B.D.units, `兵 ${fmt(GAME.sumStr(B.D.units))}　士气 ${Math.round(B.D.morale)}${c ? '　城防 ' + Math.round(c.wall) : ''}`)}
         <div class="vsx">守</div>
         ${side(GAME.armyName(a), eg, a.f, a.units, `兵 ${fmt(GAME.sumStr(a.units))}　士气 ${Math.round(a.morale)}`)}</div>
-        <div class="note" style="text-align:center">战场：${terr.name}${GEO.river[tile] ? '·临河' : ''}${terr.def ? '（守方 +' + Math.round(terr.def * 100) + '%）' : ''}${c ? '　守城战' : ''}${B.water ? '　水战' : ''}</div>
+        <div class="note" style="text-align:center">战场 · ${terr.name}${GEO.river[tile] ? '·临河' : ''}${c ? '　守城战' : ''}${B.water ? '　水战' : ''}</div>
         ${B.fortMult > 1 ? '<div class="note" style="text-align:center">我军 · 筑垒 +10%</div>' : ''}
         <div class="odds"><span>守住</span><div class="obar"><i style="width:${Math.round(pExp * 100)}%"></i></div><b>${Math.round(pExp * 100)}%</b></div>
+        ${terrainRowsHTML(GAME.battleTerrainRows(B, plan?.mods))}
         <div class="note" style="text-align:center">预计我军折损约 ${Math.round(Math.min(0.95, pv.lossD) * 100)}%，敌军折损约 ${Math.round(pv.lossA * 100)}%${plan ? `（计成时；计策成功率 ${Math.round(plan.chance * 100)}%）` : ''}</div>
         <div class="sec">守策 <span class="r note">${!g ? '守军无主将，计策难成' : eg ? `我将智 ${g.zhi} 对敌将智 ${eg.zhi}` : '敌无主将，计策易成'}</span></div>
         ${planGrid(P.list, pick)}</div>
@@ -604,5 +614,5 @@ var TACTIC = (function () {
     document.getElementById('tac').appendChild(box);
     box.querySelector('button').onclick = cb;
   }
-  return { prebattle, defend, field, plansFor, close };
+  return { prebattle, defend, field, plansFor, close, terrainRowsHTML };
 })();

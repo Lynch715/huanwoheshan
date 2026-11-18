@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.11.0';
+  const VERSION = '0.12.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -280,7 +280,7 @@ var UI = (function () {
       const where = c ? c.name : GEO.TERRAIN[GEO.terrain[t]].name;
       const pt = RENDER.state.pathTurns || [];
       body = `<div class="ob-msg">${enemy ? '<span class="neg">进攻</span> ' : '前往 '}<b>${esc(where)}</b>　${arrivalText(t, pt)}${enemy ? '　胜算 ' + odds(a, t) : ''}</div>
-        <div class="ob-btns"><button class="btn" data-act="cancelpreview">取消</button><button class="btn red ob-go" data-act="go">${enemy ? '进攻' : '出发'}</button></div>`;
+        <div class="ob-btns">${S().explored[t] ? `<button class="btn" data-act="terrain" data-arg="${t}">地势</button>` : ''}<button class="btn" data-act="cancelpreview">取消</button><button class="btn red ob-go" data-act="go">${enemy ? '进攻' : '出发'}</button></div>`;
     } else {
       const routed = !!a.path?.length;
       body = `<div class="ob-msg note">${moveMode ? '轻点地图，择定去处' : '可轻点目标格预览路线'}</div>
@@ -353,18 +353,28 @@ var UI = (function () {
     const pointers = new Map();
     const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
     const point = e => ({ x: e.clientX, y: e.clientY });
-    let dragged = false, pinched = false, lastHover = -1, tipTimer;
+    let dragged = false, pinched = false, held = false, lastHover = -1, tipTimer, holdTimer;
     cv.addEventListener('pointerdown', e => {
       if (RENDER.isAnimating()) { RENDER.skipAnim(); return; }
       if (pointers.size && (e.pointerType !== 'touch' || [...pointers.values()][0].type !== 'touch')) return;
-      if (!pointers.size) { dragged = false; pinched = false; }
+      clearTimeout(holdTimer);
+      if (!pointers.size) { dragged = false; pinched = false; held = false; }
       pointers.set(e.pointerId, { ...point(e), button: e.button, type: e.pointerType });
       if (pointers.size > 1) pinched = true;
+      else if (e.button === 0) {
+        const t = RENDER.tileAtScreen(e.clientX, e.clientY);
+        if (S()?.explored[t]) holdTimer = setTimeout(() => {
+          held = true;
+          $('tip').classList.add('hidden');
+          showTileTerrain(t);
+        }, 550);
+      }
       cv.setPointerCapture(e.pointerId);
     });
     cv.addEventListener('pointermove', e => {
       const p = pointers.get(e.pointerId);
       const next = point(e);
+      if (p && held) return;
       if (p && pinched) {
         const [one, two] = pointers.values();
         const before = two ? distance(one, two) : 0;
@@ -379,6 +389,7 @@ var UI = (function () {
         const dx = next.x - p.x, dy = next.y - p.y;
         const moved = p.type === 'mouse' ? Math.abs(dx) + Math.abs(dy) > 5 : distance(p, next) > 8;
         if (dragged || moved) {
+          clearTimeout(holdTimer);
           dragged = true;
           RENDER.pan(dx, dy);
           Object.assign(p, next);
@@ -394,9 +405,10 @@ var UI = (function () {
     const finishPointer = e => {
       const p = pointers.get(e.pointerId);
       if (!p) return;
+      clearTimeout(holdTimer);
       pointers.delete(e.pointerId);
       cv.style.cursor = moveMode ? 'crosshair' : 'default';
-      if (e.type !== 'pointerup' || dragged || pinched || !S()) return;
+      if (e.type !== 'pointerup' || dragged || pinched || held || !S()) return;
       if (p.type !== 'mouse' && distance(p, point(e)) > 8) return;
       if (document.elementFromPoint(e.clientX, e.clientY) !== cv) return;
       const t = RENDER.tileAtScreen(e.clientX, e.clientY);
@@ -556,12 +568,9 @@ var UI = (function () {
     return last?.[0] === goal ? `约 ${last[1]} ${TU()}抵达` : '前路受阻';
   }
   function odds(a, t) {
-    const ea = GAME.armyAt(t), c = GAME.cityAt(t);
-    let dp = 0;
-    if (ea) dp += AI.armyPower(ea) * (1 + GEO.TERRAIN[GEO.terrain[t]].def);
-    if (c && c.f !== a.f) dp += AI.cityDefense(c) - (ea && ea.f === c.f ? AI.armyPower(ea) * 1.2 : 0);
-    const ap = AI.armyPower(a) * (0.55 + 0.45 * a.morale / 100);
-    const r = ap / (ap + dp + 0.01);
+    const path = RENDER.state.path;
+    const from = path?.at(-1) === t ? path.at(-2) : a.tile;
+    const r = GAME.previewBattle(a, t, {}, from).r;
     return r > 0.68 ? '<span class=pos>大优</span>' : r > 0.55 ? '<span class=pos>占优</span>' : r > 0.45 ? '五五之数' : r > 0.32 ? '<span class=neg>劣势</span>' : '<span class=neg>以卵击石</span>';
   }
   function relText(f) {
@@ -721,6 +730,9 @@ var UI = (function () {
     }
     else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
+    if (sel.type !== 'tile') {
+      el.querySelector('.ph').insertAdjacentHTML('afterend', `<button class="record-link terrain-link" data-act="terrain" data-arg="${sel.tile}">察看地势 · ${tileTerrainName(sel.tile)}</button>`);
+    }
     renderOrderBar();
   }
   function overviewHTML() {
@@ -738,10 +750,15 @@ var UI = (function () {
       <div class="loglist">${recent.map(logRow).join('')}</div>
       <p class="note">${TOUCH.matches ? '轻点城池或军队查看；选中军队后轻点目的地看路线，点「出发」即行。单指拖动平移，双指缩放。' : '左键选取城池或军队；选中军队后左键点目标格显示路线，<b>再点一次</b>出发（右键可直接出发）。未走完的路线按 <kbd>C</kbd> 继续，<kbd>Shift+C</kbd> 全军继续。拖动平移，滚轮缩放，<kbd>Enter</kbd> 结束回合。'}</p>`;
   }
+  function tileTerrainName(t) { return GEO.TERRAIN[GEO.terrain[t]].name + (GEO.river[t] ? ' · 临河' : ''); }
+  function showTileTerrain(t) {
+    if (S()?.explored[t]) openModal(`<h1>${tileTerrainName(t)}</h1><div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}`, { width: '440px' });
+  }
   function tileHTML(t) {
     const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = livingTileOwner(t);
     return `<div class="ph"><div><h2>${tr.name}</h2><div class="sub">${GEO.river[t] ? '临河 · ' : ''}${GEO.resource[t] ? '物产：' + GEO.resource[t] : '无特产'}</div></div><button class="x" data-act="desel">×</button></div>
       <div class="stat"><div><b>${y.food}</b><span>粮</span></div><div><b>${y.prod}</b><span>工</span></div><div><b>${y.gold}</b><span>钱</span></div><div><b>${tr.move}</b><span>行军耗</span></div></div>
+      <div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}
       ${own ? `<p>${facSeal(own)} 属【${facName(own)}】${own !== P() ? '　' + relText(own) : ''}</p>` : '<p class="note">无主之地</p>'}`;
   }
   function ruinHTML(c) {
@@ -778,7 +795,7 @@ var UI = (function () {
       const cap = c.garrison.length;
       const gcap = GAME.garrisonCap(c);
       h += `<div class="sec">守军（${cap}/${gcap} 营${cap > gcap ? ' <span class=neg>超编，军饷加倍</span>' : ''}）<span class="r">${c.garrison.length ? `<button class="btn sm red" data-act="form">组建军团${garrisonPick.size ? '（' + garrisonPick.size + '）' : ''}</button>` : ''}</span></div>`;
-      h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${u.s * 5} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
+      h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
       if (c.garrison.length) h += `<div class="note">点选守军营后组建军团（不选则全选）。军团规模受主将统率所限。</div>`;
       const a = GAME.armyAt(c.tile);
       if (a && a.f === P()) h += `<div class="row click" data-act="selarmy" data-arg="${a.id}"><span class="grow">城中驻有：<b>${esc(GAME.armyName(a))}</b>（${a.units.length} 营）</span><span class="cost">选取 ›</span></div>`;
@@ -829,12 +846,14 @@ var UI = (function () {
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, 100, a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
     h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
     h += `<p class="note">${a.fortT != null ? (GAME.fortified(a) ? '已筑垒。' : '筑垒中。') : ''}${fortHint}</p>`;
+    const exposure = GAME.expeditionRate(a);
+    if (exposure) h += `<p class="neg">水土不服，每季损员 ${Math.round(exposure * 100)}%${GEO.terrain[a.tile] === GEO.T.TUNDRA ? '（仅计冬日）' : ''}。</p>`;
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
     h += `<div class="sec">各营</div>`;
-    h += a.units.map((u, i) => `<div class="row"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${u.s * 5} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
+    h += a.units.map((u, i) => `<div class="row"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
     if (inOwn && c.garrison.length && a.units.length < GAME.armyCap(a)) {
       h += `<div class="sec">城中守军可补入</div>`;
-      h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}　${u.s * 5} 人</span><span class="cost">补入 ›</span></div>`).join('');
+      h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}　${fmt(u.s * 5)} 人</span><span class="cost">补入 ›</span></div>`).join('');
     }
     if (near.length) h += `<div class="sec">相邻友军</div>` + near.map(o => `<div class="row"><span class="grow">${esc(GAME.armyName(o))}（${o.units.length} 营）</span><button class="btn sm" data-act="merge" data-arg="${o.id}">并入本军</button></div>`).join('');
     h += `<p class="note">${TOUCH.matches ? '轻点目标格看路线，再点一次（或点「出发」）即行军' : '选中后右键目标格行军，或左键点两次'}；目标为交战之敌则进攻。城外每季休整 +8，入城 +20；粮尽则减员。</p>`;
@@ -858,6 +877,7 @@ var UI = (function () {
       case 'menutoggle': setMenu(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'maptoggle': setMini(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'drawertoggle': setDrawer(el.getAttribute('aria-expanded') !== 'true'); break;
+      case 'terrain': showTileTerrain(+arg); break;
       case 'zoomin': zoomCenter(1.2); break;
       case 'zoomout': zoomCenter(1 / 1.2); break;
       case 'cancelpreview': cancelPreview(); break;
@@ -1666,8 +1686,9 @@ var UI = (function () {
   }
   function difficultyDescription(d) {
     const { coalition: co, command: ai, occupation: c, debt } = d;
+    const northernGuard = d.northGarrison < 0 ? `减 ${-d.northGarrison} 营（最低为零）` : `+${d.northGarrison} 营`;
     return `他国工钱 ${Math.round(d.aiYield * 100)}%、战力 ${Math.round(d.aiBattle * 100)}%。` +
-      `金夏开局守营 +${d.northGarrison}、野战军最多加 ${d.northArmy} 营，对宋军团上限 +${ai.armies}。` +
+      `金夏开局守营 ${northernGuard}，野战军最多加 ${d.northArmy} 营，对宋军团上限 +${ai.armies}。` +
       `开局前 ${co.warDelay} 季有宣战保护，威胁度达 ${Math.round(co.threat * 1000) / 10}% 后，接壤诸国合纵所需国力为我朝 ${Math.round(co.ratio * 100)}%。` +
       `诸国军队再攻同一宋城，须相隔约 ${Math.round(ai.siegeInterval * 90)} 日。` +
       `新附城产出最多减 ${Math.round(c.production * 100)}%，历 ${c.seasons} 季。` +
@@ -1675,6 +1696,28 @@ var UI = (function () {
       `欠饷每季士气减 ${debt.morale}，欠粮者民心下降${debt.famine ? '，久则户口减少' : ''}。` +
       (d.eraRecruit ? `他国迈入新时代可募 ${d.eraRecruit} 营。` : '') +
       (d.startReserve < 1 ? '大宋初始钱粮减半。' : d.startReserve > 1 ? `大宋初始钱粮增加 ${Math.round((d.startReserve - 1) * 100)}%。` : '');
+  }
+  function terrainGuideHTML() {
+    const { byTerrain, highGround, crossing, landing, water, expedition } = DATA.TERRAIN_COMBAT;
+    const pct = m => (m < 1 ? '−' : '+') + (Math.round(Math.abs(m - 1) * 1000) / 10) + '%';
+    const names = { cav: '骑兵', inf: '步兵', bow: '弓兵', defBow: '守方弓兵', fire: '火器', siege: '野战砲车' };
+    const land = Object.entries(GEO.T).filter(([k]) => k !== 'SEA' && k !== 'LAKE');
+    const perTile = land.map(([k, id]) => {
+      const terrain = GEO.TERRAIN[id], row = byTerrain[k] || {};
+      const rules = Object.entries(names).filter(([group]) => row[group] && row[group] !== 1)
+        .map(([group, name]) => name + ' ' + pct(row[group]));
+      if (terrain.def) rules.unshift('守方全军 ' + pct(1 + terrain.def));
+      return `<div><dt>${terrain.name}</dt><dd>${rules.join('，') || '各营照常交兵'}</dd></div>`;
+    }).join('');
+    const terrains = keys => keys.map(k => GEO.TERRAIN[GEO.T[k]].name).join('、');
+    return `<h3>地形与交战</h3><p>两军依守方所在格计地势。先按兵种调整各营战力，守方全军的地利与主将特技另行相乘。轻骑、骑射、甲骑、背嵬皆按骑兵计。砲车攻城时免受野战地形折减。</p>
+      <dl class="terrain-guide">${perTile}</dl>
+      <ul><li>居高临下。从${terrains(highGround.from)}攻${terrains(highGround.to)}，攻方全军 ${pct(highGround.mult)}。</li>
+      <li>渡河强攻。从无河格攻入临河格，攻方 ${pct(crossing.att)}，守方 ${pct(crossing.def)}。守方的临河与本格守势相加。两军皆临河，依本格地形交战。</li>
+      <li>舟师在临河陆地发挥 ${Math.round(water.riverNavy * 100)}% 战力，在其余陆地发挥 ${Math.round(water.landNavy * 100)}%。非水军在水面作战，战力为平日的 ${Math.round(water.embarked * 100)}%。</li>
+      <li>自海面或湖面登岸，攻方非水军 ${pct(landing.mult)}。主将善「水战」，登岸折减减半，为 ${pct(1 - (1 - landing.mult) * (1 - landing.skillRelief))}。</li>
+      <li>「守险」利守丘陵、山地、森林、高原。「水战」利于水面与临河作战。点开地块详情或长按已探明的地图格，可察该处地势。</li></ul>
+      ${expedition.enabled ? `<p>军驻境外，按所余兵力每季折损，${Object.entries(expedition.rates).map(([k, rate]) => GEO.TERRAIN[GEO.T[k]].name + (k === 'TUNDRA' ? '冬季' : '') + ' ' + Math.round(rate * 100) + '%').join('、')}。军在本境，免此损耗。游牧诸部习沙漠与冻原，南洋、天竺诸部习雨林，驻于所习地势亦免。</p>` : ''}`;
   }
   function showHelp() {
     openModal(`<h1>玩法说明</h1><div class="scroll help" style="max-height:72vh;max-width:760px">
@@ -1692,12 +1735,13 @@ var UI = (function () {
       <li>委任<b>政</b>高之臣为知州，可大增一城产出。</li></ul>
       <h3>军事</h3><ul><li>在城中“军务”页征兵，募成后为守军；点选守军并择将即可<b>组建军团</b>。主将<b>统</b>越高，可统营数越多（最多十营）。</li>
       <li>兵种相克：步卒克骑，弓弩克步，骑兵克弓与砲车。甲骑、背嵬军、火器营为强兵。攻城宜带砲车，城防降至三成以下且守军尽没方可破城。</li>
-      <li>战力取决于兵力、相克、主将统武智、特技、地形（山地守 +50%、丘陵 +25%、临河 +15%）与士气。</li>
+      <li>战力取决于兵力、相克、主将统武智、特技、地形与士气。</li>
       <li>舟师足够（每三营陆军配一营舟师）的军团可渡海。军队离境过远、粮尽或国库亏空会减员。</li></ul>
+      ${terrainGuideHTML()}
       <h3>科举与将领</h3><ul><li>每三年春殿试放榜，可从候选中择优录用；史上名臣（朱熹、虞允文、陆游、范成大……）会在其登第之年出现。</li>
       <li>武将多会在其出仕之年“慕义来投”。战败的敌将可能被俘，可招降、释放或处斩。</li></ul>
       <h3>战前军议与临阵指挥</h3><ul><li>我军进攻时先开<b>战前军议</b>：可见双方将领、兵种、地形与胜算；可择一<b>计策</b>（火攻、夜袭、水淹、诱敌、激将、疑兵），成败取决于双方主将之智与地形时令。</li>
-      <li>随后选“自动决战”即刻分晓，或“临阵指挥”于六角战场亲自调度：每营每回合可移动后攻击一次，弓弩火器砲车可远射；丘陵林地利守，城墙大利守军，砲车专破城墙；包夹敌营可增伤。十回合内击溃敌军（兵力不足三成或士气崩溃）即胜。</li>
+      <li>可选“自动决战”，也可于六角战场亲自调度。两种战法皆按军议所列地形调整各营战力。临阵每营每回合可移动后攻击一次，弓弩、火器、砲车可远射，砲车尤善破墙，包夹敌营可增伤。十回合内击溃敌军（兵力不足三成或士气崩溃）即胜。</li>
       <li><b>敌军来犯</b>：敌方回合结束后，凡敌军攻我城池或军团，逐一请示方略：可施守策（劫营、火攻、坚壁、疑兵），再选“亲自守城/迎战”或“交由守将”。亲自守御时敌军先攻，守满十回合即算守住。可在“设置”中改为仅守城时过问或全部交由守将。</li></ul>
       <h3>奇遇与将领成长</h3><ul><li>地图上的菱形标记为奇遇点：古战场（经验）、名山古刹（士气兵员）、隐士草庐（特技）、遗迹（宝物）、义军营寨（兵员）、牧马场、商队、屯粮所、藏书楼。带兵经过即可触发。</li>
       <li>将领作战与奇遇可得经验，升级时三选一：提升能力或习得新特技（至多三项）。宝物每人至多三件，直接提升能力或行军。</li></ul>

@@ -65,12 +65,12 @@ var DATA = (function () {
   ];
   const FACTIONS = F.map(a => ({ id: a[0], name: a[1], seal: a[2], color: a[3], culture: a[4], aggr: a[5] }));
   const DIFFICULTY = [
-    { name: '宽仁', aiYield: 0.68, aiBattle: 0.70, startReserve: 1.5, northGarrison: 0, northArmy: 0, eraRecruit: 0,
-      coalition: { threat: 0.28, ratio: 1.2, opinion: -25, rapport: 2, allyAt: 55, peaceRate: 0.3, dislike: 3, warDelay: 6 },
+    { name: '宽仁', aiYield: 0.60, aiBattle: 0.52, startReserve: 1.5, northGarrison: -3, northArmy: 0, eraRecruit: 0,
+      coalition: { threat: 0.21, ratio: 0.08, opinion: 5, rapport: 2, allyAt: 55, peaceRate: 0.3, dislike: 3, warDelay: 6 },
       command: { armies: 0, defenseWeight: 1, unrestWeight: 0.02, assault: 1.12, retreat: 45, morale: 30, reconquest: 2, northPush: 0, siegeInterval: 0.82 },
       occupation: { seasons: 1, production: 0.02, loyalty: 48, unrest: 8, revolt: 0 },
       debt: { governance: 0, morale: 1, desertion: 0, hunger: 0.5, famine: 0 } },
-    { name: '中庸', aiYield: 1, aiBattle: 1, startReserve: 1.14, northGarrison: 0, northArmy: 0, eraRecruit: 0,
+    { name: '中庸', aiYield: 1, aiBattle: 0.90, startReserve: 1.14, northGarrison: -2, northArmy: 0, eraRecruit: 0,
       coalition: { threat: 0.21, ratio: 0.8, opinion: -12, rapport: 4, allyAt: 42, peaceRate: 0.45, dislike: 5, warDelay: 2 },
       command: { armies: 1, defenseWeight: 1.4, unrestWeight: 0.09, assault: 1.08, retreat: 46, morale: 32, reconquest: 4, northPush: 1, siegeInterval: 0.72 },
       occupation: { seasons: 4, production: 0.2, loyalty: 26, unrest: 35, revolt: 0.06 },
@@ -80,7 +80,7 @@ var DATA = (function () {
       command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.50 },
       occupation: { seasons: 6, production: 0.32, loyalty: 22, unrest: 42, revolt: 0.11 },
       debt: { governance: 0.023, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
-    { name: '地狱', aiYield: 1.22, aiBattle: 1.15, startReserve: 0.5, northGarrison: 1, northArmy: 1, eraRecruit: 6,
+    { name: '地狱', aiYield: 1.22, aiBattle: 1.22, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6,
       coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0 },
       command: { armies: 3, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.98, retreat: 54, morale: 38, reconquest: 8, northPush: 3, siegeInterval: 0.30 },
       occupation: { seasons: 8, production: 0.42, loyalty: 18, unrest: 48, revolt: 0.19 },
@@ -269,6 +269,29 @@ var DATA = (function () {
     siege: { name: '砲车', atk: 5, def: 4, mv: 2, prod: 32, gold: 25, man: 3, food: 1, siege: 3, desc: '攻城器械，破城防' },
     fire: { name: '火器营', atk: 17, def: 15, mv: 3, prod: 45, gold: 45, man: 5, food: 1, iron: 2, tech: 'tuhuoqiang', desc: '突火枪与火药兵' },
     navy: { name: '舟师', atk: 5, def: 6, sea: 16, mv: 6, prod: 40, gold: 30, man: 4, food: 1, tech: 'haichuan', needDock: true, desc: '战船，可载军渡海' },
+  };
+  // 按交战目标格取值。defBow 仅限守军弓营，siege 列只在野战生效；缺省为一倍。
+  const TERRAIN_COMBAT = {
+    groups: { cav: 'cav', hbow: 'cav', hcav: 'cav', elite: 'cav', inf: 'inf', bow: 'bow', fire: 'fire', siege: 'siege', navy: 'navy' },
+    byTerrain: {
+      PLAIN: { cav: 1.10 },
+      STEPPE: { cav: 1.15 },
+      HILL: { cav: 0.90, defBow: 1.15, siege: 0.80 },
+      MTN: { cav: 0.70, inf: 1.10, defBow: 1.15, siege: 0.60 },
+      FOREST: { cav: 0.75, inf: 1.10, bow: 0.90, siege: 0.70 },
+      JUNGLE: { cav: 0.70, inf: 1.10, bow: 0.85, fire: 0.85, siege: 0.70 },
+      PLATEAU: { cav: 0.90, siege: 0.80 },
+    },
+    highGround: { from: ['HILL', 'MTN'], to: ['PLAIN', 'STEPPE', 'DESERT'], mult: 1.10 },
+    crossing: { att: 0.85, def: 1.15 },
+    landing: { mult: 0.75, skillRelief: 0.50 },
+    water: { riverNavy: 0.80, landNavy: 0.50, embarked: 0.30 },
+    skills: { roughDefense: 1.30, waterBattle: 1.40 },
+    expedition: {
+      enabled: true, // 关闭即恢复原有境外沙漠的固定损耗。
+      rates: { DESERT: 0.03, JUNGLE: 0.03, TUNDRA: 0.03, MTN: 0.01 },
+      jungleCultures: ['viet', 'cham', 'khmer', 'burmese', 'filipino', 'indian'],
+    },
   };
   // 克制：a 克 b
   const BEATS = {
@@ -1152,6 +1175,6 @@ var DATA = (function () {
   ];
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
-  return { ITEMS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, CITIES, UNITS, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, SKILLS, NAMES };
+  return { ITEMS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, CITIES, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

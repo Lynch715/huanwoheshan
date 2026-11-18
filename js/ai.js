@@ -248,6 +248,15 @@ var AI = (function () {
     return p;
   }
 
+  // 远处且尚无路线时仅计目标地势；行至阵前，再以真正接敌的一格复核渡河、登岸与高差。
+  function opposition(a, tile) {
+    const path = a.path;
+    const origin = GEO.dist(a.tile, tile) === 1 ? a.tile :
+      path?.length > 1 && path[path.length - 1] === tile ? path[path.length - 2] : tile;
+    const { Pa, Pd } = GAME.previewBattle(a, tile, undefined, origin);
+    return Pd / Math.max(Pa, 0.001);
+  }
+
   function military(f, cities, enemies) {
     const F = GAME.fac(f);
     const atWarNow = enemies.length > 0;
@@ -281,7 +290,7 @@ var AI = (function () {
     }
     const es = new Set(enemies);
     const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f)),
-      defs: new Map(), frontier: undefined, rules, fightSong };
+      frontier: undefined, rules, fightSong };
     for (const a of armies) {
       if (!S().armies.includes(a)) continue;
       try { armyAct(a, cities, enemies, ctx); } catch (e) { console.error('AI army', e); }
@@ -316,6 +325,12 @@ var AI = (function () {
     const avg = a.units.reduce((s, u) => s + u.s, 0) / Math.max(1, a.units.length);
     const myP = armyPower(a);
     const rules = ctx.rules;
+    const estimates = new Map();
+    const oddsAgainst = tile => {
+      if (!estimates.has(tile)) estimates.set(tile, opposition(a, tile));
+      return estimates.get(tile);
+    };
+    const assault = c => ctx.fightSong && c.f === S().player ? rules.assault : f === S().player ? 0.9 : AI_ASSAULT;
     let goal = null;
     const worn = avg < (rules?.retreat ?? 45) || a.morale < (rules?.morale ?? 30);
     const undermanned = rules && a.units.length <= 2 && a.units.length < GAME.armyCap(a) / 2;
@@ -323,7 +338,7 @@ var AI = (function () {
       // 围城不退：兵员和士气尚能一战，且紧邻的电脑城池守备已弱，方可续攻。
       const pressOn = !undermanned && f !== S().player && avg >= 30 && a.morale >= 15 &&
         ctx.eCities.find(c => ctx.es.has(c.f) && c.f !== S().player && c.f !== 'rebel' &&
-          GEO.dist(c.tile, a.tile) === 1 && !(a.badTargets?.[c.id] > S().T) && myP >= cityDefense(c) * AI_ASSAULT);
+          GEO.dist(c.tile, a.tile) === 1 && !(a.badTargets?.[c.id] > S().T) && oddsAgainst(c.tile) * AI_ASSAULT <= 1);
       const c = pressOn || nearestOwnCity(a, cities, !!rules);
       if (c && c.tile !== a.tile) goal = c.tile;
       else return;
@@ -335,8 +350,10 @@ var AI = (function () {
         const d = GEO.dist(o.tile, a.tile);
         if (d > 9 || ctx.fightSong && !siegeReady(GAME.cityAt(o.tile), rules)) continue;
         const nearMine = cities.some(c => GEO.dist(c.tile, o.tile) <= 3);
-        const op = armyPower(o);
-        if (op < myP * 1.15 && (nearMine || d <= 4) && d < td) { td = d; threat = o; }
+        if (!nearMine && d > 4) continue;
+        const risk = oddsAgainst(o.tile);
+        const score = d + risk;
+        if (risk < 1.15 && score < td) { td = score; threat = o; }
       }
       // 进攻目标城市
       let tgt = null, best = 1e9;
@@ -345,11 +362,11 @@ var AI = (function () {
         const d = GEO.dist(c.tile, a.tile);
         if (d > 22) continue;
         if (a.badTargets && a.badTargets[c.id] > S().T) continue;
-        let def = ctx.defs.get(c.id); if (def === undefined) { def = cityDefense(c); ctx.defs.set(c.id, def); }
         const againstSong = ctx.fightSong && c.f === S().player;
         if (againstSong && !siegeReady(c, rules)) continue;
+        const risk = oddsAgainst(c.tile), def = myP * risk;
         const reconquest = rules && c.recentCapture?.from === f && S().T - c.recentCapture.t < rules.reconquest;
-        if (myP < def * (againstSong ? rules.assault : f === S().player ? 0.9 : AI_ASSAULT) && !(def < 30 && a.units.some(u => u.t === 'siege'))) continue;
+        if (risk * assault(c) > 1) continue;
         const border = againstSong && cities.some(home => GEO.dist(home.tile, c.tile) <= 7);
         const north = f === 'jin' && border && S().T < 20 ? rules.northPush : 0;
         const weakness = border && c.recentCapture && S().T - c.recentCapture.t < rules.reconquest ? (100 - c.loyalty) * rules.unrestWeight : 0;
@@ -357,7 +374,7 @@ var AI = (function () {
           north - weakness - (reconquest ? 8 : 0);
         if (score < best) { best = score; tgt = c; }
       }
-      if (threat && (!tgt || td < GEO.dist(tgt.tile, a.tile))) goal = threat.tile;
+      if (threat && (!tgt || td < GEO.dist(tgt.tile, a.tile) + oddsAgainst(tgt.tile))) goal = threat.tile;
       else if (tgt) goal = tgt.tile;
       else {
         // 集结于前线城市
@@ -394,23 +411,35 @@ var AI = (function () {
       a.path = p; a.aiGoal = goal;
     }
     // 通过行军入口确认确实即将交战。排入待守队列时也计一次，免得同回合重复派兵。
-    GAME.advance(a, ctx.fightSong ? (tile, defender) => {
-      if (defender !== S().player) return true;
+    GAME.advance(a, (tile, defender) => {
       const city = GAME.cityAt(tile);
+      const limit = city && city.f === defender ? 1 / assault(city) : 1.15;
+      if (opposition(a, tile) > limit) {
+        if (city && a.aiGoal === tile) (a.badTargets ||= {})[city.id] = S().T + 2;
+        a.aiGoal = null; a.path = [];
+        return false;
+      }
+      if (!ctx.fightSong || defender !== S().player) return true;
       if (!siegeReady(city, rules)) return false;
       if (city?.f === S().player) city.lastSiege = S().T;
       return true;
-    } : null);
+    });
   }
 
   function rebelArmies() {
-    const P = S().player;
     for (const a of S().armies.filter(x => x.f === 'rebel')) {
       let tgt = null, bd = 1e9;
-      for (const c of S().cities) { if (c.f === 'rebel') continue; const d = GEO.dist(c.tile, a.tile); if (d < bd && d < 10) { bd = d; tgt = c; } }
-      if (!tgt) continue;
-      if (!a.path || !a.path.length || a.aiGoal !== tgt.tile) { a.path = GAME.findPath(a, tgt.tile, 1500) || []; a.aiGoal = tgt.tile; }
-      GAME.advance(a);
+      for (const c of S().cities) {
+        if (c.f === 'rebel') continue;
+        const d = GEO.dist(c.tile, a.tile);
+        if (d >= 10 || d >= bd) continue;
+        const risk = opposition(a, c.tile);
+        if (risk * AI_ASSAULT <= 1 && d + risk < bd) { bd = d + risk; tgt = c; }
+      }
+      if (tgt) {
+        if (!a.path || !a.path.length || a.aiGoal !== tgt.tile) { a.path = GAME.findPath(a, tgt.tile, 1500) || []; a.aiGoal = tgt.tile; }
+        GAME.advance(a, tile => opposition(a, tile) * AI_ASSAULT <= 1);
+      }
       // 乱军渐散
       if (rand() < 0.04 * GAME.E()) for (const u of a.units) u.s -= 15;
     }

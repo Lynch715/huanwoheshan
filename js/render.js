@@ -1000,7 +1000,7 @@ var RENDER = (function () {
       } else if (st.k === 'bt') {
         const e = st.ev;
         if ((vis(e.tile) || vis(e.from)) && (follow || onscr(e.tile) || onscr(e.from))) { st.dur = 1350; st.focus = [tx(e.tile), ty(e.tile)]; st.f = e.af; }
-      } else if (st.k === 'gain') {
+      } else if (st.k === 'gain' && !st.ev.quiet) {
         if (vis(st.ev.tile) && (follow || onscr(st.ev.tile))) { st.dur = 450; st.focus = [tx(st.ev.tile), ty(st.ev.tile)]; st.f = st.ev.f; }
       } else if (st.k === 'die') {
         const d = anim.disp.get(st.ev.id);
@@ -1099,6 +1099,9 @@ var RENDER = (function () {
       const e = st.ev, A = anim.disp.get(e.aid), D = e.did != null ? anim.disp.get(e.did) : null;
       if (A) { A.shake = null; A.x = tx(e.from); A.y = ty(e.from); A.tile = e.from; A.str = e.aStr; A.n = e.aN; if (e.capture) { A.tile = e.tile; A.x = tx(e.tile); A.y = ty(e.tile); } }
       if (D) { D.shake = null; D.str = e.dStr; D.n = e.dN; if (e.retreat != null) { D.tile = e.retreat; D.x = tx(e.retreat); D.y = ty(e.retreat); } }
+    } else if (st.k === 'gain' && st.ev.str != null) {
+      const d = anim.disp.get(st.ev.id);
+      if (d) { d.str = st.ev.str; d.n = st.ev.n; if (!d.n) anim.disp.delete(d.id); }
     } else if (st.k === 'die') anim.disp.delete(st.ev.id);
     else if (st.k === 'cap') { anim.cityF.set(st.ev.city, st.ev.to); }
   }

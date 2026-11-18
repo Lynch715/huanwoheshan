@@ -735,7 +735,7 @@ var GAME = (function () {
   }
   function clearSentry(a) { a.sentry = false; a.fortT = null; }
   function createArmyRaw(f, tile, units, genId, name) {
-    const a = { id: S.nextArmy++, f, tile, units, gen: genId, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null };
+    const a = { id: S.nextArmy++, f, tile, units, gen: genId, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null, expeditionWarned: false };
     S.armies.push(a);
     if (genId != null) { const g = gen(genId); g.status = 'army'; g.loc = a.id; }
     a.mp = armyMP(a);
@@ -809,6 +809,15 @@ var GAME = (function () {
       (o.f === f ? friendly : occ).add(o.tile);
     }
     if (target && (target.f === f || !atWar(f, target.f))) return null;
+    // 本次搜索内军队、邦交与地形均不变。仍用行军入口的规则求值，随后复用结果。
+    const passage = new Map(), stepCosts = [[], []];
+    const terrain = GEO.terrain;
+    function passable(n, tt) {
+      const key = tt === T.SEA || tt === T.LAKE ? tt : tileOwner(n);
+      let allowed = passage.get(key);
+      if (allowed === undefined) { allowed = canEnter(f, n, a); passage.set(key, allowed); }
+      return allowed;
+    }
     // 从空格展开。优先选择足以走完的穿营段，只有窄路时也可先定路线，待前军挪开再走。
     const maxMarch = Math.max(a.mp, armyMP(a));
     const gS = new Map(), came = new Map();
@@ -834,24 +843,26 @@ var GAME = (function () {
       }
       closed.add(cur);
       const gc = gS.get(cur);
-      const offer = (n, stepCost, tiles) => {
+      const offer = (n, stepCost, via) => {
         const ng = gc + stepCost;
         const old = gS.get(n);
         if (old === undefined || ng < old) {
           gS.set(n, ng);
-          came.set(n, { from: cur, tiles });
+          came.set(n, { from: cur, tiles: [...via, n] });
           push(n, ng + GEO.dist(n, goal));
         }
       };
       let bestPass = null;
       const branch = (from, used, via) => {
+        const costs = stepCosts[GEO.isWater(from) ? 1 : 0];
         for (const n of GEO.NBR[from]) {
-          if (closed.has(n) || !canEnter(f, n, a)) continue;
+          const tt = terrain[n];
+          if (closed.has(n) || !passable(n, tt)) continue;
           const passing = via.length > 0;
           if (occ.has(n) && (n !== goal || passing)) continue;
           const foe = marchFoe(f, n, n === goal ? target : null);
           if (foe && (n !== goal || passing || !atWar(f, foe))) continue;
-          const nextCost = used + moveCost(a, from, n);
+          const nextCost = used + (costs[tt] ??= moveCost(a, from, n));
           const occupied = friendly.has(n);
           if (occupied) {
             bestPass ||= new Map();
@@ -861,7 +872,7 @@ var GAME = (function () {
           } else {
             const wait = passing && nextCost > maxMarch + 1e-9 ? GEO.NBR.length : 0;
             // 等长时优先空地，以免队列变动后耽搁行军。
-            offer(n, nextCost + wait + via.length * 0.001, [...via, n]);
+            offer(n, nextCost + wait + via.length * 0.001, via);
           }
         }
       };
@@ -872,6 +883,7 @@ var GAME = (function () {
   // 沿路径行进；遇敌即战。返回事件列表
   function advance(a, allowAttack) {
     const out = [];
+    const origin = a.tile;
     if (a.path && a.path.length && a.sentry) clearSentry(a);
     while (a.path && a.path.length && a.mp > 0) {
       const step = routeStep(a, a.tile, a.path);
@@ -923,6 +935,7 @@ var GAME = (function () {
       if (a.f === S.player) revealAround(a.tile, armySight(a));
       if (GEO.isWater(a.tile) && !canSail(a)) { a.path = []; break; }
     }
+    if (a.f === S.player && a.tile !== origin && S.armies.includes(a)) warnExpedition(a, expeditionRate(a));
     return out;
   }
   function moveArmyTo(aid, goal) {
@@ -937,7 +950,91 @@ var GAME = (function () {
   }
 
   // ---------- 战斗 ----------
-  function skillMult(g, u, ctx, role) {
+  const TC = DATA.TERRAIN_COMBAT;
+  const terrainUnits = Object.fromEntries(Object.entries(TC.byTerrain).map(([key, row]) => [T[key], row]));
+  const heights = new Set(TC.highGround.from.map(key => T[key]));
+  const lowlands = new Set(TC.highGround.to.map(key => T[key]));
+  function battleTerrain(origin, tile, city) {
+    const tt = GEO.terrain[tile], water = GEO.isWater(tile), river = !!GEO.river[tile];
+    return { tt, city, water, river, rough: tt === T.HILL || tt === T.MTN || tt === T.FOREST || tt === T.PLATEAU,
+      downhill: heights.has(GEO.terrain[origin]) && lowlands.has(tt),
+      crossing: river && !GEO.river[origin], landing: !water && GEO.isWater(origin) };
+  }
+  function unitTerrainMult(type, role, ctx) {
+    const row = terrainUnits[ctx.tt], group = TC.groups[type];
+    if (!row || (ctx.city && group === 'siege')) return 1;
+    if (group === 'bow' && role === 'def' && row.defBow) return row.defBow;
+    return row[group] || 1;
+  }
+  function navyLandMult(ctx) { return ctx.river ? TC.water.riverNavy : TC.water.landNavy; }
+  function landingMult(g) { return hasSkill(g, '水战') ? TC.landing.mult + (1 - TC.landing.mult) * TC.landing.skillRelief : TC.landing.mult; }
+  // 临阵反击可更换攻防属性，但地形所认的攻守两军从开战至终局不变。
+  function terrainPower(type, statRole, role, ctx, g) {
+    const unit = U[type];
+    let base = statRole === 'att' ? unit.atk : unit.def;
+    if (ctx.water) base = type === 'navy' ? unit.sea : base * TC.water.embarked;
+    else if (type === 'navy') base *= navyLandMult(ctx);
+    if (role === 'att') {
+      if (ctx.downhill) base *= TC.highGround.mult;
+      if (ctx.crossing) base *= TC.crossing.att;
+      if (ctx.landing && type !== 'navy') base *= landingMult(g);
+    }
+    return base * unitTerrainMult(type, role, ctx);
+  }
+  // 原临河守势与本格守势相加；兵种适应和将领特技另乘。
+  function terrainDefense(ctx, noTerrain) {
+    return noTerrain ? 1 : (ctx.crossing ? TC.crossing.def : 1) + TERR[ctx.tt].def;
+  }
+  const terrainGroupName = { cav: '骑兵', inf: '步卒', bow: '弓弩', fire: '火器', siege: '砲车', navy: '舟师' };
+  const terrainAction = { [T.PLAIN]: '驰平原', [T.STEPPE]: '驰草原', [T.HILL]: '据丘陵', [T.MTN]: '入山',
+    [T.FOREST]: '入林', [T.JUNGLE]: '入雨林', [T.PLATEAU]: '上高原' };
+  function battleTerrainRows(B, M = {}) {
+    const ctx = B.ctx, rows = [];
+    const add = (role, label, mult) => rows.push({ role, label, mult });
+    for (const [role, side] of [['att', B.A], ['def', B.D]]) {
+      const groups = new Set(side.units.filter(u => u.s > 0).map(u => TC.groups[u.t]));
+      if (!groups.size) continue;
+      const g = gen(side.gen), hasLand = [...groups].some(t => t !== 'navy');
+      for (const group of groups) {
+        const mult = unitTerrainMult(group, role, ctx);
+        if (mult !== 1) add(role, terrainGroupName[group] + terrainAction[ctx.tt], mult);
+      }
+      if (groups.has('navy') && !ctx.water) add(role, ctx.river ? '舟师入河' : '舟师陆战', navyLandMult(ctx));
+      if (hasLand && ctx.water) add(role, '陆军舟上交锋', TC.water.embarked);
+      if (role === 'att') {
+        if (ctx.downhill) add(role, '居高临下', TC.highGround.mult);
+        if (ctx.crossing) add(role, '渡河强攻', TC.crossing.att);
+        if (ctx.landing && hasLand) add(role, hasSkill(g, '水战') ? '陆军登岸（水战减损）' : '陆军登岸', landingMult(g));
+      } else {
+        if (!M.noTerrain && TERR[ctx.tt].def) add(role, TERR[ctx.tt].name + '守势', 1 + TERR[ctx.tt].def);
+        if (!M.noTerrain && ctx.crossing) add(role, '据河待渡', TC.crossing.def);
+        if (ctx.rough && hasSkill(g, '守险')) add(role, '主将守险', TC.skills.roughDefense);
+      }
+      if ((ctx.river || ctx.water) && hasSkill(g, '水战')) add(role, '主将水战', TC.skills.waterBattle);
+    }
+    return rows;
+  }
+  function tileTerrainRows(tile) {
+    const ctx = battleTerrain(tile, tile, !!cityAt(tile)), tt = ctx.tt, rows = [];
+    const add = (role, label, mult) => rows.push({ role, label, mult });
+    if (TERR[tt].def) add('def', TERR[tt].name + '守势', 1 + TERR[tt].def);
+    for (const [key, mult] of Object.entries(terrainUnits[tt] || {})) {
+      if (key === 'siege' && ctx.city) continue;
+      const group = key === 'defBow' ? 'bow' : key;
+      add(key === 'defBow' ? 'def' : 'both', terrainGroupName[group] + terrainAction[tt] + (key === 'siege' ? '野战' : ''), mult);
+    }
+    if (heights.has(tt)) add('att', '自此下攻平原、草原或沙漠', TC.highGround.mult);
+    if (lowlands.has(tt)) add('att', '自丘陵或山地下攻此地', TC.highGround.mult);
+    if (ctx.river) {
+      add('att', '自无河格渡河强攻', TC.crossing.att);
+      add('def', '敌自无河格来，据河待渡', TC.crossing.def);
+    }
+    if (ctx.water) add('both', '陆军舟上交锋', TC.water.embarked);
+    else add('both', ctx.river ? '舟师入河' : '舟师陆战', navyLandMult(ctx));
+    if (ctx.water || GEO.NBR[tile].some(GEO.isWater)) add('att', '陆军自水面登岸（水战减损一半）', TC.landing.mult);
+    return rows;
+  }
+  function skillMult(g, u, ctx, role, terrainRole = role) {
     if (!g) return 1;
     let m = 1;
     const H = x => hasSkill(g, x);
@@ -945,9 +1042,9 @@ var GAME = (function () {
     if (H('大汗')) m *= 1.25;
     if (H('骁勇') && role === 'att') m *= 1.15;
     if (H('坚守') && role === 'def' && ctx.city) m *= 1.35;
-    if (H('守险') && role === 'def' && ctx.rough) m *= 1.3;
+    if (H('守险') && terrainRole === 'def' && ctx.rough) m *= TC.skills.roughDefense;
     if (H('攻城') && role === 'att' && ctx.city) m *= 1.4;
-    if (H('水战') && (ctx.water || ctx.river)) m *= 1.4;
+    if (H('水战') && (ctx.water || ctx.river)) m *= TC.skills.waterBattle;
     if (H('铁骑') && ['cav', 'hcav', 'hbow', 'elite'].includes(u.t)) m *= 1.25;
     if (H('神射') && ['bow', 'hbow'].includes(u.t)) m *= 1.3;
     return m;
@@ -956,23 +1053,23 @@ var GAME = (function () {
     const counts = {}; let tot = 0;
     for (const u of enemy.units) { counts[u.t] = (counts[u.t] || 0) + u.s; tot += u.s; }
     let p = 0, siegeP = 0;
-    const f = side.f, g = gen(side.gen);
+    const f = side.f, g = gen(side.gen), tech = techFx(f);
+    // 一侧同种各营的敌情、地势与主将均相同，兵力仍逐营按原顺序结算。
+    const perUnit = {};
     for (const u of side.units) {
-      const d = U[u.t];
-      let base = role === 'att' ? d.atk : d.def;
-      if (ctx.water) base = u.t === 'navy' ? d.sea : base * 0.3;
-      else if (u.t === 'navy') base *= 0.5;
-      let cm = 1;
-      if (tot > 0) {
-        for (const e of DATA.BEATS[u.t] || []) if (counts[e]) cm += 0.4 * counts[e] / tot;
-        for (const et in counts) if ((DATA.BEATS[et] || []).includes(u.t)) cm -= 0.3 * counts[et] / tot;
+      if (perUnit[u.t] === undefined) {
+        let m = 1;
+        if (tot > 0) {
+          for (const e of DATA.BEATS[u.t] || []) if (counts[e]) m += 0.4 * counts[e] / tot;
+          for (const et in counts) if ((DATA.BEATS[et] || []).includes(u.t)) m -= 0.3 * counts[et] / tot;
+        }
+        m *= (1 + (tech.unit[u.t] || 0)) * (1 + (tech.unit.all || 0));
+        if (u.t === 'bow' && g) m *= 1 + itemSum(g, 'bow');
+        m *= skillMult(g, u, ctx, role);
+        perUnit[u.t] = terrainPower(u.t, role, role, ctx, g) * m;
       }
-      let m = cm;
-      { const tu = techFx(f).unit; m *= (1 + (tu[u.t] || 0)) * (1 + (tu.all || 0)); }
-      if (u.t === 'bow' && g) m *= 1 + itemSum(g, 'bow');
-      m *= skillMult(g, u, ctx, role);
-      let v = base * m * u.s / 100;
-      if (u.t === 'siege' && role === 'att' && ctx.city) { const sv = v * (d.siege || 1) * (1 + (techFx(f).siegePct || 0)); siegeP += sv; v = sv * 0.5; }
+      let v = perUnit[u.t] * u.s / 100;
+      if (u.t === 'siege' && role === 'att' && ctx.city) { const sv = v * U.siege.siege * (1 + (tech.siegePct || 0)); siegeP += sv; v = sv * 0.5; }
       p += v;
     }
     if (g) {
@@ -985,31 +1082,27 @@ var GAME = (function () {
     return { p, siegeP };
   }
   // 双方战力（不含随机、不修改状态）
-  function battleSides(a, tile, M) {
-    M = M || {};
+  function battleSides(a, tile, M, originTile = a.tile) {
     const defArmy = armyAt(tile);
     const c = cityAt(tile);
-    const water = GEO.isWater(tile);
-    const tt = GEO.terrain[tile];
-    const ctx = { city: !!(c && c.f !== a.f), water, river: !!GEO.river[tile], rough: tt === T.HILL || tt === T.MTN || tt === T.FOREST || tt === T.PLATEAU };
+    const ctx = battleTerrain(originTile, tile, !!(c && c.f !== a.f));
     const defF = defArmy ? defArmy.f : c.f;
     const D = { f: defF, units: [], gen: null, morale: 70 };
     if (defArmy) { D.units.push(...defArmy.units); D.gen = defArmy.gen; D.morale = defArmy.morale; }
     if (c && c.f === defF) { D.units.push(...c.garrison); if (D.gen == null) D.gen = c.governor; }
     const A = { f: a.f, units: a.units, gen: a.gen, morale: a.morale };
     const fortMult = fortified(defArmy) ? FORT_BONUS : 1;
-    return { defArmy, c, water, tt, ctx, defF, D, A, fortMult };
+    return { defArmy, c, water: ctx.water, tt: ctx.tt, ctx, defF, D, A, fortMult };
   }
-  function battlePowers(B, M) {
+  function battlePowers(B, M, wall = B.c?.wall) {
     M = M || {};
-    const { A, D, ctx, tt, c, defF } = B;
+    const { A, D, ctx, c, defF } = B;
     const A2 = Object.assign({}, A, { morale: clamp(A.morale + (M.aMorale || 0), 5, 100) });
     const D2 = Object.assign({}, D, { morale: clamp(D.morale + (M.dMorale || 0), 5, 100) });
     const pa = sidePower(A2, D, 'att', ctx);
     const pd = sidePower(D2, A, 'def', ctx);
-    const terr = M.noTerrain ? 0 : TERR[tt].def + (ctx.river ? 0.15 : 0);
-    let Pd = pd.p * (1 + terr);
-    if (c && c.f === defF && !M.noWall) Pd = Pd * 1.2 + c.wall * 0.6 + 4;
+    let Pd = pd.p * terrainDefense(ctx, M.noTerrain);
+    if (c && c.f === defF && !M.noWall) Pd = Pd * 1.2 + wall * 0.6 + 4;
     else if (c && c.f === defF) Pd += 4;
     let Pa = pa.p;
     Pa *= M.aMult || 1; Pd *= (M.dMult || 1) * B.fortMult;
@@ -1023,15 +1116,13 @@ var GAME = (function () {
     for (let i = 0; i < n; i++) { const u = lo + (hi - lo) * (i + 0.5) / n; p += clamp((k * u - lo) / (hi - lo), 0, 1); }
     return p / n;
   }
-  function previewBattle(a, tile, M) {
+  function previewBattle(a, tile, M, originTile = a.tile) {
     M = M || {};
-    const B = battleSides(a, tile, M);
+    const B = battleSides(a, tile, M, originTile);
     const sd = M.preD ? 1 - M.preD : 1, sa = M.preA ? 1 - M.preA : 1;
-    // 削墙：临时改城防试算，算完复原
-    const c = B.c && B.c.f === B.defF ? B.c : null, w0 = c ? c.wall : 0;
-    if (c && M.wallHit) c.wall = Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit));
-    let { Pa, Pd } = battlePowers(B, M);
-    if (c) c.wall = w0;
+    const c = B.c;
+    const wall = c && M.wallHit ? Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit)) : c?.wall;
+    let { Pa, Pd } = battlePowers(B, M, wall);
     Pa *= sa; Pd *= sd;
     const r = Pa / (Pa + Pd + 0.001);
     const ls = { 7: 0.7, 10: 0.8 }[S.scale] || 1;
@@ -1703,6 +1794,29 @@ var GAME = (function () {
     if (c.f === S.player) log(`${c.name}民变蜂起，乱民聚众 ${n * 500} 人！`, 'war', c.tile);
   }
 
+  const expeditionRates = Object.fromEntries(Object.entries(TC.expedition.rates).map(([key, rate]) => [T[key], rate]));
+  function expeditionTime(tt) {
+    const e = E();
+    if (tt !== T.TUNDRA) return e;
+    // 军需先于历日推进结算。跨季一步只计其中落在冬季的天数。
+    const start = S.doy / 90;
+    return Math.max(0, Math.min(4, start + e) - Math.max(3, start));
+  }
+  function expeditionRate(a) {
+    const tt = GEO.terrain[a.tile], rate = expeditionRates[tt];
+    if (!TC.expedition.enabled || !rate || tileOwner(a.tile) === a.f || cityAt(a.tile)?.f === a.f) return 0;
+    const culture = fac(a.f).culture;
+    if ((tt === T.DESERT || tt === T.TUNDRA) && DATA.NOMAD[culture]) return 0;
+    if (tt === T.JUNGLE && TC.expedition.jungleCultures.includes(culture)) return 0;
+    return expeditionTime(tt) > 0 ? rate : 0;
+  }
+  function warnExpedition(a, rate) {
+    if (rate && !a.expeditionWarned) {
+      const terrain = GEO.TERRAIN[GEO.terrain[a.tile]].name;
+      log(`${armyName(a)}屯于境外${terrain}，水土不服，每季损员 ${Math.round(rate * 100)}%。`, 'mil', a.tile);
+    }
+    a.expeditionWarned = !!rate;
+  }
   function armyUpkeepTurn() {
     const e = E();
     const debt = difficultyRules().debt;
@@ -1715,13 +1829,17 @@ var GAME = (function () {
         let nd = 99;
         for (const c of S.cities) if (c.f === a.f) nd = Math.min(nd, GEO.dist(c.tile, a.tile));
         if (nd > 8) heal -= 4;
-        if (GEO.terrain[a.tile] === T.DESERT) heal -= 3;
+        if (!TC.expedition.enabled && GEO.terrain[a.tile] === T.DESERT) heal -= 3;
       }
       if (F.food < 0) heal -= 10;
       if (F.gold < 0) { heal -= 3; a.morale -= (a.f === S.player ? debt.morale : 5) * e; }
       const hk = heal > 0 ? Math.min(1, e * 2) : e;
-      for (const u of a.units) u.s = clamp(u.s + heal * hk, 1, 100);
+      const rate = expeditionRate(a);
+      if (a.f === S.player) warnExpedition(a, rate);
+      const retained = rate ? Math.pow(1 - rate, expeditionTime(GEO.terrain[a.tile])) : 1;
+      for (const u of a.units) u.s = clamp(u.s * retained + heal * hk, 1, 100);
       a.units = a.units.filter(u => u.s >= 8);
+      if (rate) rec({ k: 'gain', id: a.id, f: a.f, tile: a.tile, n: a.units.length, str: sumStr(a.units), quiet: true });
       if (a.f === S.player && F.gold <= -100 && a.units.length && Math.random() < debt.desertion * e) {
         const weakest = a.units.reduce((index, u, i) => u.s < a.units[index].s ? i : index, 0);
         a.units.splice(weakest, 1);
@@ -1885,7 +2003,7 @@ var GAME = (function () {
       F.lastMainWar ??= -99;
     }
     for (const r of Object.values(S.rel)) if (r.war) r.since ??= 0;
-    for (const a of S.armies) a.fortT ??= null;
+    for (const a of S.armies) { a.fortT ??= null; a.expeditionWarned ??= false; }
     for (const g of S.generals) if (!g.cul) g.cul = g.f === 'rebel' ? 'han' : fac(g.f).culture;
     if (!S.sites) generateSites();
     if (typeof COURT !== 'undefined') COURT.init();
@@ -1895,6 +2013,7 @@ var GAME = (function () {
   }
 
   return {
+    terrainPower, terrainDefense, battleTerrainRows, tileTerrainRows, expeditionRate,
     get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum,
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,

@@ -267,6 +267,11 @@ table.t td { border-bottom: 1px dashed rgba(34,30,25,.2); padding: 4px 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .help h3 { margin: 12px 0 4px; border-bottom: 1px solid var(--ink2); }
 .help p, .help li { font-size: 15px; line-height: 1.7; margin: 3px 0; }
+.terrain-guide { margin: 8px 0; }
+.terrain-guide > div { display: flex; gap: 12px; padding: 4px 0; border-bottom: 1px dotted var(--dim); }
+.terrain-guide dt { flex: 0 0 3em; font-weight: bold; }
+.terrain-guide dd { margin: 0; }
+.terrain-link { margin: 3px 0; }
 kbd { border: 1px solid var(--ink2); border-radius: 3px; padding: 0 5px; font-family: var(--font); background: rgba(255,255,255,.4); }
 
 .pimg { border-radius: 4px; border: 1.5px solid var(--ink); vertical-align: middle; flex-shrink: 0; background: #e8dcc0; object-fit: cover; }
@@ -310,6 +315,11 @@ table.t td .pimg { margin-right: 4px; }
 .tvs .vsx { font-size: 30px; color: var(--red); text-align: center; font-weight: bold; }
 .tside { display: flex; gap: 10px; border: 1.5px solid var(--ink); padding: 8px; background: rgba(255,255,255,.3); font-size: 13px; line-height: 1.6; }
 .odds { display: flex; align-items: center; gap: 10px; margin: 10px 30px 2px; font-size: 16px; }
+.terrain-mods { list-style: none; margin: 6px 0; padding: 0; font-size: 14px; line-height: 1.6; }
+.terrain-mods li { padding: 1px 0; }
+.terrain-mods b { white-space: nowrap; }
+#tac .terrain-mods { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-inline: 30px; }
+#tac .terrain-neutral { text-align: center; margin: 4px; }
 .obar { flex: 1; height: 14px; background: rgba(42,38,34,.18); border: 1.5px solid var(--ink); }
 .obar i { display: block; height: 100%; background: linear-gradient(90deg, #a8302a, #c9a03a 50%, #4f7a43); }
 .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -507,6 +517,7 @@ body:has(#modal-bg:not(.hidden) .settlement-page) #toasts .toast:not(.scroll-err
   #tac .tside { min-width: 0; line-height: 1.4; padding: 4px 6px; gap: 6px; }
   #tac .tside .pimg { width: 44px !important; height: 44px !important; }
   #tac .odds { margin-inline: 4px; }
+  #tac .terrain-mods { grid-template-columns: 1fr; margin-inline: 4px; }
   #tac .plan, #tac .plan-more, #tac .choice, #tac .btn { min-height: 40px; min-width: 40px; }
   #tac .plans { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   #tac .tac-actions { flex: 0 0 auto; max-width: none; flex-direction: row; gap: 4px; margin-top: 3px; padding-top: 5px; border-top: 1px solid var(--ink); }
