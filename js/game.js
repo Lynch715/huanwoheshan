@@ -284,16 +284,25 @@ var GAME = (function () {
     if (a === S.player && !silent) log(`遣使与【${Bf.name}】初通音讯。`, 'dip');
   }
 
+  // 某势力的城池是否临近我朝（用于决定天下大事是否提示玩家）
+  function nearPlayer(f, range = 10) {
+    const mine = citiesOf(S.player);
+    if (!mine.length) return false;
+    for (const c of S.cities) if (c.f === f) for (const m of mine) if (GEO.dist(c.tile, m.tile) <= range) return true;
+    return false;
+  }
   function declareWar(a, b, quiet) {
     if (a === b || atWar(a, b)) return;
     const r = getRel(a, b);
-    r.war = true; r.ally = false; r.truce = 0; r.op = Math.min(r.op, -30); r.score = 0; r.trib = null;
+    r.war = true; r.ally = false; r.truce = 0; r.op = Math.min(r.op, -30); r.score = 0; r.trib = null; r.since = S.T;
     fac(a).lastWar = S.T;
+    // 涉及我朝的宣战另记一笔：电脑之间的战事不应推迟其对我朝起衅的冷却
+    if (a === S.player || b === S.player) fac(a).lastMainWar = S.T;
     breakRoutesBetween(a, b);
     if (!quiet) {
       if (b === S.player) log(`【${fac(a).name}】向我宣战！`, 'war');
       else if (a === S.player) log(`我朝向【${fac(b).name}】宣战。`, 'war');
-      else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】开战。`, 'world');
+      else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】开战。`, 'world', null, nearPlayer(a) || nearPlayer(b));
     }
     // 盟友参战
     for (const f in S.factions) {
@@ -307,7 +316,8 @@ var GAME = (function () {
   }
   function makePeace(a, b, trib) {
     const r = getRel(a, b);
-    r.war = false; r.truce = 24; r.score = 0; r.op = Math.max(r.op, -10);
+    // 电脑之间和约三年，涉及我朝仍为六年
+    r.war = false; r.truce = a === S.player || b === S.player ? 24 : 12; r.score = 0; r.op = Math.max(r.op, -10);
     r.trib = trib || null; // {from, to, amt, turns}
     fac(a).warWeary = Math.max(0, fac(a).warWeary - 20); fac(b).warWeary = Math.max(0, fac(b).warWeary - 20);
     if (a === S.player || b === S.player) {
@@ -1303,6 +1313,7 @@ var GAME = (function () {
   function captureCity(c, f, byArmy) {
     const old = c.f, F_old = fac(old), F_new = fac(f);
     const hostileCapital = f === S.player && old !== 'rebel' && old !== f && c.cap;
+    const wasCap = c.cap;
     if (!S.flags.capLost && old === S.player && f !== old && F_old.capital === c.id) S.flags.capLost = true;
     rec({ k: 'cap', city: c.id, from: old, to: f });
     // 知州
@@ -1336,6 +1347,13 @@ var GAME = (function () {
       revealAround(c.tile, 3);
     }
     if (old === S.player) log(`${c.name}失守于【${F_new.name}】！`, 'war', c.tile);
+    // 天下大事：电脑之间攻城略地
+    if (old !== S.player && f !== S.player && old !== f && old !== 'rebel' && f !== 'rebel') {
+      const known = fac(S.player).met[f] || fac(S.player).met[old];
+      const near = citiesOf(S.player).some(m => GEO.dist(m.tile, c.tile) <= 12);
+      if (wasCap && known) log(`【${F_new.name}】攻陷【${F_old.name}】都城${c.name}！`, 'world', c.tile, true);
+      else if (near && known) log(`【${F_new.name}】攻取【${F_old.name}】之${c.name}。`, 'world', c.tile);
+    }
     if (f === 'rebel' && c.f === 'rebel') { F_new.capital = F_new.capital >= 0 ? F_new.capital : c.id; }
     if (citiesOf(old).length === 0 && old !== 'rebel') factionDies(old, f);
     else if (hostileCapital) conquestOpinion();
@@ -1359,7 +1377,7 @@ var GAME = (function () {
       if (S.settlement?.continued) log('社稷倾覆……', 'big');
       else finishGame('defeat');
     }
-    else if (fac(S.player).met[f] || by === S.player) log(`【${F.name}】亡国。`, by === S.player ? 'big' : 'world');
+    else if (fac(S.player).met[f] || by === S.player) log(`【${F.name}】亡国。`, by === S.player ? 'big' : 'world', null, by !== S.player);
   }
 
   // ---------- 将领管理 ----------
@@ -1543,9 +1561,10 @@ var GAME = (function () {
   function setResearch(f, id) { fac(f).research = id; }
 
   // ---------- 回合结算 ----------
-  function log(text, type, tile) {
+  function log(text, type, tile, hot) {
     const e = { t: S.turn, d: dateStr(), text, type: type || 'info' };
     if (tile != null && tile >= 0) e.tile = tile;
+    if (hot) e.hot = true; // 天下大事：回合结束时弹出提示
     S.log.push(e);
     if (S.log.length > 400) S.log.shift();
     emit('log', e);
@@ -1857,7 +1876,11 @@ var GAME = (function () {
       c.recentCapture ??= null;
       c.lastSiege ??= null;
     }
-    for (const F of Object.values(S.factions)) F.recruitEra ??= reachedEra(F);
+    for (const F of Object.values(S.factions)) {
+      F.recruitEra ??= reachedEra(F);
+      F.lastMainWar ??= -99;
+    }
+    for (const r of Object.values(S.rel)) if (r.war) r.since ??= 0;
     for (const a of S.armies) a.fortT ??= null;
     for (const g of S.generals) if (!g.cul) g.cul = g.f === 'rebel' ? 'han' : fac(g.f).culture;
     if (!S.sites) generateSites();

@@ -4,6 +4,12 @@ var AI = (function () {
   const S = () => GAME.S;
   const rand = Math.random;
 
+  // 电脑之间的兵事节奏（单位：季）
+  const AI_WAR_RATE = 0.14;    // 每季按好战度起衅的概率系数（原 0.06，对我朝仍为 0.06）
+  const AI_WAR_COOLDOWN = 6;   // 上次宣战后至少隔一年半再起新衅（对我朝仍为 10）
+  const AI_WAR_MIN = 4;        // 电脑之间开战至少一年后才议和
+  const AI_ASSAULT = 0.8;      // 攻电脑城池时，军力达到城防的倍数即敢攻（原 0.9）
+
   function turn(f) {
     const F = GAME.fac(f);
     if (!F.alive) return;
@@ -170,10 +176,16 @@ var AI = (function () {
     const F = GAME.fac(f), P = S().player;
     const rules = GAME.difficultyRules().coalition;
     let changed = false;
+    // 严苛、地狱下，与我朝交战的国家专心伐宋：不另启战端（见下方 return），也可随时与他国罢兵
+    const focusSong = f !== P && S().difficulty >= 2 && GAME.atWar(f, P);
     // 与电脑议和
     for (const e of enemies) {
       if (e === P || e === 'rebel') continue;
       const commonFoe = f !== P && enemies.includes(P) && GAME.atWar(e, P);
+      // 电脑之间开战未满一年不议和（同仇抗宋者除外），免得刚交兵就罢手
+      // 开局即有的战事没有 since，按开局（T=0）计
+      const since = GAME.getRel(f, e).since ?? 0;
+      if (f !== P && !focusSong && !commonFoe && S().T + 1e-9 < since + AI_WAR_MIN) continue;
       if (rand() < (commonFoe ? rules.peaceRate : 0.2) * GAME.E() &&
           GAME.aiWantsPeace(f, e) > (commonFoe ? -5 : 15) && GAME.aiWantsPeace(e, f) > (commonFoe ? -20 : -5)) {
         GAME.makePeace(f, e);
@@ -192,18 +204,35 @@ var AI = (function () {
         if (combined >= threat.power * rules.ratio) { GAME.declareWar(f, P); return true; }
       }
     }
-    // 常规拓边
-    if (realWars >= 2 || S().T - F.lastWar < 10) return changed;
-    if (rand() > F.aggr * 0.06 * GAME.E()) return changed;
+    // 常规拓边。对我朝的宣战沿用原先的频率与门槛（难度已按此标定）；
+    // 电脑之间更常兴兵，也敢打势均力敌或腹背受敌的邻国。玩家势力（含托管）一律沿用原规则。
+    if (realWars >= 2 || focusSong) return changed;
+    const lively = f !== P;
+    const expansionReady = S().T - F.lastWar >= (lively ? AI_WAR_COOLDOWN : 10);
+    const songReady = lively && S().T - (F.lastMainWar ?? -99) >= 10;
+    if (!expansionReady && !songReady) return changed;
+    const roll = rand();
+    // 对我朝：仍是原先的概率与十季冷却，但冷却只看涉及我朝的宣战
+    const songOk = songReady && roll <= F.aggr * 0.06 * GAME.E();
+    const expansionOk = expansionReady && roll <= F.aggr * (lively ? AI_WAR_RATE : 0.06) * GAME.E();
+    if (!songOk && !expansionOk) return changed;
     const myP = GAME.totalPower(f);
     const cands = neighbors(f).filter(o => {
+      if (o === P ? !songOk : !expansionOk) return false;
       const OF = GAME.fac(o);
       if (!OF.alive) return false;
       const r = GAME.getRel(f, o);
       if (r.war || r.ally || r.truce > 0 || r.op > 25) return false;
-      if (o === P && (S().T < rules.warDelay || (threat?.active && threat.border.has(f)))) return false;
       const ratio = myP / (GAME.totalPower(o) + 1);
-      return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
+      if (o === P) {
+        if (S().T < rules.warDelay || (threat?.active && threat.border.has(f))) return false;
+        return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
+      }
+      if (!lively) return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
+      // 严苛、地狱下，不趁火打劫正与我朝交战的国家（免得替玩家分兵）
+      if (S().difficulty >= 2 && GAME.atWar(o, P)) return false;
+      const busy = enemiesOf(o).some(x => x !== f && x !== P && x !== 'rebel');
+      return ratio > (F.aggr > 0.7 ? 0.9 : 1.15) * (busy ? 0.8 : 1);
     });
     if (!cands.length) return changed;
     cands.sort((a, b) => GAME.totalPower(a) - GAME.totalPower(b));
@@ -225,7 +254,8 @@ var AI = (function () {
     const fightSong = f !== S().player && f !== 'rebel' && enemies.includes(S().player);
     const rules = f !== S().player && f !== 'rebel' ? GAME.difficultyRules().command : null;
     let armies = S().armies.filter(a => a.f === f);
-    const maxArmies = Math.max(1, Math.round(cities.length / 3) + (atWarNow ? 1 : 0) + (F.mongolBoost ? 3 : 0) +
+    const aiWar = f !== S().player && !fightSong && enemies.some(e => e !== 'rebel');
+    const maxArmies = Math.max(1, Math.round(cities.length / 3) + (atWarNow ? 1 : 0) + (aiWar ? 1 : 0) + (F.mongolBoost ? 3 : 0) +
       Math.round(2 * richness(F)) + (fightSong ? rules.armies : 0));
     // 组建
     if (armies.length < maxArmies) {
@@ -287,9 +317,14 @@ var AI = (function () {
     const myP = armyPower(a);
     const rules = ctx.rules;
     let goal = null;
-    if (avg < (rules?.retreat ?? 45) || a.morale < (rules?.morale ?? 30) ||
-        (rules && a.units.length <= 2 && a.units.length < GAME.armyCap(a) / 2)) {
-      const c = nearestOwnCity(a, cities, !!rules);
+    const worn = avg < (rules?.retreat ?? 45) || a.morale < (rules?.morale ?? 30);
+    const undermanned = rules && a.units.length <= 2 && a.units.length < GAME.armyCap(a) / 2;
+    if (worn || undermanned) {
+      // 围城不退：兵员和士气尚能一战，且紧邻的电脑城池守备已弱，方可续攻。
+      const pressOn = !undermanned && f !== S().player && avg >= 30 && a.morale >= 15 &&
+        ctx.eCities.find(c => ctx.es.has(c.f) && c.f !== S().player && c.f !== 'rebel' &&
+          GEO.dist(c.tile, a.tile) === 1 && !(a.badTargets?.[c.id] > S().T) && myP >= cityDefense(c) * AI_ASSAULT);
+      const c = pressOn || nearestOwnCity(a, cities, !!rules);
       if (c && c.tile !== a.tile) goal = c.tile;
       else return;
     } else if (enemies.length) {
@@ -314,7 +349,7 @@ var AI = (function () {
         const againstSong = ctx.fightSong && c.f === S().player;
         if (againstSong && !siegeReady(c, rules)) continue;
         const reconquest = rules && c.recentCapture?.from === f && S().T - c.recentCapture.t < rules.reconquest;
-        if (myP < def * (againstSong ? rules.assault : 0.9) && !(def < 30 && a.units.some(u => u.t === 'siege'))) continue;
+        if (myP < def * (againstSong ? rules.assault : f === S().player ? 0.9 : AI_ASSAULT) && !(def < 30 && a.units.some(u => u.t === 'siege'))) continue;
         const border = againstSong && cities.some(home => GEO.dist(home.tile, c.tile) <= 7);
         const north = f === 'jin' && border && S().T < 20 ? rules.northPush : 0;
         const weakness = border && c.recentCapture && S().T - c.recentCapture.t < rules.reconquest ? (100 - c.loyalty) * rules.unrestWeight : 0;

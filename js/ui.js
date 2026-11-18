@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.10.1';
+  const VERSION = '0.10.2';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -79,7 +79,7 @@ var UI = (function () {
     titleScreen();
     withLoading('研墨铺纸，绘制天下舆图……', () => { GEO.generate(); ensureBase(); const [c, r] = GEO.nearestHex(100, 36); RENDER.centerOn(GEO.idx(c, r), 0.45); });
     bindInput();
-    GAME.on('log', e => { if (inTurn || RENDER.isAnimating()) { if (['war', 'big'].includes(e.type)) deferredToasts.push(e); } else toast(e.text, e.type); });
+    GAME.on('log', e => { if (inTurn || RENDER.isAnimating()) { if (['war', 'big'].includes(e.type) || e.hot) deferredToasts.push(e); } else toast(e.text, e.type); });
     GAME.on('battle', r => battleQueue.push(r));
     GAME.on('change', () => { refreshTop(); RENDER.markDirty(); });
     GAME.on('event', () => {});
@@ -670,7 +670,13 @@ var UI = (function () {
     if (!ids.length) { toast('无待续之路线'); return; }
     continueArmies(ids);
   }
-  function flushDeferred() { const L = deferredToasts; deferredToasts = []; for (const e of L.slice(-4)) toast(e.text, e.type); }
+  // 回合结束提示：我朝战报优先，天下大事最多两条，合计不超过五条
+  function flushDeferred() {
+    const L = deferredToasts; deferredToasts = [];
+    const own = L.filter(e => e.type !== 'world').slice(-4);
+    const world = L.filter(e => e.type === 'world').slice(-Math.min(2, 5 - own.length));
+    for (const e of [...world, ...own]) toast(e.text, e.type);
+  }
   function afterAction(major) {
     GAME.updateVisibility();
     if (major) { GAME.assignTerritory(false); RENDER.buildPolitical(); }
