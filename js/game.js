@@ -70,7 +70,7 @@ var GAME = (function () {
       rel: {}, flags: { coalitionAnnounced: false }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
       settlement: null,
     };
-    if (typeof EVENTS !== 'undefined') EVENTS.initAchievements(S);
+    if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     for (const d of DATA.FACTIONS) {
       S.factions[d.id] = {
         id: d.id, name: d.name, seal: d.seal, color: d.color, culture: d.culture, aggr: d.aggr,
@@ -308,7 +308,7 @@ var GAME = (function () {
     for (const f in S.factions) {
       if (f === a || f === b || !fac(f).alive || f === 'rebel') continue;
       if (allied(f, b) && !allied(f, a) && !atWar(f, a)) {
-        if (f === S.player) { S.pending.push({ ev: 'allycall', a: f, enemy: a, ally: b }); }
+        if (f === S.player) { EVENTS.offer({ ev: 'allycall', a: f, enemy: a, ally: b }, 'allianceCall'); }
         else declareWar(f, a, false);
       }
     }
@@ -1307,6 +1307,7 @@ var GAME = (function () {
     if (g.status === 'army') { const a = army(g.loc); if (a) a.gen = null; }
     if (g.status === 'gov') { const c = S.cities.find(c => c.governor === g.id); if (c) c.governor = null; }
     if (g.status === 'court' && S.court) { for (const k in S.court.offices) if (S.court.offices[k] === g.id) delete S.court.offices[k]; }
+    if (g.f === S.player && g.hist && ['idle','army','gov','court'].includes(g.status)) S.flags.lastOfficerDeath = { gen: g.id, t: S.T };
     g.status = 'dead'; g.loc = null;
     if (g.f === S.player) log(`${g.name}${why}。`, why === '阵亡' ? 'war' : 'info');
   }
@@ -1325,6 +1326,7 @@ var GAME = (function () {
     const loot = c.pop * 12;
     F_new.gold += loot;
     c.f = f; c.loyalty = 30; c.unrest = 30; c.pop = Math.max(1, c.pop - 1);
+    c.siegeStart = c.siegeLast = null;
     c.recentCapture = { from: old, t: S.T };
     S._playerThreat = null;
     if (f === S.player && old !== f) {
@@ -1343,7 +1345,9 @@ var GAME = (function () {
     }
     if (f === S.player) {
       log(`王师克复${c.name}，缴获钱 ${loot} 贯。`, 'war', c.tile);
-      S.pending.push({ ev: 'captured', city: c.id });
+      const notice = { ev: 'captured', city: c.id };
+      if (byArmy) S.pending.push(notice); // 战后按实况改为处置或撤去。
+      else EVENTS.offer(notice, 'battle');
       revealAround(c.tile, 3);
     }
     if (old === S.player) log(`${c.name}失守于【${F_new.name}】！`, 'war', c.tile);
@@ -1665,7 +1669,7 @@ var GAME = (function () {
       const cost = techCost(f, F.research);
       if (F.sci >= cost) {
         F.sci -= cost; F.techs[F.research] = 1;
-        if (f === S.player) log(`格物有成：习得【${TECH[F.research].name}】。`, 'sci');
+        if (f === S.player) { S.flags.lastStudy = { id: F.research, t: S.T }; log(`格物有成：习得【${TECH[F.research].name}】。`, 'sci'); }
         else if (f !== 'rebel' && rules.eraRecruit) {
           const era = TECH[F.research].era || 1;
           if (era > F.recruitEra) {
@@ -1869,7 +1873,7 @@ var GAME = (function () {
     if (!o.scale) { o.scale = 90; o.doy = o.season * 90 + 1; o.T = o.turn; }
     S = o;
     S.settlement ??= null;
-    if (typeof EVENTS !== 'undefined') EVENTS.initAchievements(S);
+    if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     S.difficulty = DATA.DIFFICULTY[S.difficulty] ? +S.difficulty : 1;
     S.flags.coalitionAnnounced ??= false;
     for (const c of S.cities) {
@@ -1898,7 +1902,7 @@ var GAME = (function () {
     assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
     getRel, atWar, allied, warScore, declareWar, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
     totalPower, militaryPower, playerThreat, difficultyRules, citiesOf, hasTech, availableTechs, techCost, setResearch, tradeSlots, routeTargets, routeValue, openRoute, canRoute, captureCity,
-    updateVisibility, revealAround, assignTerritory, sumStr, rebellion, factionDies, checkVictory, finishGame, rnd, ri, pick, clamp,
+    nearPlayer, updateVisibility, revealAround, assignTerritory, sumStr, rebellion, factionDies, checkVictory, finishGame, rnd, ri, pick, clamp,
   };
 })();
 if (typeof module !== 'undefined') module.exports = GAME;

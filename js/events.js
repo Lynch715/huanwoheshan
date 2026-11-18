@@ -22,7 +22,7 @@ var EVENTS = (function () {
     if (GAME.armyAt(t) || GEO.isWater(t) || (GAME.cityAt(t) && GAME.cityAt(t).f !== f)) t = freeTileNear(nearTile, 4);
     if (t < 0) return null;
     let g = genName ? genByName(genName) : null;
-    if (g && !['idle', 'future'].includes(g.status)) g = null;
+    if (g && (!['idle', 'future'].includes(g.status) || g.f === P() && f !== P())) g = null;
     if (g) { g.f = f; g.status = 'idle'; }
     else g = GAME.randomGeneral(f, 'mil', 62);
     const a = GAME.createArmyRaw(f, t, units.map(u => GAME.mkUnit(u)), g.id, name || '');
@@ -31,8 +31,9 @@ var EVENTS = (function () {
   }
   const rep = (arr, n) => { const o = []; for (let i = 0; i < n; i++) o.push(arr[i % arr.length]); return o; };
   function renameFaction(f, name, seal) { const F = fac(f); F.name = name; if (seal) F.seal = seal; }
-  function worldLog(text, fs) {
-    if (!fs || fs.some(f => fac(P()).met[f])) GAME.log(text, 'world');
+  function worldLog(text, fs, response) {
+    if (response) historyDispatch.set(response, text);
+    if (response || recordingHistory || !fs || fs.some(f => fac(P()).met[f])) GAME.log(text, 'world');
   }
 
   const owned = (id, f) => { const c = GAME.city(id); return alive(f) && c && c.f === f ? c : null; };
@@ -40,6 +41,10 @@ var EVENTS = (function () {
   const capital = f => alive(f) ? owned(fac(f).capital, f) : null;
   const changeLoyalty = (c, n) => { c.loyalty = GAME.clamp(c.loyalty + n, 0, 100); };
   const active = g => ['idle', 'army', 'gov', 'court'].includes(g.status);
+  function activeIn(name, f) {
+    const g = genByName(name);
+    return g?.hist && g.f === f && active(g);
+  }
   const reinforce = (c, types) => c.garrison.push(...types.map(t => GAME.mkUnit(t, 80)));
   const mayFight = (a, b) => alive(a) && alive(b) && !GAME.allied(a, b) &&
     (GAME.atWar(a, b) || GAME.getRel(a, b).truce <= 0);
@@ -198,7 +203,8 @@ var EVENTS = (function () {
     battleDeath: {
       title: '大将死事',
       text: p => `${p.name}殿后拒敌，终不复还。军报已至，众请收敛遗骸，记其军功于册。`,
-      choices: [{ t: '收葬立籍', d: '军中循例抚恤', fn: () => {} }],
+      choices: [{ t: '收葬立籍', d: '依军中旧例安葬', fn: () => {} },
+        { t: '赐帛恤其家', d: '钱 −40，权威 +2', fn: () => { fac(P()).gold -= 40; courtAuthority(2); } }],
     },
     battleUnderdog: {
       title: '以少制众',
@@ -208,7 +214,7 @@ var EVENTS = (function () {
         if (g) GAME.gainExp(g.id, 70);
         if (c) changeLoyalty(c, 4);
         courtAuthority(2);
-      } }],
+      } }, { t: '颁缗犒士', d: '钱 −40，兵源 +10', fn: () => { fac(P()).gold -= 40; fac(P()).man += 10; } }],
     },
     battleOccupation: {
       title: p => `${p.name}城破`,
@@ -274,7 +280,7 @@ var EVENTS = (function () {
         if (!g) return;
         if (p.skill && !GAME.hasSkill(g, p.skill) && GAME.skillList(g).length < 3) GAME.applyLevel(g, { k: 'skill', s: p.skill });
         else GAME.gainExp(g.id, 60);
-      } }],
+      } }, { t: '付学官编入武经讲义', d: '文教 +45，权威 +1', fn: () => { fac(P()).sci += 45; courtAuthority(1); } }],
     },
     battleStalled: {
       title: '屯兵坚城之下',
@@ -627,6 +633,8 @@ var EVENTS = (function () {
   };
 
   // ---------- 科举 ----------
+  DEFS.longxingPeace = DEFS.peaceoffer;
+
   function kejuCandidates() {
     const S = G();
     const acad = S.cities.filter(c => c.f === P() && c.buildings.academy).length;
@@ -664,12 +672,12 @@ var EVENTS = (function () {
       if (c && c.f === 'crusader' && alive('zengid')) { GAME.captureCity(c, 'zengid'); worldLog('赞吉攻陷埃德萨，十字军诸国震动。', ['zengid', 'crusader']); }
     } },
     { y: 1147, s: 1, fn: () => {
-      if (!alive('crusader')) return;
+      if (!alive('crusader') || !alive('zengid') || !mayFight('crusader','zengid') || !(alive('france') || alive('hre')) || !ownedName('埃德萨','zengid')) return;
       const cap = GAME.city(fac('crusader').capital);
       if (alive('france')) spawnArmy('crusader', cap.tile, ['hcav', 'hcav', 'inf', 'inf', 'bow', 'cav'], null, '法兰克十字军');
       if (alive('hre')) spawnArmy('crusader', cap.tile, ['hcav', 'hcav', 'inf', 'inf', 'inf', 'bow'], null, '日耳曼十字军');
       if (alive('zengid')) GAME.declareWar('crusader', 'zengid', true);
-      worldLog('第二次十字军东征：法兰克王与日耳曼王率军东来。', ['crusader', 'france', 'hre']);
+      worldLog('第二次十字军东征，西方援军渡海东来。', ['crusader', 'france', 'hre'], 'secondCross');
     } },
     { y: 1147, s: 2, fn: () => {
       if (!alive('almoravid')) return;
@@ -689,7 +697,7 @@ var EVENTS = (function () {
       if (!alive('jin')) return;
       const S = G();
       const wl = genByName('完颜亮');
-      if (wl && wl.status !== 'dead' && wl.f === 'jin') { /* ok */ }
+      if (!wl || wl.f !== 'jin' || !active(wl) || !mayFight('jin','song')) return;
       if (!GAME.citiesOf('song').length) return;
       if (!GAME.atWar('jin', 'song')) GAME.declareWar('jin', 'song', true);
       // 选距临安最近的金城
@@ -703,28 +711,28 @@ var EVENTS = (function () {
       S.pending.push({ ev: 'wanyanliang' });
     } },
     { y: 1171, s: 0, fn: () => {
-      if (!alive('fatimid')) return;
-      renameFaction('fatimid', '阿尤布', '尤');
       const sal = genByName('萨拉丁');
+      if (!ownedName('开罗', 'fatimid') || !sal || !['zengid', 'fatimid'].includes(sal.f) || !['idle', 'future'].includes(sal.status)) return;
+      renameFaction('fatimid', '阿尤布', '尤');
       if (sal && ['idle', 'future'].includes(sal.status)) { sal.f = 'fatimid'; sal.status = 'idle'; }
       const cap = GAME.city(fac('fatimid').capital);
       spawnArmy('fatimid', cap.tile, ['hcav', 'cav', 'cav', 'inf', 'inf', 'bow', 'bow'], '萨拉丁');
       worldLog('萨拉丁废法蒂玛哈里发，建立阿尤布王朝。', ['fatimid']);
     } },
     { y: 1187, s: 2, fn: () => {
-      if (!alive('fatimid') || !alive('crusader')) return;
+      if (!activeIn('萨拉丁', 'fatimid') || !ownedName('耶路撒冷','crusader') || fac('fatimid').name !== '阿尤布' || !mayFight('fatimid','crusader')) return;
       GAME.declareWar('fatimid', 'crusader', true);
       const t = GAME.city(fac('crusader').capital).tile;
       spawnArmy('fatimid', t, ['hcav', 'hcav', 'cav', 'cav', 'inf', 'inf', 'bow', 'bow'], '萨拉丁');
-      worldLog('哈丁之战：萨拉丁大破十字军，兵临耶路撒冷。', ['fatimid', 'crusader']);
+      worldLog('哈丁战云起，萨拉丁麾下诸军向耶路撒冷集结。', ['fatimid', 'crusader']);
     } },
     { y: 1189, s: 1, fn: () => {
-      if (!alive('crusader')) return;
+      if (!alive('crusader') || !ownedName('耶路撒冷','fatimid') || !['england','france','hre'].some(alive)) return;
       const t = GAME.city(fac('crusader').capital).tile;
       if (alive('england')) spawnArmy('crusader', t, ['hcav', 'hcav', 'inf', 'inf', 'bow', 'bow', 'navy'], '狮心王理查', '英格兰十字军');
       if (alive('france')) spawnArmy('crusader', t, ['hcav', 'hcav', 'inf', 'inf', 'bow'], '腓力二世', '法兰克十字军');
       if (alive('hre')) spawnArmy('crusader', t, ['hcav', 'hcav', 'hcav', 'inf', 'inf', 'bow'], '腓特烈一世', '日耳曼十字军');
-      worldLog('第三次十字军东征：英王“狮心”理查、法王腓力二世、德皇“红胡子”腓特烈联袂东征。', ['crusader', 'england', 'france', 'hre']);
+      worldLog('第三次十字军东征，西方诸军再赴地中海东岸。', ['crusader', 'england', 'france', 'hre'], 'thirdCross');
     } },
     { y: 1180, s: 1, fn: () => {
       if (!alive('japan')) return;
@@ -746,25 +754,27 @@ var EVENTS = (function () {
       const cap = GAME.city(F.capital) || onan;
       for (const n of ['铁木真', '木华黎', '哲别', '速不台', '博尔术']) spawnArmy('mongol', cap.tile, ['hbow', 'hbow', 'hbow', 'hbow', 'hcav', 'hcav', 'cav', 'cav'], n);
       F.mongolBoost = 1;
-      S.pending.push({ ev: 'temujin' });
+      if (fac(P()).met.mongol || GAME.nearPlayer('mongol')) S.pending.push({ ev: 'temujin' });
+      else worldLog('斡难河诸部会盟，漠北改号大蒙古国。', ['mongol']);
     } },
     { y: 1211, s: 1, fn: () => { if (alive('mongol') && fac('mongol').mongolBoost) { for (const f of ['jin', 'xia']) if (alive(f)) GAME.declareWar('mongol', f, true); worldLog('成吉思汗誓师伐金。', ['mongol', 'jin']); } } },
     { y: 1218, s: 1, fn: () => {
       if (!alive('mongol') || !fac('mongol').mongolBoost) return;
-      if (alive('khwarazm')) GAME.declareWar('mongol', 'khwarazm', true);
       if (alive('xiliao')) GAME.declareWar('mongol', 'xiliao', true);
       let west = null, bx = 1e9;
       for (const c of GAME.citiesOf('mongol')) { const x = GEO.colOf(c.tile); if (x < bx) { bx = x; west = c; } }
       if (west) { spawnArmy('mongol', west.tile, rep(['hbow', 'hbow', 'hcav', 'cav'], 9), '哲别'); spawnArmy('mongol', west.tile, rep(['hbow', 'hbow', 'hcav', 'siege'], 9), '拖雷'); }
-      worldLog('蒙古西征：成吉思汗以花剌子模杀使为由，挥师西进。', ['mongol', 'khwarazm']);
+      worldLog('蒙古西军集于边地，诸部举兵向西辽。', ['mongol', 'xiliao']);
     } },
     { y: 1236, s: 1, fn: () => {
       if (!alive('mongol') || !fac('mongol').mongolBoost) return;
-      for (const f of ['rus', 'cuman', 'bulgar', 'hungary', 'poland']) if (alive(f)) GAME.declareWar('mongol', f, true);
+      const targets = ['rus', 'cuman', 'bulgar', 'hungary', 'poland'].filter(f => mayFight('mongol', f));
+      if (!targets.length || !activeIn('拔都','mongol')) return;
+      for (const f of targets) GAME.declareWar('mongol', f, true);
       let west = null, bx = 1e9;
       for (const c of GAME.citiesOf('mongol')) { const x = GEO.colOf(c.tile); if (x < bx) { bx = x; west = c; } }
       if (west) { spawnArmy('mongol', west.tile, rep(['hbow', 'hbow', 'hcav', 'cav'], 10), '拔都'); spawnArmy('mongol', west.tile, rep(['hbow', 'hcav', 'hcav', 'siege'], 10), '速不台'); }
-      worldLog('长子西征：拔都、速不台率军横扫钦察、斡罗思。', ['mongol', 'rus']);
+      worldLog('长子西征，拔都集诸部兵马，进向西境。', ['mongol', 'rus'], 'batuWest');
     } },
 
     { y: 1153, s: 0, fn: () => {
@@ -772,11 +782,11 @@ var EVENTS = (function () {
       if (!old || !next || fac('jin').capital !== old.id) return;
       old.cap = false; next.cap = true; fac('jin').capital = next.id;
       next.buildings.walls = 1; next.wall = GAME.maxWall(next);
-      worldLog('金主自会宁移都燕京，号为中都，百司随驾南迁。', ['jin']);
+      worldLog('金主自会宁移都燕京，号为中都，百司随驾南迁。', ['jin'], 'jinCapital');
     } },
     { y: 1164, s: 3, fn: () => {
       if (!ownedName('汴京', 'jin') || !ownedName('临安', 'song') || !GAME.atWar('song', 'jin') || GAME.warScore('song', 'jin') > 0) return;
-      if (P() === 'song') G().pending.push({ ev: 'peaceoffer', from: 'jin', longxing: true });
+      if (P() === 'song') G().pending.push({ ev: 'longxingPeace', from: 'jin', longxing: true });
     } },
     { y: 1170, s: 2, fn: () => {
       const c = ownedName('开京', 'goryeo');
@@ -788,7 +798,7 @@ var EVENTS = (function () {
       const c = ownedName('镰仓', 'japan');
       if (!c || !ownedName('平安京', 'japan')) return;
       renameFaction('japan', '镰仓幕府', '和');
-      worldLog('源氏舟师会战于坛之浦，平氏覆亡；镰仓自此掌兵政，朝廷仍居平安京。', ['japan']);
+      worldLog('源氏舟师会战于坛之浦，平氏覆亡；镰仓自此掌兵政，朝廷仍居平安京。', ['japan'], 'kamakura');
     } },
     { y: 1192, s: 2, fn: () => {
       const c = ownedName('德里', 'rajput');
@@ -806,8 +816,8 @@ var EVENTS = (function () {
       if (mayFight('crusader', 'byz')) GAME.declareWar('crusader', 'byz', true);
       if (P() !== 'byz' && (c.garrison.length <= 3 || GAME.warScore('venice', 'byz') >= 12)) {
         GAME.captureCity(c, 'venice');
-        worldLog('第四次十字军攻入君士坦丁堡，威尼斯据其港城，拂菻诸臣奔走。', ['venice', 'crusader', 'byz']);
-      } else worldLog('第四次十字军折往博斯普鲁斯，与威尼斯舟师会于君士坦丁堡城下。', ['venice', 'crusader', 'byz']);
+        worldLog('第四次十字军攻入君士坦丁堡，威尼斯据其港城，拂菻诸臣奔走。', ['venice', 'crusader', 'byz'], 'fourthCross');
+      } else worldLog('第四次十字军折往博斯普鲁斯，与威尼斯舟师会于君士坦丁堡城下。', ['venice', 'crusader', 'byz'], 'fourthCross');
     } },
     { y: 1206, s: 1, fn: () => {
       if (!ownedName('德里', 'ghor')) return;
@@ -822,19 +832,19 @@ var EVENTS = (function () {
     } },
     { y: 1219, s: 2, fn: () => {
       const c = ownedName('玉龙杰赤', 'khwarazm');
-      if (!c || !mayFight('mongol', 'khwarazm')) return;
+      if (!c || !activeIn('铁木真', 'mongol') || !mayFight('mongol', 'khwarazm')) return;
       const base = nearCity('mongol', c.tile, 22);
       if (!base || !warArmy('mongol', 'khwarazm', base, ['hbow', 'hbow', 'hcav', 'cav', 'siege'], '察合台', '河中征军')) return;
-      worldLog('蒙古军西度河中，花剌子模分兵守诸城，商路绝而使骑不通。', ['mongol', 'khwarazm']);
+      worldLog('成吉思汗西征花剌子模，蒙古军进向河中，西路商旅暂驻以待。', ['mongol', 'khwarazm'], 'khwarazmRoad');
     } },
     { y: 1227, s: 2, fn: () => {
       const c = ownedName('兴庆', 'xia');
       if (!c || !alive('mongol') || !GAME.atWar('mongol', 'xia') || !nearCity('mongol', c.tile, 8) || !hasLead('mongol', 'xia', 1.75)) return;
       if (GAME.citiesOf('xia').length <= 2 && P() !== 'xia') {
         for (const town of GAME.citiesOf('xia')) GAME.captureCity(town, 'mongol');
-        worldLog('兴庆开降，夏国诸城相继归附，河西尽入蒙古。', ['mongol', 'xia']);
+        worldLog('兴庆开降，夏国诸城相继归附，河西尽入蒙古。', ['mongol', 'xia'], 'tangutFall');
       } else if (warArmy('mongol', 'xia', c, ['hbow', 'hbow', 'hcav', 'siege'], null, '河西征军')) {
-        worldLog('兴庆已在两军锋镝之间，蒙古诸部合围夏都。', ['mongol', 'xia']);
+        worldLog('兴庆已在两军锋镝之间，蒙古诸部合围夏都。', ['mongol', 'xia'], 'tangutFall');
       }
     } },
     { y: 1234, s: 0, fn: () => {
@@ -858,7 +868,7 @@ var EVENTS = (function () {
       const c = ownedName('基辅', 'rus');
       if (!c || !alive('mongol') || !GAME.atWar('mongol', 'rus') || !nearCity('mongol', c.tile, 12) || !hasLead('mongol', 'rus', 1.15)) return;
       GAME.captureCity(c, 'mongol');
-      worldLog('基辅城破，诸公国闻报震动，蒙古兵锋遂指西境。', ['mongol', 'rus']);
+      worldLog('基辅城破，诸公国闻报震动，蒙古兵锋遂指西境。', ['mongol', 'rus'], 'kyiv');
     } },
     { y: 1241, s: 1, fn: () => {
       if (!alive('mongol')) return;
@@ -881,16 +891,16 @@ var EVENTS = (function () {
     } },
     { y: 1258, s: 0, fn: () => {
       const c = ownedName('巴格达', 'abbasid');
-      if (!c || !mayFight('mongol', 'abbasid') || !nearCity('mongol', c.tile, 14)) return;
+      if (!c || !activeIn('旭烈兀', 'mongol') || !mayFight('mongol', 'abbasid') || !nearCity('mongol', c.tile, 14)) return;
       const a = warArmy('mongol', 'abbasid', c, ['hbow', 'hcav', 'inf', 'siege', 'siege'], '旭烈兀', '巴格达征军');
       if (!a) return;
       if (P() !== 'abbasid' && hasLead('mongol', 'abbasid', 1.4) && c.garrison.length <= 5) {
         GAME.captureCity(c, 'mongol');
-        worldLog('旭烈兀军入巴格达，黑衣大食朝廷离散。', ['mongol', 'abbasid']);
-      } else worldLog('巴格达合围，旭烈兀列砲城外，阿拔斯诸军闭门坚守。', ['mongol', 'abbasid']);
+        worldLog('旭烈兀军入巴格达，黑衣大食朝廷离散。', ['mongol', 'abbasid'], 'baghdad');
+      } else worldLog('巴格达合围，旭烈兀列砲城外，阿拔斯诸军闭门坚守。', ['mongol', 'abbasid'], 'baghdad');
     } },
     { y: 1259, s: 1, fn: () => {
-      const c = ownedName('合州', 'song') || ownedName('重庆', 'song');
+      const c = ownedName('重庆', 'song');
       if (!c || !alive('mongol') || !GAME.atWar('song', 'mongol') || !nearCity('mongol', c.tile, 12)) return;
       c.buildings.walls = 1; c.wall = GAME.maxWall(c); reinforce(c, ['inf', 'bow']);
       worldLog(`蒙古兵入蜀。王师据钓鱼山修为坚垒，增发${c.name}守兵，以扼嘉陵水道。`, ['song', 'mongol']);
@@ -901,7 +911,7 @@ var EVENTS = (function () {
       if (!c || !base || fac('fatimid').name !== '马穆鲁克' || !mayFight('fatimid', 'mongol')) return;
       if (!warArmy('fatimid', 'mongol', c, ['hcav', 'hcav', 'cav', 'bow'], '拜伯尔斯', '艾因札鲁特征军')) return;
       if (P() !== 'mongol' && c.garrison.length <= 4) GAME.captureCity(c, 'fatimid');
-      worldLog('马穆鲁克骑师北上，与蒙古前军相遇于艾因札鲁特，叙利亚诸城观望。', ['fatimid', 'mongol']);
+      worldLog('马穆鲁克骑师北上，与蒙古前军相遇于艾因札鲁特，叙利亚诸城观望。', ['fatimid', 'mongol'], 'ainJalut');
     } },
     { y: 1268, s: 2, fn: () => {
       const c = ownedName('襄阳', 'song');
@@ -909,14 +919,14 @@ var EVENTS = (function () {
       if (!warArmy('mongol', 'song', c, ['hbow', 'hcav', 'inf', 'siege', 'siege'], '阿术', '襄樊围城军')) return;
       reinforce(c, ['inf', 'bow']);
       G().flags.xiangyangSiege = true;
-      worldLog('襄樊围城：蒙古军沿汉水筑垒，宋发守卒保城，诸路援兵竞走江汉。', ['song', 'mongol']);
+      worldLog('襄樊围城：蒙古军沿汉水筑垒，宋发守卒保城，诸路援兵竞走江汉。', ['song', 'mongol'], 'xiangfan');
     } },
     { y: 1274, s: 3, fn: () => {
       const c = ownedName('博多', 'japan');
       const port = ownedName('庆州', 'mongol') || (GAME.allied('mongol', 'goryeo') && ownedName('庆州', 'goryeo'));
       if (!c || !mayFight('mongol', 'japan') || !(port || nearCity('mongol', c.tile, 14, x => x.port))) return;
       if (warArmy('mongol', 'japan', c, ['navy', 'navy', 'navy', 'inf', 'bow', 'cav'], null, '文永来航军')) {
-        worldLog('蒙古舟师横海至筑前，镰仓诸将集兵博多，文永之役由此而起。', ['mongol', 'japan']);
+        worldLog('蒙古舟师横海至筑前，镰仓诸将集兵博多，文永之役由此而起。', ['mongol', 'japan'], 'hakata');
       }
     } },
     { y: 1279, s: 0, fn: () => {
@@ -967,7 +977,7 @@ var EVENTS = (function () {
         changeLoyalty(c, -10);
         c.unrest += 12;
         reinforce(c, ['inf']);
-        worldLog('保元之乱：平安京二院相争，源、平武士分赴两阵，宫城重设守备。', ['japan']);
+        worldLog('保元之乱：平安京二院相争，源、平武士分赴两阵，宫城重设守备。', ['japan'], 'hogen');
       } },
       { y: 1159, s: 3, fn: () => {
         const c = ownedName('平安京', 'japan');
@@ -998,7 +1008,7 @@ var EVENTS = (function () {
         if (!warArmy('champa', 'khmer', c, ['inf', 'bow', 'navy', 'navy'], null, '占城舟军')) return;
         c.wall = Math.max(0, c.wall - 18);
         c.unrest += 10;
-        worldLog('占城袭吴哥：舟师循水道深入真腊，吴哥城垣受损，民多惊散。', ['champa', 'khmer']);
+        worldLog('占城袭吴哥：舟师循水道深入真腊，吴哥城垣受损，民多惊散。', ['champa', 'khmer'], 'angkorRaid');
       } },
       { y: 1181, s: 0, fn: () => {
         const c = ownedName('吴哥', 'khmer');
@@ -1018,14 +1028,14 @@ var EVENTS = (function () {
       } },
       { y: 1187, s: 3, fn: () => {
         const c = ownedName('耶路撒冷', 'crusader');
-        if (!c || !ownedName('开罗', 'fatimid') || !GAME.atWar('fatimid', 'crusader') || P() === 'crusader') return;
+        if (!c || !activeIn('萨拉丁', 'fatimid') || !ownedName('开罗', 'fatimid') || fac('fatimid').name !== '阿尤布' || !GAME.atWar('fatimid', 'crusader') || P() === 'crusader') return;
         if (!G().armies.some(a => a.f === 'fatimid' && GEO.dist(a.tile, c.tile) <= 6)) return;
         if (c.garrison.length <= 4 && hasLead('fatimid', 'crusader', 1.15)) {
           GAME.captureCity(c, 'fatimid');
-          worldLog('哈丁余波：阿尤布军接管耶路撒冷，守城诸人出城归去。', ['fatimid', 'crusader']);
+          worldLog('哈丁余波：阿尤布军接管耶路撒冷，守城诸人出城归去。', ['fatimid', 'crusader'], 'jerusalem');
         } else {
           c.wall = Math.max(0, c.wall - 22);
-          worldLog('哈丁余波：阿尤布军进围耶路撒冷，守军闭门待援。', ['fatimid', 'crusader']);
+          worldLog('哈丁余波：阿尤布军进围耶路撒冷，守军闭门待援。', ['fatimid', 'crusader'], 'jerusalem');
         }
       } },
       { y: 1209, s: 2, fn: () => {
@@ -1054,7 +1064,7 @@ var EVENTS = (function () {
         if (!c || !ownedName('温切斯特', 'england')) return;
         fac('england').gold -= Math.min(100, Math.max(0, fac('england').gold));
         changeLoyalty(c, 10);
-        worldLog('英格兰大宪章：诸侯集于伦尼米德，国王许守成文之约，王库暂减征取。', ['england']);
+        worldLog('英格兰大宪章：诸侯集于伦尼米德，国王许守成文之约，王库暂减征取。', ['england'], 'charter');
       } },
       { y: 1219, s: 0, fn: () => {
         const c = ownedName('开京', 'goryeo');
@@ -1091,14 +1101,14 @@ var EVENTS = (function () {
         fac('crusader').gold = gold;
         GAME.makePeace('crusader', 'fatimid');
         if (GAME.atWar('hre', 'fatimid')) GAME.makePeace('hre', 'fatimid');
-        worldLog('雅法和约：腓特烈二世与卡米勒罢兵，耶路撒冷依约交予十字军。', ['hre', 'fatimid', 'crusader']);
+        worldLog('雅法和约：腓特烈二世与卡米勒罢兵，耶路撒冷依约交予十字军。', ['hre', 'fatimid', 'crusader'], 'jaffa');
       } },
       { y: 1231, s: 2, fn: () => {
         const c = ownedName('西京', 'goryeo');
         if (!c || !ownedName('开京', 'goryeo') || !mayFight('mongol', 'goryeo') || !nearCity('mongol', c.tile, 16)) return;
         if (!warArmy('mongol', 'goryeo', c, ['hbow', 'hbow', 'hcav', 'siege'], null, '蒙古东征军')) return;
         reinforce(c, ['inf']);
-        worldLog('蒙古征高丽：兵入西京近境，高丽发守卒，令沿江诸寨坚壁。', ['mongol', 'goryeo']);
+        worldLog('蒙古征高丽：兵入西京近境，高丽发守卒，令沿江诸寨坚壁。', ['mongol', 'goryeo'], 'koreaBorder');
       } },
       { y: 1235, s: 1, fn: () => {
         const c = ownedName('蒲甘', 'pagan');
@@ -1253,6 +1263,11 @@ var EVENTS = (function () {
     const underdog = won && ours > 0 && ours * 2 < theirs;
     const g = GAME.gen(attacking ? rep.attGen : rep.defGen);
     const book = recordAnnalsBattle(rep, attacking, won, plan, underdog, g);
+    if (won && g && (cityTaken || (attacking ? rep.before.d - rep.after.d : rep.before.a - rep.after.a) > 180 || underdog)) G().flags.lastVictory = { gen: g.id, t: G().T };
+    if (!attacking && c?.f === player) {
+      if (c.siegeLast == null || G().T - c.siegeLast > 2) c.siegeStart = G().T;
+      c.siegeLast = G().T;
+    }
     battleEvents(rep, { attacking, won, c, cityTaken, plan });
 
     const foe = GAME.gen(attacking ? rep.defGen : rep.attGen);
@@ -1270,8 +1285,9 @@ var EVENTS = (function () {
   function battleEvents(rep, { attacking, won, c, cityTaken, plan }) {
     const S = G(), player = P();
     const ledger = S.flags.battleEvents || (S.flags.battleEvents = { next: {}, wounds: {}, plans: {} });
-    const cooled = ev => (ledger.next[ev] ?? -1) <= S.T;
+    const cooled = ev => (ledger.next[ev] ?? -1) <= S.T && eligible(ev, 'battle');
     const opened = ev => {
+      scheduleState().groups.battle = S.T;
       ledger.lastPopup = S.T;
       ledger.next[ev] = S.T + BATTLE_WAIT[ev];
     };
@@ -1301,8 +1317,10 @@ var EVENTS = (function () {
       if (c.pop >= 7 && cooled('battleOccupation')) {
         S.pending[captureNotice] = { ev: 'battleOccupation', city: c.id, name: c.name, army };
         opened('battleOccupation');
-      } else if (cooled('captured')) opened('captured');
-      else S.pending.splice(captureNotice, 1);
+      } else {
+        const pending = S.pending.splice(captureNotice, 1)[0];
+        if (cooled('captured')) { S.pending.splice(captureNotice, 0, pending); opened('captured'); }
+      }
       if (ledger.lastPopup === S.T) return;
     }
 
@@ -1907,6 +1925,7 @@ var EVENTS = (function () {
     const S = G(), p = P();
     recoverBattleWounds();
     // 史实
+    historyDispatch.clear();
     for (let i = 0; i < HIST.length; i++) {
       const h = HIST[i];
       if (S.flags['h' + i]) continue;
@@ -1917,6 +1936,7 @@ var EVENTS = (function () {
         finally { recordingHistory = false; }
       }
     }
+    historyChoices();
     // 秦桧
     if (S.flags.qin === 'angry' && S.T >= S.flags.qinTurn && !S.flags.qinDone) { S.flags.qinDone = 1; S.pending.push({ ev: 'qinhui' }); }
     if (S.flags.qin === 'kept' && S.season === 3 && S.newSeason) fac(p).gold += 60;
@@ -1942,15 +1962,23 @@ var EVENTS = (function () {
         const w = GAME.aiWantsPeace(f, p);
         if (w > 25 && !S.pending.some(x => x.ev === 'peaceoffer' && x.from === f)) {
           const trib = w > 50 ? Math.round(5 + GAME.totalPower(f) / 80) : 0;
-          S.pending.push({ ev: 'peaceoffer', from: f, trib });
+          offer({ ev: 'peaceoffer', from: f, trib }, 'diplomacy');
         }
       } else if (!GAME.atWar(f, p) && !GAME.allied(f, p) && fac(p).met[f] && GAME.getRel(f, p).op > 60 && r() < 0.03 * GAME.E()) {
-        S.pending.push({ ev: 'allyoffer', from: f });
+        offer({ ev: 'allyoffer', from: f }, 'diplomacy');
       }
     }
     petitionEvents();
-    // 随机事件
-    if (r() < 0.22 * GAME.E() && alive(p)) randomEvent();
+    scheduleChoices();
+    if (alive(p) && r() < 0.22 * 0.68 * 0.24 * GAME.E()) {
+      if (r() < 0.5) {
+        fac(p).food += 120;
+        GAME.log('风调雨顺，诸路丰稔，入粮一百二十石。', 'eco');
+      } else {
+        for (const c of GAME.citiesOf(p)) changeLoyalty(c, 4);
+        GAME.log(GAME.pick(['麒麟见于郊野', '甘露降于宫苑', '黄河清', '嘉禾生于籍田', '凤凰集于岐山']) + '，群臣称贺，天下民心稍安。', 'eco');
+      }
+    }
     checkEndings();
     const book = annalsState();
     recordReign(book);
@@ -1989,8 +2017,10 @@ var EVENTS = (function () {
           '襄阳城易主，汉水门户大开，江汉诸城闻报戒严。', ['song', 'mongol']);
       }
     }
-    if (S.T < (flags.nextPetition || 0) || r() >= 0.12 * GAME.E()) return;
-    const cs = GAME.citiesOf(p), pool = [];
+  }
+
+  function legacyPool(cs) {
+    const S = G(), p = P(), pool = [];
     const minister = typeof COURT !== 'undefined' && S.court ? COURT.holder('zaixiang') : null;
     const g = minister || cs.map(c => GAME.gen(c.governor)).find(g => g && g.zheng >= 83);
     if (g && g.f === p && active(g)) pool.push({ ev: 'powerfulMinister', gen: g.id });
@@ -2005,15 +2035,14 @@ var EVENTS = (function () {
     const india = ['chola', 'lanka', 'pala', 'gahad', 'chalukya', 'rajput'].filter(f => f !== p &&
       alive(f) && fac(p).met[f] && !GAME.atWar(p, f));
     if (india.length && ports.length) pool.push({ ev: 'indianMonk', from: GAME.pick(india) });
-    if (pool.length) {
-      flags.nextPetition = S.T + 6;
-      S.pending.push(GAME.pick(pool));
-    }
-  }
-
-  function localRandom(cs) {
-    const S = G(), p = P(), city = GAME.pick(cs);
-    const pool = [{ ev: 'plague', city: city.id }, { ev: 'earthquake', city: city.id }, { ev: 'comet' }];
+    const city = GAME.pick(cs);
+    pool.push({ ev: 'plague', city: city.id }, { ev: 'earthquake', city: city.id }, { ev: 'comet' },
+      { ev: 'drought', city: city.id }, { ev: 'talent' });
+    const river = GAME.pick(cs.filter(x => GEO.river[x.tile])), port = GAME.pick(cs.filter(x => x.port));
+    if (river) pool.push({ ev: 'flood', city: river.id });
+    if (port) pool.push({ ev: 'pirates', city: port.id });
+    const friendly = GAME.pick(Object.keys(S.factions).filter(f => f !== p && f !== 'rebel' && alive(f) && fac(p).met[f] && !GAME.atWar(p, f)));
+    if (friendly) pool.push({ ev: 'tribute', from: friendly });
     const hostile = Object.keys(S.factions).filter(f => f !== 'rebel' && alive(f) && GAME.atWar(p, f));
     for (const enemy of hostile) {
       const border = cs.find(c => nearCity(enemy, c.tile, 6));
@@ -2025,29 +2054,569 @@ var EVENTS = (function () {
       !S.pending.some(v => v.ev === 'offeredTreasure' && v.item === id));
     const gens = S.generals.filter(g => g.f === p && active(g) && (g.items || []).length < 3);
     if (items.length && gens.length) pool.push({ ev: 'offeredTreasure', item: GAME.pick(items), gen: GAME.pick(gens).id });
-    S.pending.push(GAME.pick(pool));
+    return pool;
   }
 
-  function randomEvent() {
-    const S = G(), p = P();
-    const cs = GAME.citiesOf(p);
-    if (!cs.length) return;
-    if (r() < 0.32) { localRandom(cs); return; }
-    const k = r();
-    const c = GAME.pick(cs);
-    if (k < 0.18) { const rc = cs.filter(x => GEO.river[x.tile]); if (rc.length) S.pending.push({ ev: 'flood', city: GAME.pick(rc).id }); }
-    else if (k < 0.32) S.pending.push({ ev: 'drought', city: c.id });
-    else if (k < 0.42) { const pc = cs.filter(x => x.port); if (pc.length) S.pending.push({ ev: 'pirates', city: GAME.pick(pc).id }); }
-    else if (k < 0.6) { const mil = r() < 0.5; const g = GAME.randomGeneral(p, mil ? 'mil' : 'civil', 50 + r() * 12); g.status = 'cand'; S.pending.push({ ev: 'talent', gen: g.id, mil }); }
-    else if (k < 0.76) {
-      const far = Object.keys(S.factions).filter(f => f !== p && alive(f) && fac(p).met[f] && !GAME.atWar(f, p) && f !== 'rebel');
-      if (far.length) S.pending.push({ ev: 'tribute', from: GAME.pick(far) });
-    } else if (k < 0.88) {
-      fac(p).food += 120; GAME.log('风调雨顺，诸路丰稔，入粮 120 石。', 'eco');
-    } else {
-      for (const x of cs) x.loyalty = Math.min(100, x.loyalty + 4);
-      GAME.log(GAME.pick(['麒麟见于郊野', '甘露降于宫苑', '黄河清', '嘉禾生于籍田', '凤凰集于岐山']) + '，群臣称贺，天下民心稍安。', 'eco');
+  // 冷却以季计；年度从玩家开局之日算起，换刻度不重开年度。
+  const categoryWait = { local: 0.4, situation: 0.45, person: 1, court: 2, diplomacy: 1, battle: 0.5, 农事: 1.5, 灾异: 2, 风俗: 1.5, 工役: 1.5, 释道: 2, 市易: 1.5, 学术: 1.5, 乡政: 1.5, 宾客: 2 };
+  const systemEvents = new Set(['levelup', 'info', 'keju', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
+  const registry = [];
+  const elapsedDays = () => (G().year - 1140) * 360 + G().doy - 189;
+  const isDecision = id => !systemEvents.has(id);
+
+  function initSchedule(s) {
+    s.flags ||= {};
+    const day = (s.year - 1140) * 360 + s.doy - 189;
+    const year = Math.floor(day / 360);
+    // 旧档从本年度已经过去的位置接续，避免补发多年积压的奏疏。
+    if (s.flags.eventSchedule) return;
+    const last = {}, lastDay = {};
+    // 旧版战后账簿可反推最近一次弹窗。其余旧剧情没有可靠的出现日期。
+    for (const [id, next] of Object.entries(s.flags.battleEvents?.next || {})) {
+      if (BATTLE_WAIT[id] != null) {
+        last[id] = next - BATTLE_WAIT[id];
+        lastDay[id] = day - Math.round((s.T - last[id]) * 90);
+      }
     }
+    s.flags.eventSchedule = { last, lastDay, groups: {}, history: {}, year,
+      count: Math.floor((day - year * 360) * 7 / 360) };
+  }
+  function scheduleState() {
+    const ledger = G().flags.eventSchedule, year = Math.floor(elapsedDays() / 360);
+    if (ledger.year !== year) { ledger.year = year; ledger.count = 0; }
+    return ledger;
+  }
+  function eligible(id, group) {
+    const s = G(), d = scheduleState();
+    // S.T 在压缩旧档里只留两位小数；以历日复核，反复读档也不会缩短十年。
+    return (d.lastDay[id] == null || elapsedDays() - d.lastDay[id] >= 3600) &&
+      (d.last[id] == null || s.T - d.last[id] >= 40 - 1e-8) &&
+      (d.groups[group] == null || s.T - d.groups[group] >= (categoryWait[group] || 0) - 1e-8) &&
+      !s.pending.some(p => p.ev === id);
+  }
+  function offer(p, group) {
+    if (!eligible(p.ev, group)) return false;
+    G().pending.push(p);
+    scheduleState().groups[group] = G().T;
+    return true;
+  }
+  function declare(row) {
+    if (DEFS[row.id]) throw new Error('事件重名 ' + row.id);
+    registry.push(row);
+    DEFS[row.id] = { person: row.group === 'person' ? row.people[0] : null, title: row.title, text: p => {
+      const city = GAME.city(p.city), g = GAME.gen(p.gen);
+      return [p.news, row.text.replaceAll('{城}', city?.name || '本州').replaceAll('{人}', g?.name || '其人')
+        .replaceAll('{迹}', p.site || '道旁旧迹').replaceAll('{学}', DATA.TECHS[p.tech]?.name || '新法')].filter(Boolean).join('\n\n');
+    }, choices: row.choices.map(([t, effects]) => ({
+      t, d: p => describeEffects(effects)
+        .replaceAll('本城', GAME.city(p.city)?.name || '本城')
+        .replaceAll('本人', GAME.gen(p.gen)?.name || '本人')
+        .replaceAll('两国好感', (fac(p.from)?.name || '对方') + '好感'),
+      fn: p => applyEffects(p, effects),
+    })) };
+  }
+  const effectNames = { gold: '钱', food: '粮', man: '兵源', sci: '文教', auth: '权威',
+    happy: '本城民心', wall: '本城城防', loyalty: '本人忠诚', tong: '本人统率', wu: '本人武勇',
+    zhi: '本人智略', zheng: '本人政略', morale: '本军士气', opinion: '两国好感', retire: '致仕', peace: '议和', inf: '守军步营' };
+  function describeEffects(effects) {
+    return Object.entries(effects).map(([k, n]) => {
+      if (!(k in effectNames) || !Number.isFinite(n)) throw new Error('事件效果有误 ' + k);
+      if (k === 'retire') return '本人解职归田，退出仕籍';
+      if (k === 'peace') return '两国息兵' + n + '季';
+      return effectNames[k] + (n > 0 ? ' +' : ' −') + Math.abs(n);
+    }).join('，');
+  }
+  function applyEffects(p, effects) {
+    const f = fac(P()), c = owned(p.city, P()), g = playerGeneral(p.gen), a = playerArmy(p.army);
+    for (const [k, n] of Object.entries(effects)) {
+      if (['gold', 'food', 'sci', 'man'].includes(k)) f[k] = GAME.clamp(f[k] + n, k === 'gold' ? -200 : k === 'food' ? -50 : 0, Infinity);
+      else if (k === 'happy' && c) changeLoyalty(c, n);
+      else if (k === 'wall' && c) c.wall = GAME.clamp(c.wall + n, 0, GAME.maxWall(c));
+      else if (k === 'inf' && c) reinforce(c, Array(n).fill('inf'));
+      else if (k === 'auth') courtAuthority(n);
+      else if (k === 'morale' && a) moraleAfterBattle(a.id, n);
+      else if (k === 'retire' && g) { GAME.unassign(g.id); g.status = 'gone'; }
+      else if (k === 'opinion' && alive(p.from)) {
+        const rel = GAME.getRel(P(), p.from); rel.op = GAME.clamp(rel.op + n, -100, 100);
+      } else if (k === 'peace' && alive(p.from) && GAME.atWar(P(), p.from)) {
+        GAME.makePeace(P(), p.from); GAME.getRel(P(), p.from).truce = n;
+      } else if (g && k === 'loyalty') {
+        COURT.ensure(g);
+        g.loyalty = GAME.clamp(g.loyalty + n, 0, 100);
+      } else if (g && ['tong', 'wu', 'zhi', 'zheng'].includes(k)) GAME.applyLevel(g, { k: 'stat', s: k, v: n });
+    }
+  }
+
+  function draw(pool) {
+    let roll = r() * pool.reduce((sum, entry) => sum + entry.weight, 0);
+    for (const entry of pool) { roll -= entry.weight; if (roll < 0) return entry; }
+    return pool[pool.length - 1];
+  }
+  function scheduleChoices() {
+    const s = G(), cs = GAME.citiesOf(P());
+    if (!cs.length) return;
+    const d = scheduleState(), day = elapsedDays() % 360;
+    const target = Math.min(7, Math.floor((day + s.scale) * 7 / 360));
+    let missing = target - d.count - s.pending.filter(p => isDecision(p.ev)).length;
+    if (missing <= 0) return;
+    const base = legacyPool(cs).map(p => ({ p, group: 'local', weight: 1 }));
+    if (s.court) for (const p of COURT.candidates()) base.push({ p, group: 'court', weight: 2 });
+    for (const row of registry) {
+      const group = row.family || row.group;
+      if (group === 'history' || !eligible(row.id, group)) continue;
+      const ctx = row.context(cs);
+      if (ctx) base.push({ p: { ev: row.id, ...ctx }, group, weight: row.weight || 1 });
+    }
+    while (missing-- > 0) {
+      const choices = base.filter(x => eligible(x.p.ev, x.group));
+      if (!choices.length) break;
+      const { p, group } = draw(choices);
+      if (p.ev === 'talent') {
+        p.mil = r() < 0.5;
+        const g = GAME.randomGeneral(P(), p.mil ? 'mil' : 'civil', 50 + r() * 12);
+        g.status = 'cand'; p.gen = g.id;
+      }
+      offer(p, group);
+    }
+  }
+
+  // 十一批史事按年季排列。news 行须收到同一季世界规则的实报，故城破、守住各从本局；
+  // 其余行列出城主、在职人物、交战双方等前提。旧 HIST 的下标是旧档键，不重排。
+  const historyLine = (y, season, id, title, need, text, choices) =>
+    ({ y, season, id, title, ...need, text, choices, group: 'history',
+      condition: need.news ? '当季收到对应实报，已通问或我城距有关势力十格以内' : '按表中城主、人物与战局裁定',
+      cities: Object.keys(need.seats || {}), people: Object.keys(need.service || {}) });
+  const HISTORY_CHOICES = [
+    historyLine(1147, 1, 'secondCross', '东征军过海', { news: true, foreign: ['crusader','france','hre'] },
+      '西来舶主请凭公牒护货，译者则愿往诸港，探问兵后道路。', [
+        ['给牒通商，收其舶税', { gold: 55, auth: -1 }], ['遣译者持节问道', { gold: -35, opinion: 10 }]]),
+    historyLine(1153, 0, 'jinCapital', '燕京新都', { news: true, foreign: ['jin'] },
+      '金人迁治，往来文书皆须改道。有司议遣使更定程驿，边臣请先访北地道里。', [
+        ['致书新都', { gold: -35, opinion: 9 }], ['购求道里图经', { gold: -25, sci: 45 }]]),
+    historyLine(1156, 2, 'hogen', '京都两院之争', { news: true, foreign: ['japan'] },
+      '日本客舟留泊，请给归程之粮。国子监亦请留其通汉字者，校所携旧钞。', [
+        ['给粮送归', { food: -45, opinion: 10 }], ['馆其书手', { gold: -35, sci: 55 }]]),
+    historyLine(1162, 0, 'xinReturn', '辛弃疾南归', { seats: { 济南:'jin', 建康:'song' }, service: { 辛弃疾:'song' } },
+      '辛弃疾自山东南归，具陈义军离合，随行者多无田可归。是籍其壮者为兵，还是先给田粮安家？', [
+        ['给饷录壮士', { gold: -55, man: 14, loyalty: 3 }], ['给粮安其家', { food: -65, happy: 6, loyalty: 6 }]]),
+    historyLine(1163, 1, 'fuli', '隆兴北伐议符离', { seats: { 寿州:'song', 徐州:'jin' }, service: { 张浚:'song' }, war: ['song','jin'] },
+      '张浚奏淮北军情。师出符离一路，进则转饷路长，留屯则可护新集之民。诸将请定进止。', [
+        ['发粮接济前军', { food: -85, man: 14, loyalty: 4 }], ['先固淮上诸寨', { gold: -45, wall: 18, happy: 3 }]]),
+    historyLine(1177, 1, 'angkorRaid', '真腊告警', { news: true, foreign: ['khmer','champa'] },
+      '南海商舶见江口戒严，载米者愿赴急，载货者请改泊别澳。', [
+        ['赈米以济远人', { food: -55, opinion: 12 }], ['允其转售，收商税', { gold: 50, opinion: -3 }]]),
+    historyLine(1185, 1, 'kamakura', '镰仓掌兵', { news: true, foreign: ['japan'] },
+      '东国武家握兵柄，京都朝仪仍旧。市舶司请定渡海商人所持书牒。', [
+        ['遣通事往问关津', { gold: -35, opinion: 10 }], ['准海商自具保状', { gold: 50, auth: -1 }]]),
+    historyLine(1187, 3, 'jerusalem', '耶路撒冷军报', { news: true, foreign: ['fatimid','crusader'] },
+      '圣城兵革未息，东返驼队中有避乱之家，亦有熟识西市之人。', [
+        ['发粟收容流寓', { food: -60, happy: 6 }], ['馆译人录西域程途', { gold: -40, sci: 55 }]]),
+    historyLine(1189, 1, 'thirdCross', '诸王再举东征', { news: true, foreign: ['crusader','england','france','hre'] },
+      '海道多征舟，商人求并船远行。馆伴请访西国使者，问诸港可泊之处。', [
+        ['给资遣使', { gold: -40, opinion: 12 }], ['许商人合舶输货', { gold: 50, auth: -1 }]]),
+    historyLine(1195, 3, 'qingyuan', '庆元论学', { seats: { 临安:'song' }, service: { 朱熹:'song' } },
+      '近臣攻道学者渐众，请以所习经说别士人进退。朱熹门人惧及师友，上书自明。', [
+        ['诏学官听各家讲说', { auth: -2, sci: 60, loyalty: 6 }], ['令有司覆核选籍', { auth: 3, loyalty: -6 }]]),
+    historyLine(1204, 1, 'fourthCross', '拂菻城下', { news: true, foreign: ['byz','venice','crusader'] },
+      '拂菻来客携旧抄求寄，海商则请厚酬引水人，绕兵船行货。', [
+        ['收其旧抄，廪给来客', { food: -50, sci: 60 }], ['给凭改道行商', { gold: 55, auth: -1 }]]),
+    historyLine(1208, 2, 'jiading', '嘉定和议', { seats: { 楚州:'song', 汴京:'jin' }, war: ['song','jin'], from: 'jin' },
+      '开禧兵后，宋金边民俱疲。金使至淮上言和，欲先定礼物、罢边兵。守臣亦言守备稍修，尚可持重。', [
+        ['出帑遣使，约罢边兵', { gold: -100, peace: 20 }], ['留使更议，募兵护边', { gold: -45, man: 12 }]]),
+    historyLine(1215, 1, 'charter', '英王与诸侯立约', { news: true, foreign: ['england'] },
+      '西客传其国君臣以书约束征敛。太学请译所闻，商旅则请问津税新例。', [
+        ['令学官访其条目', { gold: -35, sci: 50 }], ['遣使问商税', { gold: -25, opinion: 8 }]]),
+    historyLine(1219, 2, 'khwarazmRoad', '河中商路', { news: true, foreign: ['khwarazm','mongol'] },
+      '西来贾人所携商引已难通行，愿以所知道路换取归资。边吏亦请留其善马者。', [
+        ['给资录山川', { gold: -35, sci: 55 }], ['给粮募为驿卒', { food: -45, man: 11 }]]),
+    historyLine(1227, 2, 'tangutFall', '河西来报', { news: true, foreign: ['xia','mongol'] },
+      '河西兵尘起，边市有人持蕃汉旧籍来求食，有人愿就地编户。', [
+        ['购其典籍', { gold: -45, sci: 65 }], ['开廪安集编户', { food: -60, man: 8, happy: 4 }]]),
+    historyLine(1229, 0, 'jaffa', '雅法约成', { news: true, foreign: ['crusader','fatimid','hre'] },
+      '西海暂息兵，往朝圣地者复上路。商人请给公凭，僧侣中亦有能译诸国语者。', [
+        ['许复商行', { gold: 50, auth: -1 }], ['延译人通书问', { gold: -40, opinion: 10 }]]),
+    historyLine(1231, 2, 'koreaBorder', '高丽北境', { news: true, foreign: ['goryeo','mongol'] },
+      '海东客船抵岸，称沿江人家离散。守臣请赈渡海之民，或致书问其虚实。', [
+        ['给粮置舍', { food: -55, happy: 6 }], ['遣使问讯', { gold: -35, opinion: 10 }]]),
+    historyLine(1233, 2, 'joinAgainstJin', '联蒙攻金之议', { seats: { 襄阳:'song', 蔡州:'jin' }, war: ['mongol','jin'], from:'mongol', peaceWith:'mongol' },
+      '金师困于中原，北使议夹攻蔡州，求通我粮道。边臣或欲连兵，或虑金亡而北军即与我接境。', [
+        ['输粮相助，约使通问', { food: -90, opinion: 15 }], ['留粮守襄，益戍一营', { food: -45, inf: 1, opinion: -5 }]]),
+    historyLine(1234, 1, 'luoyang', '端平入洛之议', { seats: { 襄阳:'song' }, lost:'jin', beyond:'洛阳' },
+      '金亡，议者请自淮、汉进取洛阳。河南久经兵燹，路无宿储，若止师不进，又恐坐失机会。', [
+        ['给转饷，募前军向洛', { food: -95, man: 18 }], ['留戍汉上，修仓城', { gold: -55, wall: 20, happy: 3 }]]),
+    historyLine(1236, 1, 'batuWest', '长子军西去', { news: true, foreign: ['mongol','rus','bulgar','cuman','hungary','poland'] },
+      '北方诸王子集军西行，旧驿多征马。商旅请以货赎道，行人欲遣译骑访知诸部向背。', [
+        ['拨缗遣译骑', { gold: -35, opinion: 11 }], ['许其更道卖货', { gold: 50, auth: -1 }]]),
+    historyLine(1240, 3, 'kyiv', '基辅陷后', { news: true, foreign: ['rus','mongol'] },
+      '自西北来者述城中工匠离散，愿随商队东行。其老弱亦求附籍。', [
+        ['厚给匠食，录其技业', { food: -50, sci: 55 }], ['赎其流户，给籍安居', { gold: -50, happy: 7 }]]),
+    historyLine(1258, 0, 'baghdad', '巴格达书厄', { news: true, foreign: ['abbasid','mongol'] },
+      '两河书贾携抄本入商队，行囊有数，不能尽载。使臣问所当先取。', [
+        ['以缗购历算图书', { gold: -50, sci: 70 }], ['先给流人归粮', { food: -60, happy: 7 }]]),
+    historyLine(1259, 2, 'diaoyu', '钓鱼城军报', { seats: { 重庆:'song' }, service: { 蒙哥:'mongol' }, war: ['song','mongol'], fieldDeath: true },
+      '蜀中奏至，蒙哥亲征钓鱼城，殁于军中。守臣请乘其诸部未定招集乡兵，转运司则请先息夫役。', [
+        ['出帑募川中义兵', { gold: -65, man: 16 }], ['赈恤挽夫，令归治田', { food: -55, happy: 8 }]]),
+    historyLine(1260, 2, 'ainJalut', '艾因贾鲁交兵', { news: true, foreign: ['fatimid','mongol'] },
+      '叙利亚诸城消息不一，商队止于通衢。若使译人先行，可问关津，若收滞货，可济商困。', [
+        ['厚给译人，使通关问', { gold: -40, opinion: 12 }], ['收货转售以济商旅', { gold: 45, auth: -1 }]]),
+    historyLine(1263, 1, 'publicFields', '公田之议', { seats: { 临安:'song' }, service: { 贾似道:'song' } },
+      '贾似道议买浙西田，以租入供军。田价若轻，民必失所，若仍和籴，又费官帑。有司具两策请裁。', [
+        ['试买公田，收租济饷', { gold: -45, food: 105, happy: -5 }], ['仍循和籴，从市给价', { gold: -75, food: 65, happy: 4 }]]),
+    historyLine(1268, 2, 'xiangfan', '襄樊待援', { news: true, seats: { 襄阳:'song' } },
+      '守臣报汉水舟行日艰，所乏者粮与守城卒。仓舟能载之物有限，请择先后。', [
+        ['发粮舟接济军民', { food: -80, happy: 9 }], ['调卒实城', { man: -10, inf: 1, wall: 12 }]]),
+    historyLine(1274, 3, 'hakata', '博多海防', { news: true, foreign: ['japan','mongol'] },
+      '北来舟师出海，日本诸津留客船备守。明州市舶司议如何接应归舶。', [
+        ['给还乡舶水粮', { food: -50, opinion: 10 }], ['访潮汐港澳，录为海图', { gold: -40, sci: 60 }]]),
+    historyLine(1275, 0, 'wenRises', '文天祥起兵', { seats: { 赣州:'song' }, service: { 文天祥:'song' }, war: ['song','mongol'] },
+      '文天祥请集义士勤王，乡里输财赴募。众未习行阵，给饷即行与留州整伍，两说未决。', [
+        ['发饷应募，集兵赴援', { gold: -75, man: 16, loyalty: 5 }], ['益赣州守备，徐图进取', { food: -55, inf: 1, zheng: 1 }]]),
+  ];
+  const historyDispatch = new Map();
+  for (const row of HISTORY_CHOICES) {
+    if (row.beyond) row.cities.push(row.beyond);
+    declare(row);
+  }
+  function historyChoices() {
+    const s = G(), book = scheduleState().history;
+    for (const h of HISTORY_CHOICES) {
+      if (s.year !== h.y || s.season !== h.season || book[h.id]) continue;
+      book[h.id] = true;
+      const news = historyDispatch.get(h.id);
+      if (h.news && !news) continue;
+      if (!Object.entries(h.seats || {}).every(([n, f]) => ownedName(n, f))) continue;
+      if (!Object.entries(h.service || {}).every(([n, f]) => activeIn(n, f))) continue;
+      if (h.war && (!h.war.every(alive) || !GAME.atWar(...h.war))) continue;
+      if (h.lost && alive(h.lost) || h.beyond && byName(h.beyond)?.f === P() || h.peaceWith && GAME.atWar(P(), h.peaceWith)) continue;
+      const city = h.cities.map(byName).find(c => c?.f === P()) || capital(P());
+      if (!city) continue;
+      const g = genByName(h.people[0]);
+      if (h.fieldDeath) {
+        const a = g.status === 'army' && GAME.army(g.loc);
+        if (!a || GEO.dist(a.tile, city.tile) > 6) continue;
+        GAME.killGeneral(g, '征蜀时卒于军中');
+      }
+      if (!news) GAME.log(h.text, 'world');
+      const from = h.foreign?.find(f => fac(P()).met[f] || GAME.nearPlayer(f)) || h.from;
+      if (h.foreign && !from) continue;
+      // 易主或亡国后，通问的对象改取当前仍存且与我相识的相关政权。
+      const envoy = h.foreign?.find(f => alive(f) && (fac(P()).met[f] || GAME.nearPlayer(f))) || from;
+      if (h.choices.some(([, fx]) => fx.opinion) && !alive(envoy)) continue;
+      if (envoy && alive(envoy)) GAME.meet(P(), envoy, true);
+      s.pending.push({ ev: h.id, city: city.id, gen: g?.f === P() ? g.id : undefined, from: envoy, news });
+    }
+  }
+
+  // 情境从本局状态取对象，只把稳定的 id 存入待决奏疏。
+  function townWhere(cs, predicate) {
+    const c = GAME.pick(cs.filter(predicate));
+    return c && { city: c.id };
+  }
+  function officerWhere(test) {
+    const g = GAME.pick(G().generals.filter(g => g.f === P() && active(g) && test(g)));
+    return g && { gen: g.id };
+  }
+  function armyWhere(test) {
+    const a = GAME.pick(G().armies.filter(a => a.f === P() && test(a)));
+    return a && { army: a.id, gen: a.gen };
+  }
+  const ownTown = cs => ({ city: GAME.pick(cs).id });
+  const recent = (fact, seasons = 2) => fact && G().T - fact.t <= seasons;
+  function situation(id, title, condition, context, text, ...choices) {
+    declare({ id, title, group: 'situation', weight: 2.4, condition, context, text, choices });
+  }
+  situation('victoryMerit', '捷后论功', '两季内我朝大捷，主将仍效力', () => {
+    const v = G().flags.lastVictory;
+    return recent(v) && playerGeneral(v.gen) && { gen: v.gen };
+  }, '捷书既达，{人}先呈阵亡军士之籍，继呈将佐功状。赏格有限，当自何者始？',
+    ['厚恤军士之家', { gold: -55, man: 12 }], ['擢主将，命校阵图', { tong: 1, loyalty: 5, auth: -1 }]);
+  situation('proudRanks', '胜卒争席', '有士气九十以上且主将曾获胜的军团', () =>
+    armyWhere(a => a.morale >= 90 && GAME.gen(a.gen)?.wins > 0), '凯旋之卒入市求酒，恃功争坐上席。军正以违令上闻，主将请以新功宽之。',
+    ['申明军令', { morale: -6, auth: 3 }], ['赐酒于营，责将自约', { gold: -45, loyalty: 5 }]);
+  situation('longInvestment', '围城缺薪', '同一宋城连续受攻已满一季，攻势间隔不逾两季，最近一季仍有攻城', cs =>
+    townWhere(cs, c => c.siegeStart != null && G().T - c.siegeStart >= 1 && recent({t:c.siegeLast},1)),
+    '{城}屡受围攻，炊烟渐稀。守臣请发夫输薪，百姓则求开仓就食，省却往来之劳。',
+    ['发夫输薪固守', { man: -8, wall: 20 }], ['赈粟宽城中之役', { food: -65, happy: 8 }]);
+  situation('newOaths', '新附乡约', '两年内归宋的异国城池', cs =>
+    townWhere(cs, c => c.recentCapture?.from !== P() && c.recentCapture && G().T - c.recentCapture.t <= 8),
+    '{城}初附，诸姓不肯遽出旧户籍，请先明赋役之数。守臣欲择乡老为保，用其言取信。',
+    ['缓征而验户', { gold: -55, happy: 9 }], ['即日立保，募乡兵', { man: 12, happy: -4 }]);
+  situation('faminePrice', '米贵闭籴', '国粮不足四十', cs => fac(P()).food < 40 && ownTown(cs),
+    '{城}米廛空闭，里长候于县门求籴。官仓亦乏，可出钱求邻郡粟，亦可暂借富户之积。',
+    ['以帑钱籴米', { gold: -65, food: 100 }], ['向大户借粟', { food: 65, happy: -4 }]);
+  situation('emptyVault', '府藏见底', '府钱不足六十', cs => fac(P()).gold < 60 && ownTown(cs),
+    '度支展出库簿，常费将无所出。{城}商户愿预输一季课钱，条件是放宽牙税；亦可移卖仓粟。',
+    ['出粟平粜', { food: -65, gold: 75 }], ['预借商课，许其议价', { gold: 85, auth: -3 }]);
+  situation('arrears', '戍卒索饷', '国库亏空且有士气不足七十的军团', () =>
+    fac(P()).gold < 0 && armyWhere(a => a.morale < 70), '戍卒持券问饷，军吏恐聚而生怨。权给口粮可以济急，亦可令不堪久戍者归田。',
+    ['给粮抵饷', { food: -55, morale: 10 }], ['汰冗籍，发还乡资', { man: -6, gold: 40, morale: 4 }]);
+  situation('overmighty', '边将自专', '掌兵之将野心过七十且忠诚未及七十五', () =>
+    officerWhere(g => g.status === 'army' && g.amb > 70 && g.loyalty < 75),
+    '{人}未经枢府覆奏，自辟幕职。台官欲追问所由，边臣却言临敌易令难行。',
+    ['收回辟署之权', { auth: 4, loyalty: -8 }], ['宽其一任，责以成效', { loyalty: 8, auth: -2 }]);
+  situation('rivalOfficers', '两营争长', '有两位立场不同的现役主将', () => {
+    const gs = G().generals.filter(g => g.f === P() && g.status === 'army');
+    const a = gs.find(g => gs.some(h => h.stance && g.stance && h.stance !== g.stance));
+    return a && { gen: a.id, army: a.loc };
+  }, '{人}与别营主将各持一议，军书相诘，莫肯先署。是命一人总其事，还是付军正会勘？',
+    ['令其总署，专责成败', { loyalty: 6, tong: 1, auth: -2 }], ['遣军正勘核两营', { gold: -35, auth: 3, morale: -2 }]);
+  situation('oldCampaigner', '宿将请药', '在职史实将领年满五十八', () =>
+    officerWhere(g => g.hist && G().year-g.birth >= 58), '{人}老病，执笔久则手颤，所记边事尚详。随侍言其愿口授旧闻，医官请先解繁务。',
+    ['延医给假', { gold: -40, loyalty: 10 }], ['令属吏笔受所述', { sci: 50, loyalty: -3 }]);
+  situation('lastMemorial', '故臣遗表', '一年内有当朝史实人物身故', () => {
+    const f = G().flags.lastOfficerDeath;
+    return recent(f,4) && GAME.gen(f.gen)?.status === 'dead' && { gen: f.gen };
+  }, '{人}身后，家人奉上未竟之表，并旧日案牍一箧。史馆请收其稿，故吏愿先为遗属市田。',
+    ['赐田恤孤', { gold: -55, auth: 3 }], ['抄录遗表入史馆', { gold: -25, sci: 55 }]);
+  situation('guestTraders', '番商寄帑', '本港已有海贸航线', cs => townWhere(cs, c => c.port && c.trade.length),
+    '{城}番商借民仓寄货，雨侵香药，主客相讼。市舶吏请立官仓收直，亦可令客商自行具保。',
+    ['设仓，官为掌钥', { gold: -45, happy: 7 }], ['准商保货，按契收钱', { gold: 55, happy: -3 }]);
+  situation('finishedLearning', '新法颁行', '一季内刚完成一项研究', cs => recent(G().flags.lastStudy,1) && { ...ownTown(cs), tech: G().flags.lastStudy.id },
+    '格物新得「{学}」，{城}工师请领官样传习。学宫却言成书未校，恐各地所传异同。',
+    ['先出官样', { gold: -40, happy: 6 }], ['付书局校定', { food: -35, sci: 55 }]);
+  situation('siteRumour', '道旁旧迹', '我朝已探明尚未踏访的奇遇', cs => {
+    const site = G().sites.find(x => !x.used && !x.gens?.length && !Object.keys(x.cd || {}).length && G().explored[x.tile] && nearCity(P(),x.tile,7));
+    const c = site && nearestOwnCity(P(),site.tile);
+    return c && { city:c.id, site:site.name };
+  }, '{城}驿卒报近郊有「{迹}」，行人说其来历各异。请使儒生采录，或令乡民护其地以候后访。',
+    ['给资访求旧闻', { gold: -30, sci: 45 }], ['免其地役，令民看守', { gold: -20, happy: 4 }]);
+  situation('wanderers', '流户叩关', '厌战过十五或有新占城', cs =>
+    (fac(P()).warWeary > 15 || cs.some(c => c.recentCapture && G().T-c.recentCapture.t < 4)) && ownTown(cs),
+    '流户扶老至{城}，愿占闲田。其间有能执弓者，亦有扶犁者，请分别安置。',
+    ['给种还耕', { food: -55, happy: 7 }], ['募壮者为乡兵', { gold: -40, man: 13 }]);
+  situation('bandits', '乡道失行', '本城民心低于五十或动乱过十五', cs => townWhere(cs,c => c.loyalty < 50 || c.unrest > 15),
+    '{城}负贩者结伴方敢出门。乡老请设巡铺，县尉则欲招纳饥寒入伙之人，使相保归农。',
+    ['雇巡丁守道', { gold: -40, auth: 2, wall: 8 }], ['发粟招归', { food: -50, happy: 7 }]);
+  situation('landEngrossed', '大户并田', '本城户口至少八万', cs => townWhere(cs,c => c.pop >= 8),
+    '{城}数村佃户递状，称旧田典尽，连祖墓亦在他人契下。检契须费时日，富室愿出粟助官以息讼。',
+    ['给食留诉，逐契核验', { food: -45, happy: 7 }], ['收粟，责富室许佃', { food: 60, auth: -2 }]);
+  situation('copperDrain', '海舶载钱', '有港口和集市', cs => townWhere(cs,c => c.port && c.buildings.market),
+    '{城}铺户以铜钱难得告急，港中舶货却多以贯计价。若严验出港，则商税亦减。',
+    ['严验出港钱贯', { gold: -40, happy: 6 }], ['许折货计税', { gold: 55, happy: -3 }]);
+  situation('feverHamlets', '邻坊相染', '本城人口过八万且民心低于六十五', cs => townWhere(cs,c => c.pop > 8 && c.loyalty < 65),
+    '{城}数坊相继报病，药铺前候者日众。县官请就坊给药，仓官请先给不能执业之家口粮。',
+    ['买药延医入坊', { gold: -55, happy: 8 }], ['按籍给口粮', { food: -45, happy: 5 }]);
+  situation('goodHarvest', '谷贱伤农', '秋季且国粮超过四百', cs => G().season === 2 && fac(P()).food > 400 && ownTown(cs),
+    '{城}谷熟，场上新粟堆积，商贩所给不偿耕本。常平吏请籴入，度支却欲以余粮济军。',
+    ['加价收籴', { gold: -65, food: 90, happy: 3 }], ['给军粮，减本季转饷', { food: -65, gold: 65 }]);
+  situation('shortGarrison', '守籍多虚', '本城守军不足三营', cs => townWhere(cs,c => c.garrison.length < 3),
+    '{城}更卒轮值，城楼多缺守者。有司请拨人实伍，或先缮城门，聚守卒于要处。',
+    ['拨丁实伍', { man: -10, inf: 1 }], ['雇匠缮门', { gold: -40, wall: 15 }]);
+  situation('wallCracks', '雨后城隙', '城防比上限少十五以上', cs => townWhere(cs,c => GAME.maxWall(c)-c.wall >= 15),
+    '{城}守吏遍巡城脚，数处夯土松裂。差夫急补可省钱，给值雇工则春田少误。',
+    ['募工给值', { gold: -50, wall: 20 }], ['按籍差夫', { happy: -4, wall: 16 }]);
+  situation('idleScholars', '待阙之臣', '本朝有闲职且政略七十五以上的臣僚', () =>
+    officerWhere(g => g.status === 'idle' && g.zheng >= 75), '{人}久候差遣，旅居费重。其人愿领校书之职，亦可给券还乡访察民事。',
+    ['廪给校勘', { gold: -35, sci: 40, loyalty: 3 }], ['授券访察乡曲', { food: -30, zheng: 1 }]);
+  situation('countySchool', '郡庠缺师', '本城建有书院', cs => townWhere(cs,c => c.buildings.academy),
+    '{城}诸生所习经说不一，教谕请延宿儒会讲。州学粮廪有限，亦可令诸生分赴乡塾讲授。',
+    ['具礼延师', { gold: -45, sci: 65 }], ['给粮散教乡里', { food: -40, happy: 6 }]);
+  situation('springSeed', '春耕借种', '春季且本城人口至少三万', cs => G().season === 0 && townWhere(cs,c => c.pop >= 3),
+    '{城}春田已解，贫户有牛无种。仓吏欲出陈粟贷之，里正愿代为市种而请暂宽课钱。',
+    ['借仓粟作种', { food: -45, happy: 6 }], ['缓其征，听乡里自市', { gold: -30, happy: 4 }]);
+  situation('winterClothes', '冬衣未至', '冬季有驻军', cs => G().season === 3 && townWhere(cs,c => c.garrison.length),
+    '{城}守卒旧袍多敝，军监请先缮军衣。乡中织户愿输布，求以官粟易之。',
+    ['以粮易布', { food: -45, happy: 5 }], ['出钱雇工，兼募缝补之人', { gold: -50, man: 10 }]);
+  situation('riverFerry', '两岸争渡', '本城临河', cs => townWhere(cs,c => GEO.river[c.tile]),
+    '{城}两岸争收渡钱，军使过河亦须久候。若设官渡须常给篙工，若付乡社则可省县费。',
+    ['官给篙工，免过渡钱', { gold: -40, happy: 6 }], ['令乡社认渡纳课', { gold: 45, auth: -1 }]);
+  situation('governorBooks', '知州呈簿', '本城有在任知州', cs => townWhere(cs,c => c.governor != null),
+    '{城}知州核积年欠券，民户久亡而额尚存。可一并除籍，也可先追豪户替输之契。',
+    ['尽销亡户旧额', { gold: -40, happy: 7 }], ['覆契追缴大户', { gold: 60, happy: -3 }]);
+  situation('grainSurplus', '陈粟满廪', '国粮超过八百', cs => fac(P()).food > 800 && ownTown(cs),
+    '{城}仓中经年之粟将陈，仓吏请趁晴日出粜。沿道役夫却愿折领旧粮，免给工钱。',
+    ['平价粜民', { food: -70, gold: 40, happy: 3 }], ['给役夫折工值', { food: -55, gold: 55 }]);
+  situation('frontierMart', '榷场换马', '有相识而未交战的陆邻', cs => {
+    const f = Object.keys(fac(P()).met).find(f => f !== P() && alive(f) && !GAME.atWar(P(),f) && GAME.nearPlayer(f,6));
+    return f && { ...ownTown(cs), from:f };
+  }, '边市有部人驱马而至，请准以绢相易。市官欲先率其税，译者谓薄征可以长通音问。',
+    ['从轻征算，遣译致问', { gold: -20, opinion: 9 }], ['照额收税', { gold: 45, opinion: -3 }]);
+  situation('portPilots', '港汊易道', '本城为港口', cs => townWhere(cs,c => c.port),
+    '{城}老梢工言沙汊已移，客舶依旧图易搁。置标须出官费，亦可许梢工受直引船。',
+    ['立标画水道', { gold: -40, sci: 45 }], ['给引船之凭，收牙税', { gold: 35, happy: -2 }]);
+  situation('summerCanal', '夏渠分水', '夏季且本城临河', cs => G().season === 1 && townWhere(cs,c => GEO.river[c.tile]),
+    '{城}上乡筑堰，水不及下田。县官请重开旧渠，田主愿出粟自分灌期。',
+    ['发工浚渠', { gold: -45, happy: 7 }], ['从其分期，收粟入仓', { food: 50, auth: -1 }]);
+
+  function personal(id, name, title, text, ...choices) {
+    declare({ id, group: 'person', title, text, choices, people: [name], weight: 6,
+      condition: name + '为宋臣，在世且未被俘、未去职',
+      context: () => {
+        const g = genByName(name);
+        return g?.hist && playerGeneral(g.id) && { gen: g.id };
+      } });
+  }
+  personal('yueRoll', '岳飞', '岳家军点名', '岳飞呈军籍，老卒之子多请隶旧营。有人善骑，有人愿奉母归耕，将军不忍一概点发。',
+    ['许将军亲试而录', { gold: -40, tong: 1, man: 6 }], ['释独子归养，给其家粟', { food: -45, loyalty: 8 }]);
+  personal('yueCounsel', '岳飞', '帐下议粮', '岳飞奏兵行赖粮，请使将佐各习转输。度支以为将佐分心，欲专付熟吏。',
+    ['使将佐习计', { food: -35, zheng: 2 }], ['给吏佐以专军务', { gold: -45, tong: 1, loyalty: 3 }]);
+  personal('hanDrum', '韩世忠', '梁夫人桴鼓', '韩世忠追述黄天荡旧战，梁夫人执桴击鼓，江上诸舟闻声相应。今有司请录其事，水军则欲取其节奏教新卒。',
+    ['命世忠亲授鼓节', { gold: -35, tong: 2 }], ['录梁夫人事付史馆', { sci: 35, loyalty: 6 }]);
+  personal('hanRetire', '韩世忠', '韩将军请闲', '韩世忠以久历行阵，请少息肩。其部曲尚愿从之，朝廷若留，当明所以留之之礼。',
+    ['厚礼留任，令训后进', { gold: -65, loyalty: 9 }], ['许其归休，以成其志', { retire: 1, auth: 4 }]);
+  personal('liuDrill', '刘锜', '顺昌旧伍', '刘锜请取顺昌守御旧法，教新兵轮番更戍。师旅方集，若力专城守，则野外驰驱之业须缓。',
+    ['练步阵以固垒', { food: -45, tong: 2 }], ['命其编守御条目', { gold: -30, zhi: 1, sci: 25 }]);
+  personal('wuLegacy', '吴璘', '仙人关旧牍', '吴璘检得亡兄吴玠守蜀旧牍，内列关隘、雨雪与运粮所费。其墨迹将泐，请择熟地形者补图。',
+    ['使吴璘躬自校绘', { gold: -40, zhi: 2 }], ['存原牍入阁，旌其兄功', { sci: 30, loyalty: 6 }]);
+  personal('wuFields', '吴璘', '军田借水', '吴璘言山口运粮甚艰，若使军民共修沟堰，则戍卒可就近得食。然修渠之日，操练必减。',
+    ['令其督修军田', { gold: -50, food: 60, zheng: 1 }], ['仍专守御，发粟犒军', { food: -45, tong: 1, loyalty: 4 }]);
+  personal('yuBoats', '虞允文', '江面舟籍', '虞允文请访舟人，逐一核其船之吃水、转舵所须。江防与商渡常争舟，簿成当先付何司？',
+    ['付军府，令允文校阅', { gold: -40, tong: 2 }], ['付转运司，先济民渡', { food: -30, zheng: 1, loyalty: 4 }]);
+  personal('xinEssay', '辛弃疾', '论恢复形势', '辛弃疾陈南北形势，请择识边者同议。议者欲刊其说以广见闻，枢府恐军情泄露，欲留中细读。',
+    ['令其入对论兵', { gold: -35, zhi: 2 }], ['摘其民事付州县', { sci: 40, loyalty: 3 }]);
+  personal('xinRiders', '辛弃疾', '骑卒选练', '辛弃疾言诸营马步异宜，募得乡勇宜分材而使。州县忧抽去壮丁，请先薄募。',
+    ['委其自择将校', { gold: -50, tong: 1, loyalty: 4 }], ['少募而精试其艺', { food: -40, wu: 2 }]);
+  personal('luMaps', '陆游', '山川行记', '陆游请访驿程山川，以补图经所缺。若亲历其地可识民情，若留馆校前人舆记则成书较速。',
+    ['给传往来，察乡俗', { gold: -40, zheng: 2 }], ['令居馆勘旧本', { food: -30, sci: 35, loyalty: 3 }]);
+  personal('zhuGranary', '朱熹', '社仓息米', '朱熹论乡社储粟，言青黄不接之时尤宜出贷。州县愿领其事，乡老却忧吏胥因而扰民。',
+    ['付乡老，令熹按籍', { food: -60, zheng: 2, loyalty: 3 }], ['先令州学讲明其法', { gold: -30, sci: 45, zhi: 1 }]);
+  personal('chenEssay', '陈亮', '论事取士', '陈亮进论，谓士当知当世之务。学官欲令其设问于郡学，近臣欲留之阙下，备问边情。',
+    ['试以边事，留备顾问', { gold: -40, zhi: 2 }], ['令讲论于郡学', { food: -35, sci: 45, loyalty: 3 }]);
+  personal('mengCamps', '孟珙', '营屯安户', '孟珙言归附之众有父母妻子，若只籍壮丁，老弱将无所归。军司请筑屯安家，转运司请先给归粮。',
+    ['令其分屯授田', { gold: -55, zheng: 2, man: 5 }], ['先给归粮，缓行编籍', { food: -50, loyalty: 8 }]);
+  personal('mengDefence', '孟珙', '江汉守图', '孟珙展图，请沿江诸屯互报水涨水落。军吏熟于烽候，舟人熟于滩碛，两者皆可为师。',
+    ['委珙总阅烽候', { gold: -40, tong: 2 }], ['给舟师食，访诸水程', { food: -45, zhi: 1, sci: 25 }]);
+  personal('yuJieHills', '余玠', '山城择址', '余玠延父老论山城，首问泉脉、耕地，可容几家，再问险易。军中催请速筑，匠者欲先遍视诸山。',
+    ['许遍访山民', { gold: -40, zhi: 2 }], ['先筑小垒以验其法', { food: -45, tong: 1, loyalty: 4 }]);
+  personal('wenSeal', '文天祥', '义士呈籍', '文天祥携乡士名籍入奏，所陈有文才者，亦有愿守土者。留之幕下与分任乡事，各有其用。',
+    ['令其择士佐幕', { gold: -45, tong: 1, man: 5 }], ['分往郡县，约束乡役', { food: -35, zheng: 1, loyalty: 4 }]);
+  personal('luxiuBooks', '陆秀夫', '行朝图籍', '陆秀夫请将州县版籍另缮副本，免一处有警而文书俱失。吏手不足，礼典与户籍须择一先录。',
+    ['先备户籍以便治民', { gold: -45, zheng: 2 }], ['先录礼典以存朝仪', { gold: -35, auth: 2, loyalty: 5 }]);
+  personal('zhangFleet', '张世杰', '舟中习令', '张世杰言海上相去虽近，风声常夺人语，应使诸舟各识旗号。旧将请先选善舟之卒为教头。',
+    ['委其亲校舟师', { food: -45, tong: 2 }], ['给赏择教头', { gold: -45, man: 8, loyalty: 4 }]);
+  personal('fanEnvoy', '范成大', '使行所见', '范成大愿将沿途耳目所及写为一编。馆阁要录风土，道路司则需簿记关津里数。',
+    ['命详记关津', { gold: -35, zhi: 2 }], ['许采风土成书', { sci: 40, loyalty: 4 }]);
+  personal('yangPlain', '杨万里', '州县直言', '杨万里疏言吏牍辗转，细民一诉经岁不决。若容直陈，可省淹滞，亦须增人覆核。',
+    ['许径陈而命其覆案', { gold: -45, zheng: 2 }], ['先录积案以备朝议', { sci: 35, loyalty: 4 }]);
+
+  // 地方杂奏分题设冷却。即使远交断绝、名臣凋零，小国仍有不依赖特定人物的地方事务。
+  function local(id, family, title, text, ...choices) {
+    const guest = family === '宾客';
+    const context = cs => {
+      if (!guest) return ownTown(cs);
+      const from = GAME.pick(Object.keys(fac(P()).met).filter(f => f !== P() && f !== 'rebel' && alive(f) && !GAME.atWar(P(),f)));
+      return from && { ...ownTown(cs), from };
+    };
+    declare({ id, family, group: 'local', title, text, choices, context,
+      condition: (guest ? '有通问的和平外邦' : '我朝尚有州城') + '，' + family + '类未在冷却' });
+  }
+  local('frostSilk','农事','晚霜伤桑','{城}蚕户将收新叶，一夜有霜。邻乡尚有桑园，肯出叶者求兑官粮，肯出钱者求缓春税。',
+    ['出粟易叶', { food: -45, happy: 6 }], ['听其缓输春税', { gold: -30, happy: 4 }]);
+  local('hailTiles','灾异','雹穿民瓦','{城}城外雹下如豆，茅屋多漏。窑户请领工钱烧瓦，乡社欲先借仓中盖席度雨。',
+    ['给匠钱烧瓦', { gold: -45, happy: 7 }], ['发仓席，役卒助补', { man: -5, happy: 5 }]);
+  local('fallenOak','灾异','社木夜折','{城}社前老木夜半折断，乡人惊而罢市。县尉欲支木于桥，父老请留材修社屋。',
+    ['以材修桥，免征桥料', { gold: 30, happy: -2 }], ['听民修社，给工食', { food: -30, happy: 5 }]);
+  local('doubleEar','灾异','一茎两穗','{城}农人以一茎两穗之禾进献，吏欲绘图称瑞，老农只愿留种再试。',
+    ['命画工记之，旌其乡', { gold: -30, auth: 2 }], ['还禾试种，给牛耕之费', { gold: -35, sci: 40 }]);
+  local('strangeStone','风俗','泉旁有石','{城}樵者掘得纹石，远望似字，观者塞路。县官请收藏，石工愿买来为乡桥作础。',
+    ['拓其纹送学官辨视', { gold: -25, sci: 40 }], ['付石工为桥础', { happy: 4, auth: -1 }]);
+  local('nightLight','灾异','泽畔夜光','{城}夜行者见水泽间时有微光，传为神灯。驿卒不肯独行，请置候火，或遣学官往察。',
+    ['设更火安行人', { gold: -35, happy: 5 }], ['遣人实录见闻', { food: -25, sci: 35 }]);
+  local('bellCasting','工役','破钟改铸','{城}报时旧钟有罅，声传不过巷口。匠人请重铸，巡铺愿改用木柝，省铜留作公用。',
+    ['给工重铸', { gold: -40, happy: 6 }], ['改柝留铜', { gold: 35, happy: -2 }]);
+  local('templeLodging','释道','寺舍留客','{城}寺旁有空寮，行旅多投宿。僧人求给米作粥，驿吏请赁作传舍以减官费。',
+    ['给米留行旅', { food: -40, happy: 6 }], ['赁作传舍，移省驿费', { gold: 40, happy: -2 }]);
+  local('pilgrimRoad','释道','香客阻道','{城}乡人春秋往来进香，集日车马难通。守臣欲辟旁径，市户愿分日赴集以免出工。',
+    ['雇工开旁径', { gold: -35, happy: 6 }], ['令分日开市，收地钱', { gold: 35, happy: -2 }]);
+  local('sutraCopy','释道','残经待补','{城}僧人收得残经两本，各有阙文。请给纸墨互校，纸坊却愿买其空页重抄常课。',
+    ['给纸墨校经', { gold: -30, sci: 45 }], ['施空页于乡塾', { sci: 20, happy: 3 }]);
+  local('daoCalendar','释道','观中旧仪','{城}道观藏有候晷旧器，铜表尚完。道士欲再立以测日影，匠户请取其式教徒。',
+    ['给资立表记影', { gold: -40, sci: 55 }], ['许匠人摹式传习', { sci: 25, happy: 2 }]);
+  local('villageRites','风俗','两社争祭','{城}两社共祀一祠，各以先后争献，耽误农事。父老议轮年主祭，县令欲亲往平之。',
+    ['听两社轮祭，给祭粟', { food: -25, happy: 5 }], ['遣官核旧籍定序', { gold: -30, auth: 2 }]);
+  local('lostGenealogy','风俗','合谱寻亲','{城}流寓数家同姓，兵后谱牒散失，欲合抄族谱。县吏虑其冒同宗取产，求验旧券。',
+    ['给纸笔访故老', { gold: -25, happy: 5 }], ['据券编录入案', { sci: 35, happy: -2 }]);
+  local('burialGround','风俗','义冢无主','{城}城外旧冢岁久无识，拓道将及其地。乡老愿迁葬而乏资，工匠亦可绕道。',
+    ['赐钱迁葬，录姓名', { gold: -40, auth: 2 }], ['给役夫粮，另辟新道', { food: -40, happy: 6 }]);
+  local('operaFair','风俗','村场演史','{城}村场演旧朝故事，远近来观。学官嫌其失实，愿正其词；市吏只求定场日、清道路。',
+    ['访掌故，校其曲辞', { gold: -25, sci: 40 }], ['许开场日，收摊课', { gold: 35, auth: -1 }]);
+  local('wellDrawing','工役','巷井失绠','{城}巷井滑轮已坏，妇孺汲水甚难。作坊可制铜辖，邻里亦肯出木轮自修。',
+    ['官出铜辖，雇匠修井', { gold: -30, happy: 6 }], ['命里社出木，给役粮', { food: -25, happy: 4 }]);
+  local('oldBridge','工役','古桥题名','{城}老桥石栏崩落，商家愿助修而请刻名。石工请留旧题，工钱由官出。',
+    ['留旧题，官给工钱', { gold: -40, happy: 5 }], ['许商人刻名助修', { gold: 30, auth: -1 }]);
+  local('milestones','工役','驿路里堠','{城}递夫谓前后两堠所记里数不合。重丈可明程限，另给脚钱亦可免递夫赔程。',
+    ['命吏重丈，绘为程图', { gold: -30, sci: 45 }], ['先给递夫脚钱', { gold: -20, happy: 4 }]);
+  local('postMules','工役','驿畜疲惫','{城}驿畜负重趾伤，公牍堆于递铺。可出缗赁民畜代行，或给徒步递夫口粮。',
+    ['赁畜轮行', { gold: -40, auth: 2 }], ['给步递工食', { food: -40, happy: 5 }]);
+  local('kilnSmoke','工役','窑烟入里','{城}砖窑近舍，风起则烟满街。窑户愿移地而乏本，守臣欲留窑供修城之砖。',
+    ['给迁窑之费', { gold: -40, happy: 6 }], ['留窑取砖缮城', { wall: 15, happy: -3 }]);
+  local('stonesMeasure','市易','市石有轻重','{城}米市大小二斛并用，斗户各持旧例。官可置样斛受众验，亦可免牙钱，令行户自校。',
+    ['铸官样，定争讼', { gold: -30, auth: 2 }], ['免牙钱，使行户共校', { gold: -20, happy: 5 }]);
+  local('badDye','市易','染帛褪色','{城}染户售帛，遇雨色落，客商执券索偿。行老愿代保，条件是给一季公染之役。',
+    ['付行老公染，责其偿客', { gold: 35, auth: -1 }], ['官为试染，记其法', { gold: -35, sci: 45 }]);
+  local('fishLease','市易','鱼陂之租','{城}废陂畜水成鱼，贫户久来以网取食。富家请承其租，言岁可输钱。',
+    ['许纳租，限网取之时', { gold: 50, happy: -3 }], ['留供贫户，责其葺岸', { food: 30, happy: 3 }]);
+  local('silkContract','市易','机户争样','{城}机户称客商订纹后久不取货，所积丝帛已满架。可代购作赏，或令行老持契平价转售。',
+    ['出钱买帛备赏', { gold: -40, auth: 2 }], ['听行老转售，量收市课', { gold: 30, happy: -1 }]);
+  local('lampOil','市易','灯油夜市','{城}夜市延至三更，灯油价昂。铺户求官给油以守更，城门吏请早闭以节巡卒。',
+    ['给钱助巡更', { gold: -35, happy: 5 }], ['早闭市，调余卒守门', { wall: 12, happy: -2 }]);
+  local('bookBlocks','学术','书板半蠹','{城}书肆旧板为蠹所蚀，一卷将不可辨。坊主愿售好板，塾师愿合诸家藏本重校。',
+    ['购板重刻', { gold: -45, sci: 60 }], ['给塾师食，令互校', { food: -30, sci: 35 }]);
+  local('starNotes','学术','漏刻迟速','{城}谯楼更筹每较日影略迟。善历者请校漏壶，守卒请以更鼓为准，省换壶之费。',
+    ['给铜校漏', { gold: -35, sci: 50 }], ['给食教更卒候影', { food: -25, happy: 4 }]);
+  local('medicineNames','学术','药名互异','{城}两家药肆一物异名，远客求药辄误。医者请画图示形，药商则愿出赀立市例。',
+    ['雇工绘药图', { gold: -40, sci: 55 }], ['许立市例，责商共验', { gold: 30, auth: -1 }]);
+  local('inkRecipe','学术','墨工献样','{城}墨工进新墨两丸，一利写经，一耐湿藏。史馆与学舍各请其一，惟造墨之松烟有限。',
+    ['给资制耐藏墨', { gold: -35, sci: 50 }], ['给乡学试写，宽工课', { gold: -20, happy: 4 }]);
+  local('stoneRubbing','学术','雨蚀古碑','{城}荒院碑阴尚有前代郡名，雨蚀日深。学正求拓本，乡老愿移碑入亭，使道路有识。',
+    ['拓本入图经', { gold: -30, sci: 45 }], ['给工食建亭护碑', { food: -35, happy: 5 }]);
+  local('disputedScript','学术','两本异文','{城}郡学有同经二本，字句互异。教官请会讲质疑，士子亦可分赴邻州借本相校。',
+    ['具礼会讲', { gold: -40, sci: 55 }], ['给粮遣生访书', { food: -30, sci: 35 }]);
+  local('orphanCraft','乡政','孤幼学艺','{城}工匠愿收孤幼为徒，请官保其衣食。乡社则愿轮养，俟其稍长自择所业。',
+    ['给匠家廪食，立师徒契', { food: -40, sci: 35 }], ['出钱助乡社轮养', { gold: -35, happy: 6 }]);
+  local('widowsDebt','乡政','寡户欠券','{城}寡户以旧屋质钱，今卷末有改墨，债家不肯减息。官可代为清偿，亦可延书手验契。',
+    ['发缗赎屋', { gold: -45, happy: 7 }], ['验契定例以断后诉', { gold: -25, auth: 2 }]);
+  local('nightWatch','乡政','坊更请代','{城}诸坊轮更，力弱之家往往雇人，久成争端。可定钱雇壮者，也可给粮使邻保互代。',
+    ['雇壮者专更', { gold: -35, wall: 14 }], ['给粟许邻保互代', { food: -30, happy: 5 }]);
+  local('lostChildren','乡政','庙集寻亲','{城}庙集散后数家幼子失其所亲。县门可设棚给食，亦可雇熟路之人循乡求访。',
+    ['设棚给食候亲', { food: -30, happy: 5 }], ['雇乡导遍访各保', { gold: -30, auth: 2 }]);
+  local('commons','乡政','公山采薪','{城}旧例听贫民入山樵采，近来大户请包纳山租，禁旁人持斧。县吏持两议请裁。',
+    ['留公山，定日樵采', { happy: 6, gold: -20 }], ['收山租，留小径给贫户', { gold: 45, happy: -2 }]);
+  local('oldAccounts','乡政','火后寻簿','{城}吏舍失火，旧簿残缺。士绅家藏抄契可资参照，亦可令里户自陈，再行覆实。',
+    ['雇书手合校诸契', { gold: -35, sci: 40 }], ['许里户自陈，缓其输额', { gold: -25, happy: 5 }]);
+  local('seedTools','农事','耕具共用','{城}数村共一铁犁，误时常起争端。铁匠请赀添作，村社请给粟雇牛易日轮耕。',
+    ['出缗添犁', { gold: -40, food: 60 }], ['给粮轮借耕牛', { food: -30, happy: 6 }]);
+  local('beeHives','农事','蜂群入圃','{城}蜂群迁于公圃，圃吏欲卖蜜纳钱，药肆求留蜜和丸。守臣言两用难兼。',
+    ['课蜜入市', { gold: 35, happy: -1 }], ['给药肆配丸施贫', { gold: -20, happy: 5 }]);
+  local('reedBeds','农事','荒洼生苇','{城}官洼尽生芦苇，里人求割以覆屋，军匠请留作修城之束。正当收割，须定分给。',
+    ['给军匠修垒', { wall: 14, happy: -2 }], ['许民割用，输少粟入仓', { food: 28, happy: 3 }]);
+  local('oldMulberry','农事','老桑让路','{城}拟通田间小径，须伐老桑数十株。蚕户愿改道而助出工，车户愿输费求直路。',
+    ['改道存桑，给工食', { food: -30, happy: 6 }], ['从车户议，收助修钱', { gold: 40, happy: -2 }]);
+  local('rainGauge','灾异','雨泽失记','{城}所报雨泽与邻县相左，田家恐误征期。吏请别置承雨之器，里老愿以禾苗高下作验。',
+    ['置器验雨，留日录', { gold: -30, sci: 45 }], ['遣人按苗，听缓输租', { gold: -25, happy: 5 }]);
+  local('whiteBird','灾异','白羽来庭','{城}有人捕得白羽之鸟，请献为瑞。禽人言此物久羁恐死，画师愿图其形，旋即放归。',
+    ['图其形，纵归林野', { gold: -25, sci: 35 }], ['赐捕者粟，诏勿复扰', { food: -25, happy: 5 }]);
+  local('iceStore','工役','藏冰旧窖','{城}旧窖墙基尚固，医家求修以藏暑月用冰，粮吏愿改为蔬窖，备军厨之需。',
+    ['修窖济病家', { gold: -35, happy: 6 }], ['改藏蔬，省厨费', { gold: -25, food: 50 }]);
+  local('weightsSchool','学术','算题入塾','{城}塾师以仓粮出入为算题，童子易晓。仓吏愿取能算者为书手，父兄恐妨经业。',
+    ['赐纸笔编为算书', { gold: -35, sci: 50 }], ['请仓吏课余授算', { food: -25, happy: 4 }]);
+  local('paperDuty','市易','纸槽歇作','{城}纸户称槽池待修，无力供官牍。可先以缗钱定买来岁之纸，亦可拨学舍余纸以济急。',
+    ['预给纸价，使得修槽', { gold: -40, sci: 45 }], ['暂借学纸，省官用钱', { gold: 35, sci: -15 }]);
+  local('quiltFund','乡政','百衲寒衣','{城}女工缀余布成衣，求以数领抵户役。县官可收为义衣，军寨亦求购以给守夜者。',
+    ['折役给贫寒户', { gold: -25, happy: 6 }], ['出钱买衣，补巡卒之缺', { gold: -35, man: 9 }]);
+  local('almanacMarket','学术','历日误刊','{城}坊本历日有一叶倒刻，分送已远。书坊请官出牒追改，亦可使乡学逐村讲正。',
+    ['出牒收版重校', { gold: -30, auth: 2 }], ['给食令诸生行乡', { food: -30, sci: 35 }]);
+  local('foreignEnvoys','宾客','译使问俗','远客随商旅入朝，携本国问候之书。馆伴欲厚其归赆，学官愿留译人问方言、历日之异。',
+    ['备礼遣归', { gold: -35, opinion: 10 }], ['延译人校方言', { food: -35, sci: 45 }]);
+  local('foreignMeasures','宾客','客商持尺','外商随使者持本国尺来，请与官尺校准，以便买卖布帛。译吏亦请录两地权衡之别。',
+    ['校尺给契，宽其市税', { gold: -25, opinion: 8 }], ['馆译吏录其权衡', { food: -30, sci: 40 }]);
+  local('foreignGifts','宾客','使橐留香','远使以香料为礼，礼官欲回赠土绢，使者却请换取沿途口粮，分赐从人。',
+    ['依礼回赠土绢', { gold: -40, opinion: 12 }], ['加给从人归粮', { food: -30, opinion: 8 }]);
+  local('quarrelFlock','农事','羊群践苗','{城}牧户与田户争堤边草场，夜间羊入新苗。可留草场而定赔额，亦可遣人开荒作牧地。',
+    ['雇人开荒分牧', { gold: -35, happy: 6 }], ['定赔额，征牧户草课', { food: 35, happy: -1 }]);
+  local('bambooRafts','工役','桥匠论竹','{城}木桥板朽，竹匠愿结排代渡以待修。桥户亦愿即伐材重造，工费当倍。',
+    ['雇桥户重造', { gold: -45, happy: 7 }], ['暂用竹排，发粟养渡者', { food: -25, happy: 4 }]);
+  local('mutePetition','乡政','画地陈情','{城}有民不能言，以炭绘屋界于县门。吏莫解其意，邻人愿具证，学官则请亲往量地。',
+    ['给费按图丈地', { gold: -30, auth: 2 }], ['集证人听断，给往来食', { food: -25, happy: 5 }]);
+  local('templeOrchard','释道','寺田果熟','{城}寺田果熟，僧众请分给病户，市人愿出钱尽买，修寺外遮雨之棚。',
+    ['令僧分果，官助舆费', { gold: -20, happy: 5 }], ['许市果修棚，留供行旅', { gold: 25, happy: 2 }]);
+  local('betrothalLaw','风俗','婚书失印','{城}数户旧婚书年月不明，里正疑其印非真。州学藏有旧印式，邻老尚能辨当年执笔者。',
+    ['校印式，存本于官', { gold: -25, sci: 35 }], ['延邻老作证，免其券费', { gold: -20, happy: 5 }]);
+
+  function presentable(p) {
+    if (p.ev === 'peaceoffer' || p.ev === 'longxingPeace') return alive(p.from) && GAME.atWar(P(), p.from);
+    const row = DEFS[p.ev];
+    return !row?.person || (GAME.gen(p.gen)?.name === row.person && !!playerGeneral(p.gen));
   }
 
   function view(p) {
@@ -2058,11 +2627,18 @@ var EVENTS = (function () {
   }
   function resolve(p, choice) {
     const d = DEFS[p.ev];
+    if (!presentable(p)) return;
+    if (isDecision(p.ev)) {
+      const state = scheduleState();
+      state.count++;
+      state.last[p.ev] = G().T;
+      state.lastDay[p.ev] = elapsedDays();
+    }
     if (p.ev === 'keju') kejuResolve(p, choice || []);
     else (typeof d.choices === 'function' ? d.choices(p) : d.choices)[choice].fn(p);
     GAME.emit('change');
   }
   // 自动处理（无人值守/AI）
-  return { turn, onBattle, annals, generalBio, initAchievements, achievements, finalScore, settlementScore, settlementChronicle, view, resolve, DEFS, spawnArmy };
+  return { presentable, initSchedule, isDecision, offer, registry, turn, onBattle, annals, generalBio, initAchievements, achievements, finalScore, settlementScore, settlementChronicle, view, resolve, DEFS, spawnArmy };
 })();
 if (typeof module !== 'undefined') module.exports = EVENTS;

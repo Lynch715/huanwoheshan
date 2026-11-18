@@ -135,14 +135,13 @@ var COURT = (function () {
       if (c.emp < EMPERORS.length) c.emp++; else c.genEmp = null;
       const nw = emperor();
       c.auth = Math.round(50 + (c.auth - 50) / 2);
-      s.pending.push({ ev: 'court_newemp', old: old.title, name: nw.title, nm: nw.name, note: nw.note });
+      if (!EVENTS.offer({ ev: 'court_newemp', old: old.title, name: nw.title, nm: nw.name, note: nw.note }, 'succession')) GAME.log(nw.title + '即位，百司奉诏如常。', 'big');
     }
     // 朝议倾向随时议与群臣立场变化
     let st = 0, n = 0;
     for (const k in c.offices) { const g = GAME.gen(c.offices[k]); if (g) { ensure(g); st += g.stance === 'war' ? 1 : g.stance === 'peace' ? -1 : 0; n++; } }
     c.mom = (c.mom || 0) * Math.max(0, 1 - 0.25 * e * 4);
     const target = emperor().lean * 0.6 + (n ? st / n * 40 : 0) + c.mom * 1.5;
-    const wars = Object.keys(s.factions).filter(f => f !== P() && f !== 'rebel' && GAME.fac(f).alive && GAME.atWar(P(), f)).length;
     const weary = GAME.fac(P()).warWeary;
     c.lean += ((target - weary / 4) - c.lean) * 0.15 * e * 4;
     c.lean = Math.max(-100, Math.min(100, c.lean));
@@ -164,8 +163,6 @@ var COURT = (function () {
       // 叛逃 / 辞官
       if (!g.loyal && g.loyalty < 25 && rnd() < 0.08 * e) desert(g);
     }
-    // 朝堂事件（大约每年一两次）
-    if (s.T - c.lastEv > 1.5 && rnd() < 0.18 * e) courtEvent(wars, weary);
   }
   function desert(g) {
     const s = S();
@@ -185,9 +182,10 @@ var COURT = (function () {
     g.status = 'gone';
     GAME.log(`${g.name}心灰意冷，挂冠而去。`, 'war');
   }
-  function courtEvent(wars, weary) {
+  function candidates() {
     const s = S(), c = s.court;
-    const pool = [];
+    const wars = Object.values(s.factions).some(f => f.alive && f.id !== 'rebel' && f.id !== P() && GAME.atWar(P(), f.id));
+    const weary = GAME.fac(P()).warWeary, pool = [];
     const zx = holder('zaixiang');
     if (wars && c.lean < -25 && weary > 25) pool.push({ ev: 'court_peace' });
     if (!wars && c.lean > 35) pool.push({ ev: 'court_war' });
@@ -198,10 +196,7 @@ var COURT = (function () {
     pool.push({ ev: 'court_remon', gen: (GAME.pick(mem) || {}).id });
     const low = mem.filter(g => g.loyalty < 45 && !g.loyal);
     if (low.length) pool.push({ ev: 'court_grudge', gen: GAME.pick(low).id });
-    const p = GAME.pick(pool);
-    if (!p || (p.gen == null && ['court_remon', 'court_powerful', 'court_grudge'].includes(p.ev))) return;
-    c.lastEv = s.T;
-    s.pending.push(p);
+    return pool.filter(p => p.ev !== 'court_remon' || p.gen != null);
   }
   // 由战斗/攻城调用
   function onWin(big) { const c = S().court; if (!c) return; c.mom = Math.min(20, (c.mom || 0) + (big ? 4 : 0.6)); c.auth = Math.min(100, c.auth + (big ? 2 : 0.3)); }
@@ -284,6 +279,6 @@ var COURT = (function () {
   };
   function register() { if (typeof EVENTS !== 'undefined') Object.assign(EVENTS.DEFS, DEFS); }
   register();
-  return { OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
+  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
 })();
 if (typeof module !== 'undefined') module.exports = COURT;

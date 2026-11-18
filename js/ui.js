@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.10.3';
+  const VERSION = '0.11.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -2027,7 +2027,7 @@ var UI = (function () {
     }
     const p = S().pending.shift();
     if (!p) { refreshTop(); refreshSide(); return; }
-    if (p.ev === 'peaceoffer' && !GAME.atWar(P(), p.from)) return processPending();
+    if (!EVENTS.presentable(p)) return processPending();
     showEvent(p);
   }
   function showEvent(p, ending) {
