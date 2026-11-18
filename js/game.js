@@ -300,7 +300,7 @@ var GAME = (function () {
     if (a === S.player || b === S.player) fac(a).lastMainWar = S.T;
     breakRoutesBetween(a, b);
     if (!quiet) {
-      if (b === S.player) log(`【${fac(a).name}】向我宣战！`, 'war');
+      if (b === S.player) log(`【${fac(a).name}】向我朝宣战！`, 'war');
       else if (a === S.player) log(`我朝向【${fac(b).name}】宣战。`, 'war');
       else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】开战。`, 'world', null, nearPlayer(a) || nearPlayer(b));
     }

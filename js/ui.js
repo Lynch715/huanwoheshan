@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.10.2';
+  const VERSION = '0.10.3';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -1404,18 +1404,18 @@ var UI = (function () {
   function courtVote(motion, f, onPass, extra, onCancel) {
     const res = COURT.vote(motion);
     const lean = S().court.lean;
-    if (res.pass && ((motion === 'war' && lean > 40) || (motion === 'peace' && lean < -40))) { COURT.applyVote(res, false); toast('群臣附议，准奏施行'); refreshTop(); onPass(); return; }
+    if (res.pass && ((motion === 'war' && lean > 40) || (motion === 'peace' && lean < -40))) { COURT.applyVote(res, false); toast('群臣附议，所议已施行'); refreshTop(); onPass(); return; }
     const list = arr => arr.map(([g, w]) => `<button type="button" class="vm record-link" data-v-gen="${g.id}" title="${COURT.STANCE_NAME[g.stance]} · 忠诚 ${Math.round(g.loyalty)}">${PORTRAIT.img(g, 26, 'alt=""')}${esc(g.name)}${w > 1 ? '<sup>' + w + '</sup>' : ''}</button>`).join('') || '<span class="note">无</span>';
     const tot = res.sw + res.ow || 1;
     const subj = motion === 'war' ? `向【${facName(f)}】宣战` : `与【${facName(f)}】议和`;
     let h = `<h1>廷　议</h1><div class="story" style="text-align:center;padding-bottom:4px">议题：<b>${subj}</b>${extra ? '<br><span class="note">' + extra + '</span>' : ''}</div>
       <div class="vote-bar"><i style="width:${res.sw / tot * 100}%"></i></div>
-      <div style="display:flex;justify-content:space-between;font-size:14px;margin:2px 0 10px"><span class="pos">赞成 ${res.sw}</span><span>${res.emp.title}意在${res.empSide === 'war' ? '主战' : '主和'}（${res.ew} 票）</span><span class="neg">反对 ${res.ow}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin:2px 0 10px"><span class="pos">赞成 ${res.sw}</span><span>时议偏向${res.empSide === 'war' ? '主战' : '主和'}（${res.ew} 票）</span><span class="neg">反对 ${res.ow}</span></div>
       <div class="sec">赞成</div><div class="vlist">${list(res.sup)}</div>
       <div class="sec">反对</div><div class="vlist">${list(res.opp)}</div>
       ${res.abs.length ? `<div class="sec">缄默</div><div class="vlist">${list(res.abs)}</div>` : ''}
       <p class="note">宰相等朝臣三票，知州与统兵将领各一票。立场相合者赞成，中立者视忠诚与皇权而定。</p><div class="choices">`;
-    if (res.pass) h += `<button class="choice" data-v="pass">群臣附议，准奏施行<small>权威 +2</small></button>`;
+    if (res.pass) h += `<button class="choice" data-v="pass">依群臣所议施行<small>权威 +2</small></button>`;
     else h += `<button class="choice" data-v="force">乾纲独断，执意施行<small>权威 −12，反对者忠诚 −8</small></button>`;
     h += `<button class="choice" data-v="no">${res.pass ? '暂且作罢' : '从众作罢'}</button></div>`;
     const present = () => {
@@ -1459,11 +1459,11 @@ var UI = (function () {
     const logs = S().log.filter(e => /罢|独断|相位|叛|挂冠|即皇帝位|登第/.test(e.text)).slice(-6).reverse()
       .map(e => `<div><span class="d">${e.d}</span><span>${esc(e.text)}</span></div>`).join('');
     const h = `<h1>朝　堂</h1><div class="scroll court-page" style="max-height:74vh">
-      <div class="court-top"><div class="court-emperor">${PORTRAIT.img(fake, 80, 'alt=""')}<h2>${emp.title}</h2><div class="note">${emp.name} · ${S().year - emp.birth}岁<br>${emp.note}</div></div>
+      <div class="court-top"><div class="court-emperor">${PORTRAIT.img(fake, 80, 'alt=""')}<h2>当今天子</h2><div class="note">${esc(emp.title)} ${esc(emp.name)} · ${S().year - emp.birth}岁<br>时议：${esc(COURT.reignNote(emp.title, emp.note))}</div></div>
       <div class="court-stats">
         <div class="row court-metric"><span>皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
         <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
-        <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受帝意、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
+        <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受时议、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
         <div class="chips court-stances"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip pos">主和 ${cnt('peace')}</span></div>
       </div></div>
       <div class="sec">百官</div>
@@ -1678,7 +1678,7 @@ var UI = (function () {
   }
   function showHelp() {
     openModal(`<h1>玩法说明</h1><div class="scroll help" style="max-height:72vh;max-width:760px">
-      <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你执掌南宋，经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>占领所有有主城池</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
+      <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你是大宋天子（开局为宋高宗赵构），岳飞、韩世忠诸将皆为你麾下之臣。经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>占领所有有主城池</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
       <h3>难度</h3><p>以大宋城数占比与国力名次定威胁。弱城与新附城易遭敌军窥伺，委任知州、赈济可缓和新附之患。</p>
       <ul class="difficulty-help">${DATA.DIFFICULTY.map(d => `<li><b>${d.name}</b>　${difficultyDescription(d)}</li>`).join('')}</ul>
       <h3>回合动画</h3><p>结束回合后，视野内的行军、交战会依次演示：兵锋推进、刀兵相交、伤亡跳字与胜负印章。点击地图或按空格可跳过；顶栏“动画”按钮可切换常速/快速/关闭。</p>
@@ -1702,8 +1702,8 @@ var UI = (function () {
       <h3>奇遇与将领成长</h3><ul><li>地图上的菱形标记为奇遇点：古战场（经验）、名山古刹（士气兵员）、隐士草庐（特技）、遗迹（宝物）、义军营寨（兵员）、牧马场、商队、屯粮所、藏书楼。带兵经过即可触发。</li>
       <li>将领作战与奇遇可得经验，升级时三选一：提升能力或习得新特技（至多三项）。宝物每人至多三件，直接提升能力或行军。</li></ul>
       <h3>朝堂</h3><ul><li>“朝堂”中可任命宰相、枢密使、三司使、翰林学士、御史中丞、殿前都指挥使，各按其能力提供全国加成。</li>
-      <li>群臣分主战、主和、中立。宣战与议和须经<b>廷议</b>：附议者多则准奏；否则可乾纲独断，但损权威、失人心。</li>
-      <li>皇帝权威影响民心与忠诚；将领忠诚过低会挂冠而去，甚至率部叛逃。可赏赐、任以要职，或设御史中丞纠察百官。皇帝会按史实更替，新君性情各异。</li></ul>
+      <li>群臣分主战、主和、中立。宣战与议和须经<b>廷议</b>：附议者多，可依议施行；否则可乾纲独断，但损权威、失人心。</li>
+      <li>皇帝权威影响民心与忠诚；将领忠诚过低会挂冠而去，甚至率部叛逃。可赏赐、任以要职，或设御史中丞纠察百官。历代宋帝依次继位，各朝时议随之而变。</li></ul>
       <h3>海贸</h3><ul><li>临海之城建<b>市舶司</b>后可开辟航线，与同一海域、已结识且未交战的外国港口通商。路途越远、对方越大，获利越丰；研习“远洋”后航线不限远近。</li></ul>
       <h3>用钱之道</h3><ul><li><b>捐资助学</b>（科技面板）：每 5 贯折文教 1，每季最多捐半季文教之数。</li><li><b>赈济</b>（城池·内政）：民心 +15、民变之势 −15，每城一年一次。</li><li><b>移民实边</b>（城池·内政）：户口 +1 万，限十二万以下的非都城，每城两年一次。</li><li><b>犒军</b>（军团）：士气 +30、主将经验 +15，每军两季一次。</li><li>电脑诸国库银充裕时也会如此用钱。</li></ul>
       <h3>外交</h3><ul><li>鸿胪寺中可遣使修好、宣战、议和、结盟、索贡。电脑诸国亦会彼此征伐，天下大势随史而动：十字军东征、萨拉丁崛起、成吉思汗称汗……</li></ul>

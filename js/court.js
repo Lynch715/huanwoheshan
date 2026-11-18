@@ -13,13 +13,14 @@ var COURT = (function () {
     { id: 'dianqian', name: '殿前都指挥使', stat: 'tong', desc: '宿卫京师：都城城防 +，权威 +' },
   ];
   const EMPERORS = [
-    { name: '赵构', title: '宋高宗', birth: 1107, start: 1127, end: 1162, lean: -35, note: '性怯而多疑，素主和议' },
-    { name: '赵昚', title: '宋孝宗', birth: 1127, start: 1162, end: 1189, lean: 30, note: '锐意恢复，志在中原' },
-    { name: '赵惇', title: '宋光宗', birth: 1147, start: 1189, end: 1194, lean: -5, note: '体弱多病，政出后宫' },
-    { name: '赵扩', title: '宋宁宗', birth: 1168, start: 1194, end: 1224, lean: 10, note: '宽厚少断，权在宰辅' },
-    { name: '赵昀', title: '宋理宗', birth: 1205, start: 1224, end: 1264, lean: 5, note: '崇尚理学，晚年怠政' },
-    { name: '赵禥', title: '宋度宗', birth: 1240, start: 1264, end: 1274, lean: -15, note: '耽于宴乐，委政权臣' },
+    { name: '赵构', title: '宋高宗', birth: 1107, start: 1127, end: 1162, lean: -35, note: '南渡未久，朝中和议之声甚盛' },
+    { name: '赵昚', title: '宋孝宗', birth: 1127, start: 1162, end: 1189, lean: 30, note: '朝野思奋，恢复之议复起' },
+    { name: '赵惇', title: '宋光宗', birth: 1147, start: 1189, end: 1194, lean: -5, note: '内廷多事，百官观望' },
+    { name: '赵扩', title: '宋宁宗', birth: 1168, start: 1194, end: 1224, lean: 10, note: '权在宰辅，朝议纷纭' },
+    { name: '赵昀', title: '宋理宗', birth: 1205, start: 1224, end: 1264, lean: 5, note: '理学大兴，清议日盛' },
+    { name: '赵禥', title: '宋度宗', birth: 1240, start: 1264, end: 1274, lean: -15, note: '承平日久，朝中多偷安之议' },
   ];
+  const LATE_REIGN_NOTE = '朝局未定，百官共议边备与民生';
   const WAR = ['岳飞', '韩世忠', '刘锜', '吴璘', '岳云', '张宪', '牛皋', '杨再兴', '王贵', '李显忠', '张浚', '赵鼎', '虞允文', '辛弃疾', '陆游', '魏胜', '李宝', '毕再遇', '孟珙', '余玠', '文天祥', '王坚', '张珏', '陈亮', '胡铨', '韩侂胄', '岳雷', '吴挺', '赵葵', '李庭芝', '张世杰', '陆秀夫', '王彦', '杜杲', '彭义斌', '向士璧'];
   const PEACE = ['秦桧', '张俊', '万俟卨', '史浩', '史弥远', '汤思退', '贾似道', '刘光世', '范文虎', '丁大全'];
   const LOYAL = ['岳飞', '韩世忠', '岳云', '张宪', '岳雷', '文天祥', '陆秀夫', '张世杰', '孟珙', '余玠', '王坚', '张珏', '辛弃疾', '虞允文', '李庭芝', '刘锜', '姜才'];
@@ -52,8 +53,12 @@ var COURT = (function () {
   function emperor() {
     const s = S(); const c = s.court;
     if (c.emp < EMPERORS.length) return EMPERORS[c.emp];
-    if (!c.genEmp) c.genEmp = { name: '赵' + GAME.pick(['昕', '昶', '昱', '昉', '晟', '暄', '曜', '曦']), title: '宋' + GAME.pick(['世宗', '显宗', '睿宗', '宪宗', '昭宗', '宣宗']), birth: s.year - 22, start: s.year, end: s.year + 25 + Math.floor(rnd() * 15), lean: Math.round(rnd() * 60 - 25), note: '宗室入继大统' };
+    if (!c.genEmp) c.genEmp = { name: '赵' + GAME.pick(['昕', '昶', '昱', '昉', '晟', '暄', '曜', '曦']), title: '宋' + GAME.pick(['世宗', '显宗', '睿宗', '宪宗', '昭宗', '宣宗']), birth: s.year - 22, start: s.year, end: s.year + 25 + Math.floor(rnd() * 15), lean: Math.round(rnd() * 60 - 25), note: LATE_REIGN_NOTE };
     return c.genEmp;
+  }
+  // 旧档可能保留当时的性情说明或已经排队的即位文案。
+  function reignNote(title, note) {
+    return EMPERORS.find(emp => emp.title === title)?.note || (note && note !== '宗室入继大统' ? note : LATE_REIGN_NOTE);
   }
   function officeOf(g) { const o = S().court.offices; for (const k in o) if (o[k] === g.id) return k; return null; }
   function holder(k) { const s = S(); if (!s.court) return null; const id = s.court.offices[k]; return id == null ? null : GAME.gen(id); }
@@ -100,7 +105,7 @@ var COURT = (function () {
       (v > 0 ? sup : v < 0 ? opp : abs).push([g, w]);
     }
     const sw = sup.reduce((s, x) => s + x[1], 0), ow = opp.reduce((s, x) => s + x[1], 0);
-    // 帝意
+    // 时议加权
     const emp = emperor();
     const ew = Math.round(Math.abs(emp.lean) / 10);
     const empSide = emp.lean >= 0 ? 'war' : 'peace';
@@ -132,7 +137,7 @@ var COURT = (function () {
       c.auth = Math.round(50 + (c.auth - 50) / 2);
       s.pending.push({ ev: 'court_newemp', old: old.title, name: nw.title, nm: nw.name, note: nw.note });
     }
-    // 朝议倾向：向帝意与群臣立场回归
+    // 朝议倾向随时议与群臣立场变化
     let st = 0, n = 0;
     for (const k in c.offices) { const g = GAME.gen(c.offices[k]); if (g) { ensure(g); st += g.stance === 'war' ? 1 : g.stance === 'peace' ? -1 : 0; n++; } }
     c.mom = (c.mom || 0) * Math.max(0, 1 - 0.25 * e * 4);
@@ -213,7 +218,7 @@ var COURT = (function () {
   const DEFS = {
     court_newemp: {
       title: '新君即位',
-      text: p => `${p.old}龙驭上宾（或内禅退位），${p.name}${p.nm}即皇帝位。新君${p.note}。\n\n百官各怀心思，朝局为之一变。`,
+      text: p => `先帝${p.old}龙驭上宾（或内禅退位），陛下以${p.name}${p.nm}即皇帝位，承继大统。时，${reignNote(p.name, p.note)}。百官各怀心思，朝局为之一变。`,
       choices: [
         { t: '大赦天下，安抚百官', d: '钱 −100，群臣忠诚 +8，权威 +5', fn: () => { GAME.fac(P()).gold -= 100; for (const g of S().generals) if (g.f === P() && g.loyalty != null) g.loyalty = Math.min(100, g.loyalty + 8); S().court.auth += 5; } },
         { t: '整肃朝纲', d: '权威 +10，群臣忠诚 −3', fn: () => { S().court.auth = Math.min(100, S().court.auth + 10); for (const g of S().generals) if (g.f === P() && g.loyalty != null) g.loyalty -= 3; } },
@@ -279,6 +284,6 @@ var COURT = (function () {
   };
   function register() { if (typeof EVENTS !== 'undefined') Object.assign(EVENTS.DEFS, DEFS); }
   register();
-  return { OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
+  return { OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
 })();
 if (typeof module !== 'undefined') module.exports = COURT;
