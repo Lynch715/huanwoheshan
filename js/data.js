@@ -65,24 +65,44 @@ var DATA = (function () {
   ];
   const FACTIONS = F.map(a => ({ id: a[0], name: a[1], seal: a[2], color: a[3], culture: a[4], aggr: a[5] }));
   const SONG_RECLAIM = new Set(['汴京', '洛阳', '大名', '济南', '益都', '太原', '真定', '河间', '京兆', '秦州', '延安', '徐州', '海州', '蔡州', '寿州', '临洮', '燕京', '大同']);
+  const RANKS = [
+    { name: '无爵' },
+    { name: '男', lv: 2, wins: 1, cost: 80, auth: 30 },
+    { name: '子', lv: 3, wins: 3, cost: 120, auth: 35 },
+    { name: '伯', lv: 5, wins: 8, cost: 200, auth: 40 },
+    { name: '侯', lv: 6, wins: 14, cost: 300, auth: 48 },
+    { name: '国公', lv: 8, wins: 22, cost: 450, auth: 55 },
+    { name: '郡王', lv: 9, wins: 30, cost: 650, auth: 65, limit: 2 },
+  ];
+  const OVERMIGHTY = { troops: 3500, distance: 12, base: 0.18, ignore: 0.08, mutiny: 0.45, cooldown: 4, comfort: 150, raise: 500 };
+  const VASSAL = { power: 0.25, opinion: 40, tribute: 0.15, share: 0.4, extra: 0.12, defeats: 3, unrest: 0.30,
+    annexSeasons: 20, annexOpinion: 70 };
+  const MARRIAGE = { cost: 80, opinion: 30, refill: 6, bridesMax: 3, protection: 12, influence: 20, threat: 0.05,
+    intrigue: 0.2, demandPower: 1.2, demandCool: 20, countryDemandCool: 40, tributeSeasons: 12,
+    defeatWindow: 1, defeatRatio: 0.67, reprisal: 0.35,
+    heirSeasons: 30, heirPower: 0.3, heirChance: 0.06 };
   const DIFFICULTY = [
-    { name: '宽仁', aiYield: 0.60, aiBattle: 0.52, startReserve: 1.5, northGarrison: -3, northArmy: 0, eraRecruit: 0, ransom: 0.8,
-      coalition: { threat: 0.21, ratio: 0.08, opinion: 5, rapport: 2, allyAt: 55, peaceRate: 0.3, dislike: 3, warDelay: 6 },
+    { name: '宽仁', aiYield: 0.60, aiBattle: 0.52, startReserve: 1.5, northGarrison: -3, northArmy: 0, eraRecruit: 0, ransom: 0.8, requestProtection: 12,
+      coalition: { threat: 0.21, ratio: 0.08, opinion: 5, rapport: 2, allyAt: 55, peaceRate: 0.3, dislike: 3, warDelay: 6,
+        speedW: 0.5, brokenW: 0.01, leagueGap: 0.12, ratioSlope: 1.5, ratioFloor: 0.5, waveMax: 2, waveCool: 16, giftMult: 0.4 },
       command: { armies: 0, defenseWeight: 1, unrestWeight: 0.02, assault: 1.12, retreat: 45, morale: 30, reconquest: 2, northPush: 0, siegeInterval: 0.82 },
       occupation: { seasons: 1, production: 0.02, loyalty: 48, unrest: 8, revolt: 0 },
       debt: { governance: 0, morale: 1, desertion: 0, hunger: 0.5, famine: 0 } },
-    { name: '中庸', aiYield: 1, aiBattle: 0.90, startReserve: 1.14, northGarrison: -2, northArmy: 0, eraRecruit: 0, ransom: 1,
-      coalition: { threat: 0.21, ratio: 0.8, opinion: -12, rapport: 4, allyAt: 42, peaceRate: 0.45, dislike: 5, warDelay: 2 },
+    { name: '中庸', aiYield: 1, aiBattle: 0.90, startReserve: 1.14, northGarrison: -2, northArmy: 0, eraRecruit: 0, ransom: 1, requestProtection: 10,
+      coalition: { threat: 0.21, ratio: 0.8, opinion: -12, rapport: 4, allyAt: 42, peaceRate: 0.45, dislike: 5, warDelay: 2,
+        speedW: 1, brokenW: 0.02, leagueGap: 0.10, ratioSlope: 4.1, ratioFloor: 0.3, waveMax: 3, waveCool: 12, giftMult: 1 },
       command: { armies: 1, defenseWeight: 1.4, unrestWeight: 0.09, assault: 1.08, retreat: 46, morale: 32, reconquest: 4, northPush: 1, siegeInterval: 0.72 },
       occupation: { seasons: 4, production: 0.2, loyalty: 26, unrest: 35, revolt: 0.06 },
       debt: { governance: 0.013, morale: 10, desertion: 0.09, hunger: 5, famine: 0.035 } },
-    { name: '严苛', aiYield: 1.11, aiBattle: 1.092, startReserve: 1, northGarrison: 1, northArmy: 0, eraRecruit: 4, ransom: 1.15,
-      coalition: { threat: 0.16, ratio: 0.6, opinion: 0, rapport: 6, allyAt: 32, peaceRate: 0.65, dislike: 8, warDelay: 1 },
+    { name: '严苛', aiYield: 1.11, aiBattle: 1.092, startReserve: 1, northGarrison: 1, northArmy: 0, eraRecruit: 4, ransom: 1.15, requestProtection: 6,
+      coalition: { threat: 0.16, ratio: 0.6, opinion: 0, rapport: 6, allyAt: 32, peaceRate: 0.65, dislike: 8, warDelay: 1,
+        speedW: 1.3, brokenW: 0.03, leagueGap: 0.08, ratioSlope: 3, ratioFloor: 0.25, waveMax: 4, waveCool: 10, giftMult: 1.15 },
       command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.50 },
       occupation: { seasons: 6, production: 0.32, loyalty: 22, unrest: 42, revolt: 0.11 },
       debt: { governance: 0.023, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
-    { name: '地狱', aiYield: 1.22, aiBattle: 1.22, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6, ransom: 1.3,
-      coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0 },
+    { name: '地狱', aiYield: 1.22, aiBattle: 1.22, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6, ransom: 1.3, requestProtection: 4,
+      coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0,
+        speedW: 1.6, brokenW: 0.04, leagueGap: 0.06, ratioSlope: 3.5, ratioFloor: 0.2, waveMax: 5, waveCool: 8, giftMult: 1.3 },
       command: { armies: 3, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.98, retreat: 54, morale: 38, reconquest: 8, northPush: 3, siegeInterval: 0.30 },
       occupation: { seasons: 8, production: 0.42, loyalty: 18, unrest: 48, revolt: 0.19 },
       debt: { governance: 0.035, morale: 22, desertion: 0.34, hunger: 12, famine: 0.09 } },
@@ -1309,6 +1329,7 @@ var DATA = (function () {
   ];
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
-  return { ITEMS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, CITIES, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
+  return { ITEMS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE,
+    CITIES, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

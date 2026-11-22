@@ -67,9 +67,13 @@ var GAME = (function () {
     S = {
       v: 2, turn: 0, year: 1140, season: 2, doy: 189, scale: opts.scale || 7, T: 0, player: 'song', factions: {}, cities: [], armies: [], generals: [],
       tileCity: new Int32Array(N).fill(-1), explored: new Uint8Array(N), visible: new Uint8Array(N),
-      rel: {}, flags: { coalition: {}, coalitionT: null, recommendYear: null }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
+      rel: {}, flags: { coalition: {}, league: null, leagueWave: null, broken: [], songDefeats: [], releaseCommandOffered: false, recommendYear: null }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
       settlement: null,
     };
+    S.flags.marriageDefeats = {};
+    S.flags.marriageAskedFrom = {};
+    S.flags.lastCityLoss = S.flags.autoRankSeason = S.flags.autoVassalT = null;
+    S.flags.marriageAsked = S.flags.marriageReprisal = null;
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     for (const d of DATA.FACTIONS) {
       S.factions[d.id] = {
@@ -183,7 +187,7 @@ var GAME = (function () {
   function mkUnit(t, s) { return { t, s: s || 100 }; }
 
   function addGeneral(o) {
-    const g = Object.assign({ id: S.generals.length, loc: null, loyalty: 80, exp: 0, wins: 0 }, o);
+    const g = Object.assign({ id: S.generals.length, loc: null, loyalty: 80, exp: 0, wins: 0, rank: 0, powerGuard: 0, powerIgnored: 0 }, o);
     if (!g.cul) g.cul = o.f === 'rebel' ? 'han' : fac(o.f).culture;
     S.generals.push(g);
     return g;
@@ -272,7 +276,7 @@ var GAME = (function () {
   function relKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
   function getRel(a, b) {
     const k = relKey(a, b);
-    if (!S.rel[k]) S.rel[k] = { war: false, truce: 0, ally: false, op: 0, score: 0, trib: null };
+    if (!S.rel[k]) S.rel[k] = { war: false, truce: 0, ally: false, op: 0, score: 0, trib: null, vassal: null, marriage: null };
     return S.rel[k];
   }
   function atWar(a, b) {
@@ -281,6 +285,15 @@ var GAME = (function () {
     return getRel(a, b).war;
   }
   function allied(a, b) { return a !== b && a !== 'rebel' && b !== 'rebel' && getRel(a, b).ally; }
+  function vassalLord(f) {
+    return f !== S.player && f !== 'rebel' && S.rel[relKey(S.player, f)]?.vassal?.lord === S.player ? S.player : null;
+  }
+  function endVassalage(r) {
+    r.vassal = null;
+    r.ally = false;
+    r.trib = null;
+    S._playerThreat = null;
+  }
   // 从 a 视角的战争分
   function warScore(a, b) { const r = getRel(a, b); return a < b ? r.score : -r.score; }
   function addWarScore(a, b, v) { const r = getRel(a, b); r.score += a < b ? v : -v; }
@@ -338,14 +351,22 @@ var GAME = (function () {
     }
   }
   function declareWar(a, b, quiet) {
-    if (a === b || atWar(a, b)) return;
+    if (a === b || atWar(a, b) || (b === S.player && marriageProtects(a))) return;
     const r = getRel(a, b);
     const cause = casusBelli(a, b), broken = r.truce > 0;
-    if (broken) (r.brokenBy ||= {})[a] = true;
+    if (broken) {
+      (r.brokenBy ||= {})[a] = true;
+      if (a === S.player) {
+        S.flags.broken.push({ f: b, t: S.T });
+        S._playerThreat = null;
+      }
+    }
     if (a === S.player) S.flags.lastSortie = { kind: cause.kind, t: S.T };
     warOpinions(a, b, cause, broken);
+    if (r.vassal) endVassalage(r);
     r.war = true; r.ally = false; r.truce = 0; r.op = Math.min(r.op, -30); r.score = 0; r.trib = null; r.since = S.T;
     delete r.coalitionAlly;
+    delete r.league;
     fac(a).lastWar = S.T;
     // 涉及我朝的宣战另记一笔：电脑之间的战事不应推迟其对我朝起衅的冷却
     if (a === S.player || b === S.player) fac(a).lastMainWar = S.T;
@@ -355,9 +376,15 @@ var GAME = (function () {
       else if (a === S.player) log(`我朝以「${cause.name}」向【${fac(b).name}】宣战。`, 'war');
       else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】开战。`, 'world', null, nearPlayer(a) || nearPlayer(b));
     }
+    // 藩属从王师出征；同奉一主的诸国不因敌方旧盟倒戈。
+    if (a === S.player) for (const f in S.factions) {
+      if (f !== b && fac(f).alive && vassalLord(f) === a) declareWar(f, b);
+    }
+    const lord = vassalLord(a);
     // 盟友参战
     for (const f in S.factions) {
       if (f === a || f === b || !fac(f).alive || f === 'rebel') continue;
+      if ((lord && (f === lord || vassalLord(f) === lord)) || vassalLord(f) === a) continue;
       if (allied(f, b) && !allied(f, a) && !atWar(f, a)) {
         if (a === S.player && getRel(f, b).coalitionAlly) continue;
         if (f === S.player) { EVENTS.offer({ ev: 'allycall', a: f, enemy: a, ally: b }, 'allianceCall'); }
@@ -365,13 +392,26 @@ var GAME = (function () {
       }
     }
   }
-  function makePeace(a, b, trib) {
-    const r = getRel(a, b);
-    // 电脑之间和约三年，涉及我朝仍为六年
-    r.war = false; r.truce = a === S.player || b === S.player ? 24 : 12; r.score = 0; r.op = Math.max(r.op, -10);
+  function leagueOpponent(a, b) {
+    const other = a === S.player ? b : b === S.player ? a : null;
+    if (!other || !atWar(a, b)) return null;
+    const wave = S.flags.leagueWave;
+    return leagueMember(other) || (wave?.cool === null && wave.members.includes(other)) ? other : null;
+  }
+  function peaceTruce(a, b, { separate = false, truce = 24 } = {}) {
+    if (a !== S.player && b !== S.player) return 12;
+    if (separate) return 24;
+    return leagueOpponent(a, b) ? difficultyRules().coalition.waveCool : truce;
+  }
+  function makePeace(a, b, trib, terms) {
+    const r = getRel(a, b), withPlayer = a === S.player || b === S.player;
+    const wasAtWar = r.war, leagueFoe = leagueOpponent(a, b);
+    r.truce = peaceTruce(a, b, terms);
+    r.war = false; r.score = 0; r.op = Math.max(r.op, -10);
+    if (r.marriage) delete r.marriage.peaceBonus;
     r.trib = trib || null; // {from, to, amt, turns}
     fac(a).warWeary = Math.max(0, fac(a).warWeary - 20); fac(b).warWeary = Math.max(0, fac(b).warWeary - 20);
-    if (a === S.player || b === S.player) {
+    if (withPlayer) {
       const o = a === S.player ? b : a;
       log(`与【${fac(o).name}】议和` + (trib ? `，${fac(trib.from).name}岁输 ${trib.amt} 贯，凡 ${trib.turns} 季。` : '。'), 'dip');
     } else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】议和。`, 'world');
@@ -381,6 +421,14 @@ var GAME = (function () {
     const away = a === S.player ? releasing : b === S.player ? returning : [];
     if (home.length) log(`和议既成，${home.map(g => g.name).join('、')}归朝。`, 'dip');
     if (away.length) log(`依和约遣还${away.map(g => g.name).join('、')}。`, 'dip');
+    if (wasAtWar && withPlayer) {
+      if (leagueFoe) {
+        const entry = S.flags.coalition[leagueFoe] ||= { gifts: [] };
+        entry.until = S.T + 8;
+        if (leagueMember(leagueFoe)) leaveLeague(leagueFoe, true);
+      }
+      closeLeagueWave();
+    }
   }
 
   // ---------- 势力强弱 ----------
@@ -393,71 +441,175 @@ var GAME = (function () {
   }
   function citiesOf(f) { return S.cities.filter(c => c.f === f); }
   function totalPower(f) { const cs = citiesOf(f); return militaryPower(f) + cs.reduce((s, c) => s + c.pop * 3, 0); }
+  // 存档中的季数保留两位小数，原本的整日可按 90 日一季还原。
+  function coalitionDue(t) { return Math.round(S.T * 90) >= Math.round(t * 90); }
   function playerThreat() {
     if (S._playerThreat?.turn === S.turn) return S._playerThreat;
     const p = S.player, power = totalPower(p), owned = citiesOf(p);
+    const rules = difficultyRules().coalition;
     const rank = 1 + Object.values(S.factions).filter(F => F.alive && F.id !== p && !F.rebel && totalPower(F.id) > power).length;
-    const share = owned.length / Math.max(1, S.cities.filter(c => c.f).length);
-    const score = share + (rank === 1 ? 0.04 : rank <= 3 ? 0.02 : 0);
-    const active = score >= difficultyRules().coalition.threat;
+    const cityCount = Math.max(1, S.cities.filter(c => c.f).length);
+    const share = (owned.length + S.cities.filter(c => c.f && vassalLord(c.f)).length * DATA.VASSAL.share) / cityCount;
+    const recent = owned.filter(c => c.recentCapture?.from && c.recentCapture.from !== 'rebel' &&
+      c.recentCapture.from !== p && !coalitionDue(c.recentCapture.t + 8)).length;
+    const parts = { share, rank: rank === 1 ? 0.04 : rank <= 3 ? 0.02 : 0,
+      speed: recent / cityCount * rules.speedW,
+      broken: S.flags.broken.filter(entry => !coalitionDue(entry.t + 20)).length * rules.brokenW };
+    const score = parts.share + parts.rank + parts.speed + parts.broken;
+    const level = score >= rules.threat + rules.leagueGap ? 3 : score >= rules.threat ? 2 : score >= rules.threat * 0.6 ? 1 : 0;
+    const active = level >= 2;
     const border = active ? landBorders(owned, new Set([p])) : new Set();
-    return S._playerThreat = { turn: S.turn, power, rank, share, score, active, border };
+    return S._playerThreat = { turn: S.turn, power, rank, share, score, active, border, parts, level };
   }
-  function coalitionCandidate(f) {
-    const p = S.player, threat = playerThreat(), rules = difficultyRules().coalition, F = fac(f);
-    if (!F?.alive || F.warWeary >= 70 || !threat.active || !threat.border.has(f) || S.T < rules.warDelay) return false;
+  function coalitionCandidate(f, opinion = Infinity) {
+    const p = S.player, F = fac(f);
+    if (!F?.alive || F.warWeary >= 70 || vassalLord(f)) return false;
     const r = getRel(f, p);
-    if (r.war || r.ally || r.truce > 0 || r.op >= rules.opinion) return false;
-    const others = Object.values(S.factions).filter(other => other.alive && !other.rebel && other.id !== f && other.id !== p);
-    if (others.filter(other => atWar(f, other.id)).length >= 2) return false;
-    const allies = others.filter(other => allied(f, other.id) && atWar(other.id, p));
-    return totalPower(f) + allies.reduce((sum, other) => sum + totalPower(other.id), 0) >= threat.power * rules.ratio;
+    if (r.war || r.ally || r.truce > 0 || r.op >= opinion || marriageProtects(f)) return false;
+    if (marriageRecent(f, DATA.MARRIAGE.influence) &&
+        playerThreat().score < difficultyRules().coalition.threat + DATA.MARRIAGE.threat) return false;
+    return Object.values(S.factions).filter(other => other.alive && !other.rebel &&
+      other.id !== f && other.id !== p && atWar(f, other.id)).length < 2;
+  }
+  function leagueMember(f) { return S.flags.league?.members.includes(f) ?? false; }
+  function clearLeagueTies(members, leaving) {
+    const rules = difficultyRules().coalition;
+    for (const [i, a] of members.entries()) for (const b of members.slice(i + 1)) {
+      if (leaving && a !== leaving && b !== leaving) continue;
+      const r = getRel(a, b);
+      if (!r.league) continue;
+      delete r.league;
+      r.ally = !r.war && fac(a).alive && fac(b).alive && r.op >= rules.allyAt;
+      if (!r.ally) delete r.coalitionAlly;
+    }
+  }
+  function bindLeague(a, b) {
+    if (atWar(a, b)) makePeace(a, b);
+    const r = getRel(a, b);
+    if (!r.ally) r.coalitionAlly = true;
+    r.ally = r.league = true;
+  }
+  function dissolveLeague(lostCapital) {
+    const league = S.flags.league;
+    if (!league) return;
+    clearLeagueTies(league.members);
+    S.flags.league = null;
+    if (lostCapital) S.pending.push({ ev: 'info', title: '盟主丧师，诸国离心',
+      text: `王师克取【${fac(league.leader).name}】都城${lostCapital.name}。盟誓既弛，诸国各谋自保。` });
+  }
+  function leaveLeague(f, peace = false) {
+    const league = S.flags.league;
+    clearLeagueTies(league.members, f);
+    league.members = league.members.filter(m => m !== f);
+    if (league.members.length < 2) dissolveLeague();
+    else if (league.leader === f && (!peace || league.stage !== 'war')) {
+      league.leader = league.members.reduce((a, b) => totalPower(a) >= totalPower(b) ? a : b);
+    }
+  }
+  function closeLeagueWave() {
+    const wave = S.flags.leagueWave;
+    if (wave && wave.cool == null && !wave.members.some(f => fac(f)?.alive && atWar(S.player, f))) {
+      wave.cool = S.T + difficultyRules().coalition.waveCool;
+      if (S.flags.league) S.flags.league.cool = wave.cool;
+    }
   }
   function coalitionTurn() {
-    const record = S.flags.coalition;
-    const members = [];
+    const { coalition: record, league, leagueWave } = S.flags;
+    const rules = difficultyRules().coalition;
+    S.flags.broken = S.flags.broken.filter(entry => !coalitionDue(entry.t + 20));
     for (const [f, entry] of Object.entries(record)) {
-      if (entry.until > S.T + 1e-9) continue;
-      if (!coalitionCandidate(f) || entry.until != null) delete record[f];
+      entry.gifts = recentCoalitionGifts(entry);
+      if (entry.asked == null && entry.until == null && !entry.gifts.length) delete record[f];
     }
-    if (S.pending.some(p => p.ev === 'coalitionQuestion')) return;
-    for (const f of playerThreat().border) {
-      if (record[f] || !coalitionCandidate(f)) continue;
-      record[f] = { asked: S.T };
-      members.push(f);
+    closeLeagueWave();
+    const threat = playerThreat();
+    if (league) {
+      if (!fac(league.leader)?.alive ||
+          (threat.score < rules.threat - 0.03 && !league.members.some(f => atWar(S.player, f)))) dissolveLeague();
+      else if (coalitionReady()) coalitionWar();
+      return;
+    }
+    if (leagueWave && (leagueWave.cool == null || !coalitionDue(leagueWave.cool))) return;
+    if (!threat.active || !coalitionDue(rules.warDelay) ||
+        S.pending.some(p => p.ev === 'coalitionQuestion')) return;
+    // 覆亡之虞足以让态度尚冷淡的邻国重议合纵，明约与厚礼仍有约束。
+    const opinion = rules.opinion + (threat.level === 3 ? 25 : 0);
+    const candidates = [...threat.border].filter(f => (record[f]?.until == null || coalitionDue(record[f].until)) && coalitionCandidate(f, opinion));
+    const powers = new Map(candidates.map(f => [f, totalPower(f)]));
+    const ratioEff = rules.ratio * Math.max(rules.ratioFloor, 1 - (threat.score - rules.threat) * rules.ratioSlope);
+    for (const [f, entry] of Object.entries(record)) {
+      if (entry.until != null && !coalitionDue(entry.until)) continue;
+      if (!powers.has(f) || entry.until != null) record[f] = { gifts: entry.gifts };
+    }
+    if (candidates.length < 2 || [...powers.values()].reduce((sum, power) => sum + power, 0) < threat.power * ratioEff) return;
+    const ready = candidates.filter(f => record[f]?.asked != null &&
+      coalitionDue(record[f].joinAt ?? record[f].asked + (record[f].ready ? 1 : 2)));
+    if (ready.length >= 2) {
+      ready.sort((a, b) => powers.get(b) - powers.get(a));
+      const members = ready.slice(0, rules.waveMax), leader = members[0], delay = threat.level === 3 ? 1 : 2;
+      S.flags.league = { leader, members, stage: 'ally', t: S.T + delay, cool: leagueWave?.cool ?? null };
+      for (const f of candidates) if (record[f]) record[f] = { gifts: record[f].gifts };
+      for (const [i, a] of members.entries()) for (const b of members.slice(i + 1)) bindLeague(a, b);
+      S.pending.push({ ev: 'leagueMuster', leader, members: members.slice(), delay });
+      return;
+    }
+    // 诸使换季集议。免约与会盟已有各自的日期，可在周制逐日历检查到期。
+    if (!S.newSeason) return;
+    const members = candidates.filter(f => record[f]?.asked == null);
+    if (!members.length) return;
+    for (const f of members) {
+      (record[f] ||= { gifts: [] }).asked = S.T;
       meet(S.player, f, true);
     }
-    if (!members.length) return;
     const recent = S.flags.lastSortie;
     const justified = recent && recent.kind !== 'none' && S.T - recent.t <= 4;
-    S.pending.push({ ev: 'coalitionQuestion', members, justified: !!justified, cost: 40 + 30 * members.length });
+    S.pending.push({ ev: 'coalitionQuestion', members, justified: !!justified });
+  }
+  function recentCoalitionGifts(entry) {
+    return (entry?.gifts || []).filter(t => !coalitionDue(t + 40));
+  }
+  function coalitionGiftTerms(p) {
+    const common = playerThreat().level === 3, history = new Set();
+    const members = p.members.filter(f => fac(f)?.alive && S.flags.coalition[f]?.asked != null);
+    const terms = members.map(f => {
+      const gifts = recentCoalitionGifts(S.flags.coalition[f]);
+      for (const t of gifts) history.add(t);
+      return { f, seasons: common ? 3 : Math.max(2, 8 - 2 * gifts.length), gifts };
+    });
+    const base = Math.max(40 + 30 * members.length, (fac(S.player).income.gold || 0) * 0.4);
+    const mult = difficultyRules().coalition.giftMult;
+    return { cost: Math.ceil(base * (1 + 0.6 * history.size) * mult - 1e-9), opinion: common ? 8 : 15, terms };
   }
   function answerCoalition(p, answer) {
-    const members = p.members.filter(f => fac(f)?.alive && S.flags.coalition[f]);
+    const terms = coalitionGiftTerms(p);
     const F = fac(S.player);
-    const gift = answer === 'gift' && F.gold >= p.cost;
-    if (gift) F.gold -= p.cost;
+    if (!terms.terms.length) return;
+    const gift = answer === 'gift' && F.gold >= terms.cost;
+    if (gift) F.gold -= terms.cost;
     else if (answer === 'gift') log('国帑不足，厚礼未能遣出。', 'dip');
-    const plus = gift ? 15 : answer === 'explain' && p.justified ? 8 : 0;
-    for (const f of members) {
+    const plus = gift ? terms.opinion : answer === 'explain' && p.justified ? 8 : 0;
+    for (const { f, seasons, gifts } of terms.terms) {
       const r = getRel(S.player, f), entry = S.flags.coalition[f];
       r.op = Math.min(100, r.op + plus);
-      if (gift) entry.until = S.T + 8;
-      else if (answer === 'ignore') entry.ready = true;
+      if (gift) S.flags.coalition[f] = { gifts: [...gifts, S.T], until: S.T + seasons };
+      else entry.joinAt = S.T + (answer === 'ignore' ? 1 : 2);
     }
   }
-  function coalitionReady(f) {
-    const { coalition, coalitionT } = S.flags, entry = coalition[f];
-    if (!entry || entry.until != null || S.pending.some(p => p.ev === 'coalitionQuestion' && p.members.includes(f))) return false;
-    if (coalitionT != null && Math.round(S.T * 90) - Math.round(coalitionT * 90) < 90) return false;
-    return (entry.ready || Math.round(S.T * 90) - Math.round(entry.asked * 90) >= 180) && coalitionCandidate(f);
+  function coalitionReady() {
+    const league = S.flags.league;
+    return league?.stage === 'ally' && coalitionDue(league.t) &&
+      (league.cool == null || coalitionDue(league.cool));
   }
-  function coalitionWar(f) {
-    if (!coalitionReady(f)) return false;
-    S.flags.coalitionT = S.T;
-    delete S.flags.coalition[f];
-    declareWar(f, S.player);
-    return true;
+  function coalitionWar() {
+    for (const f of S.flags.league.members) {
+      if (!coalitionCandidate(f)) leaveLeague(f);
+      if (!S.flags.league) return;
+    }
+    const league = S.flags.league;
+    league.stage = 'war'; league.t = S.T; league.cool = null;
+    S.flags.leagueWave = { members: league.members.slice(), cool: null };
+    for (const f of league.members) declareWar(f, S.player, true);
+    log(`合纵共讨：${league.members.map(f => fac(f).name).join('、')}同日出师，犯我疆境。`, 'war');
   }
   function conquestOpinion() {
     const loss = difficultyRules().coalition.dislike;
@@ -1312,6 +1464,14 @@ var GAME = (function () {
     }
     if (!rep.result) rep.result = attWin ? '获胜' : '失利';
     rep.win = attWin;
+    if ((rep.att === S.player && !attWin) || (rep.def === S.player && attWin)) {
+      const losses = S.flags.songDefeats;
+      losses.push(S.T);
+      if (losses.length > DATA.VASSAL.defeats) losses.shift();
+      const enemy = rep.att === S.player ? rep.def : rep.att;
+      const enemyShare = rep.att === S.player ? 1 - rep.ratio : rep.ratio;
+      if (enemy !== 'rebel' && (rep.captured || enemyShare >= DATA.MARRIAGE.defeatRatio)) S.flags.marriageDefeats[enemy] = S.T;
+    }
     if (opts.plan) rep.plan = opts.plan;
     if (opts.manual) rep.manual = true;
     if (a.f === S.player || defF === S.player) {
@@ -1522,6 +1682,7 @@ var GAME = (function () {
     const old = c.f, F_old = fac(old), F_new = fac(f);
     const hostileCapital = f === S.player && old !== 'rebel' && old !== f && c.cap;
     const wasCap = c.cap;
+    if (old === S.player && f !== old) S.flags.lastCityLoss = S.T;
     if (!S.flags.capLost && old === S.player && f !== old && F_old.capital === c.id) S.flags.capLost = true;
     rec({ k: 'cap', city: c.id, from: old, to: f });
     // 知州
@@ -1577,11 +1738,20 @@ var GAME = (function () {
       else if (near && known) log(`【${F_new.name}】攻取【${F_old.name}】之${c.name}。`, 'world', c.tile);
     }
     if (f === 'rebel' && c.f === 'rebel') { F_new.capital = F_new.capital >= 0 ? F_new.capital : c.id; }
+    if (hostileCapital && getRel(S.player, old).marriage) {
+      getRel(S.player, old).marriage = null;
+      for (const F of Object.values(S.factions)) if (F.alive && !F.rebel && F.id !== old && F.id !== S.player) {
+        const ties = getRel(S.player, F.id);
+        ties.op = Math.max(-100, ties.op - 5);
+      }
+      log(`王师克【${F_old.name}】都城，旧姻遂绝，他邦多有离心。`, 'dip', c.tile);
+    }
+    if (hostileCapital && S.flags.league?.leader === old) dissolveLeague(c);
     if (citiesOf(old).length === 0 && old !== 'rebel') factionDies(old, f);
     else if (hostileCapital) conquestOpinion();
     if (old === S.player || f === S.player) checkVictory();
   }
-  function factionDies(f, by) {
+  function factionDies(f, by, annexed = false) {
     const F = fac(f);
     if (F.alive && f !== S.player && f !== 'rebel' && by === S.player) {
       S.flags.achievementProgress.conquests++;
@@ -1600,13 +1770,35 @@ var GAME = (function () {
       else if (g.status === 'idle') g.status = 'gone';
       else g.f = by === 'rebel' ? f : g.f; // 未出仕者
     }
-    for (const k in S.rel) { if (k.split('|').includes(f)) { S.rel[k].war = false; S.rel[k].ally = false; S.rel[k].trib = null; } }
+    for (const k in S.rel) if (k.split('|').includes(f)) {
+      const r = S.rel[k];
+      if (r.vassal) endVassalage(r);
+      r.war = false; r.ally = false; r.trib = null; r.marriage = null;
+    }
+    if (S.flags.league?.leader === f) dissolveLeague();
+    else if (leagueMember(f)) leaveLeague(f);
+    closeLeagueWave();
     if (f === S.player) {
       S.defeat = true;
       if (S.settlement?.continued) log('社稷倾覆……', 'big');
       else finishGame('defeat');
     }
-    else if (fac(S.player).met[f] || by === S.player) log(`【${F.name}】亡国。`, by === S.player ? 'big' : 'world', null, by !== S.player);
+    else if (!annexed && (fac(S.player).met[f] || by === S.player)) log(`【${F.name}】亡国。`, by === S.player ? 'big' : 'world', null, by !== S.player);
+  }
+
+  function mutiny(g, armies) {
+    for (const a of armies) {
+      rec({ k: 'die', id: a.id });
+      a.f = 'rebel'; a.path = []; a.aiGoal = null; a.mp = 0;
+      clearSentry(a);
+      a.prog = 0; a.progTo = null; a.progFrac = 0;
+      rec({ k: 'new', id: a.id, f: a.f, tile: a.tile, gen: a.gen, n: a.units.length, str: sumStr(a.units) });
+      const c = cityAt(a.tile);
+      if (c?.f === S.player) captureCity(c, 'rebel');
+    }
+    g.f = 'rebel';
+    g.rank = 0;
+    log(`${g.name}抗诏，拥兵自立，所部尽从其叛！`, 'war', armies[0].tile);
   }
 
   // ---------- 将领管理 ----------
@@ -1723,7 +1915,7 @@ var GAME = (function () {
   }
   function joinCaptor(g, f) {
     if (f === S.player) S.flags.achievementProgress.recruits++;
-    g.f = f; g.status = 'idle'; g.loyalty = 55;
+    g.f = f; g.status = 'idle'; g.loyalty = 55; g.rank = 0;
     clearCaptivity(g);
   }
   function recruitCaptive(gid, f) {
@@ -1838,20 +2030,58 @@ var GAME = (function () {
     const ratio = (totalPower(other) + 1) / (totalPower(ai) + 1);
     let w = -ws * 2 + (ratio - 1) * 40 + fac(ai).warWeary / 3 + r.op / 4;
     if (S.T - fac(ai).lastWar < 6) w -= 25;
+    if (other === S.player && r.war && r.marriage?.peaceBonus) w += r.marriage.peaceBonus;
+    const league = S.flags.league;
+    if (other === S.player && league?.stage === 'war' && ai !== league.leader && leagueMember(ai)) {
+      w += atWar(league.leader, other) ? -20 : 25;
+    }
     return w;
   }
-  function proposePeace(f, to, payTrib) {
-    const w = aiWantsPeace(to, f) + (payTrib ? 30 : 0);
-    if (w > 10) {
-      makePeace(f, to, payTrib ? { from: f, to, amt: payTrib, turns: 20 } : null);
+  function proposePeace(f, to, payTrib, separate = false) {
+    if (!atWar(f, to) || !fac(to)?.alive || (separate && (f !== S.player || !leagueMember(to)))) {
+      return { ok: false, msg: '此议已不可行。' };
+    }
+    const w = aiWantsPeace(to, f) + (payTrib ? 30 : 0) + (separate && S.flags.league.leader !== to ? 15 : 0);
+    if (w > 10 && (!separate || payTrib)) {
+      makePeace(f, to, payTrib ? { from: f, to, amt: payTrib, turns: 20 } : null, { separate });
       return { ok: true, msg: `【${fac(to).name}】许和。` };
     }
     // 对方索要岁币
-    if (w > -25 && !payTrib) {
+    if (!payTrib && w > (separate ? -20 : -25)) {
       const amt = Math.round(10 + totalPower(to) / 60);
       return { ok: false, counter: amt, msg: `【${fac(to).name}】要求岁币 ${amt} 贯/季方可议和。` };
     }
     return { ok: false, msg: `【${fac(to).name}】拒绝议和。` };
+  }
+  function intrigueTerms(f, withFaction) {
+    if (f === withFaction || !leagueMember(f) || !leagueMember(withFaction)) return null;
+    const zhi = Object.values(S.court?.offices || {}).reduce((best, id) => {
+      const g = gen(id);
+      return g?.f === S.player && g.status === 'court' ? Math.max(best, g.zhi) : best;
+    }, 0);
+    const marriage = marriageRecent(f, DATA.MARRIAGE.influence) ? DATA.MARRIAGE.intrigue : 0;
+    return { cost: envoyCost(S.player) * 2, chance: clamp(0.35 + zhi / 300 - getRel(f, withFaction).op / 200 + marriage, 0, 1) };
+  }
+  function intrigue(f, withFaction) {
+    const terms = intrigueTerms(f, withFaction), F = fac(S.player);
+    if (!terms) return { ok: false, msg: '此计已不可行。' };
+    if (F.gold < terms.cost) return { ok: false, msg: '国库不足。' };
+    F.gold -= terms.cost;
+    if (Math.random() >= terms.chance) {
+      const r = getRel(S.player, f);
+      r.op = Math.max(-100, r.op - 10);
+      return { ok: false, msg: `离间之计为【${fac(f).name}】所觉，其对我朝好感 −10。` };
+    }
+    const r = getRel(f, withFaction);
+    r.op = Math.max(-100, r.op - 30);
+    if (r.op < difficultyRules().coalition.allyAt - 15) {
+      r.ally = false;
+      delete r.league;
+      delete r.coalitionAlly;
+      leaveLeague(f);
+      return { ok: true, msg: `【${fac(f).name}】与【${fac(withFaction).name}】失和，遂退出合纵。` };
+    }
+    return { ok: true, msg: `【${fac(f).name}】与【${fac(withFaction).name}】互生嫌隙，两国好感 −30。` };
   }
   function demandTribute(f, to) {
     const ratio = totalPower(f) / (totalPower(to) + 1);
@@ -1869,8 +2099,216 @@ var GAME = (function () {
     let common = false;
     for (const x in S.factions) if (fac(x).alive && atWar(f, x) && atWar(to, x) && x !== 'rebel') common = true;
     if (r.war) return { ok: false, msg: '交战之国，何谈结盟。' };
-    if (r.op >= 70 || (r.op >= 40 && common)) { r.ally = true; delete r.coalitionAlly; return { ok: true, msg: `与【${fac(to).name}】歃血为盟。` }; }
+    if (r.op >= 70 || (r.op >= 40 && common)) {
+      r.ally = true;
+      delete r.coalitionAlly;
+      if (f === S.player && leagueMember(to)) leaveLeague(to);
+      return { ok: true, msg: `与【${fac(to).name}】歃血为盟。` };
+    }
     return { ok: false, msg: `【${fac(to).name}】婉拒结盟（需好感 70，或 40 且有共同之敌）。` };
+  }
+  function vassalTerms(f, power = totalPower(S.player)) {
+    if (f === S.player || f === 'rebel' || !fac(f)?.alive || vassalLord(f)) return null;
+    const r = getRel(S.player, f), rules = DATA.VASSAL;
+    if (totalPower(f) >= power * rules.power) return { ok: false, msg: '其国力须不足我朝四之一。' };
+    if (r.op < rules.opinion && (!r.war || aiWantsPeace(f, S.player) <= 0)) {
+      return { ok: false, msg: '须好感满四十，或敌国交兵已久，有意求和。' };
+    }
+    return { ok: true };
+  }
+  function investVassal(f) {
+    const terms = vassalTerms(f);
+    if (!terms?.ok) return terms || { ok: false, msg: '此邦不可册封。' };
+    return sealVassalage(f);
+  }
+  function sealVassalage(f) {
+    const p = S.player, r = getRel(p, f);
+    if (r.war) makePeace(p, f);
+    if (leagueMember(f)) leaveLeague(f);
+    r.vassal = { lord: p, since: S.T };
+    r.ally = true;
+    delete r.coalitionAlly;
+    S._playerThreat = null;
+    const msg = `【${fac(f).name}】受册为藩，奉诏输贡。`;
+    log(msg, 'dip');
+    return { ok: true, msg };
+  }
+  function canAnnexVassal(f) {
+    if (!fac(f)?.alive || !vassalLord(f)) return false;
+    const r = getRel(S.player, f);
+    return !r.war && coalitionDue(r.vassal.since + DATA.VASSAL.annexSeasons) && r.op >= DATA.VASSAL.annexOpinion;
+  }
+  function annexVassal(f) {
+    if (!canAnnexVassal(f)) return false;
+    const p = S.player, seats = citiesOf(f);
+    for (const c of seats) {
+      if (c.governor != null) unassign(c.governor);
+      rec({ k: 'cap', city: c.id, from: f, to: p });
+      c.f = p; c.cap = false;
+      c.recentCapture = c.siegeStart = c.siegeLast = null;
+      c.lastSiege = null;
+    }
+    for (const c of S.cities) c.trade = c.trade.filter(t => !atWar(c.f, city(t).f));
+    factionDies(f, null, true);
+    S._playerThreat = null;
+    log(`【${fac(f).name}】纳土归附，${seats.length} 城编入版籍。`, 'big');
+    updateVisibility();
+    checkVictory();
+    return true;
+  }
+  function payVassalTributes() {
+    const e = E(), lord = fac(S.player);
+    for (const F of Object.values(S.factions)) {
+      if (!F.alive || !vassalLord(F.id)) continue;
+      const amt = Math.min(Math.max(0, F.gold), (F.income.gold || 0) * DATA.VASSAL.tribute * e);
+      F.gold -= amt;
+      lord.gold += amt;
+      F.income.trib -= amt / e;
+      lord.income.trib += amt / e;
+    }
+  }
+  function vassalTurn() {
+    const p = S.player, rules = DATA.VASSAL, league = S.flags.league;
+    const recent = S.flags.songDefeats.filter(t => !coalitionDue(t + 2)).length;
+    for (const F of Object.values(S.factions)) {
+      const f = F.id;
+      if (!F.alive || !vassalLord(f)) continue;
+      const r = getRel(p, f), tribute = r.trib;
+      if (league?.stage === 'war' && recent >= rules.defeats && r.op < 10 &&
+          tribute?.from === f && tribute.to === p && tribute.amt > (F.income.gold || 0) * rules.extra &&
+          Math.random() < rules.unrest) {
+        endVassalage(r);
+        log(`【${F.name}】不堪重贡，宣布自立。`, 'dip');
+        if (league.members.length < difficultyRules().coalition.waveMax && coalitionCandidate(f)) {
+          for (const m of league.members) bindLeague(f, m);
+          league.members.push(f);
+          S.flags.leagueWave.members.push(f);
+          declareWar(f, p, true);
+          log(`【${F.name}】自立后从诸国合纵，举兵犯境。`, 'war');
+        }
+      } else if (!r.vassal.petitioned && canAnnexVassal(f)) {
+        r.vassal.petitioned = true;
+        S.pending.push({ ev: 'vassalAnnex', from: f });
+      }
+    }
+  }
+
+  // ---------- 宗室联姻 ----------
+  function marriageRecent(f, seasons) {
+    const marriage = S.rel[relKey(S.player, f)]?.marriage;
+    return !!marriage && !coalitionDue(marriage.t + seasons);
+  }
+  function marriageProtects(f) {
+    const marriage = S.rel[relKey(S.player, f)]?.marriage;
+    return !!marriage && !coalitionDue(marriage.t + (marriage.protection ?? DATA.MARRIAGE.protection));
+  }
+  function marriageTerms(f) {
+    const p = S.player, rules = DATA.MARRIAGE;
+    if (f === p || f === 'rebel' || !fac(f)?.alive || !fac(p).met[f]) return null;
+    const r = getRel(p, f);
+    let reason = null;
+    if (r.war || r.op < rules.opinion) reason = '须两国休兵，好感满三十。';
+    else if (!S.court?.clan?.brides) reason = '宗室暂无可下嫁之女。';
+    else if (fac(p).gold < rules.cost) reason = '国帑不足。';
+    return { ok: reason == null, cost: rules.cost, msg: reason };
+  }
+  function bindMarriage(f, opinion, terms = {}) {
+    const r = getRel(S.player, f);
+    S.court.clan.brides--;
+    r.op = clamp(r.op + opinion, -100, 100);
+    r.marriage = { t: S.T, ...terms };
+    if (!r.war && leagueMember(f) && S.flags.league.stage === 'ally') leaveLeague(f);
+  }
+  function marry(f) {
+    const terms = marriageTerms(f);
+    if (!terms?.ok) return terms || { ok: false, msg: '此邦不可议婚。' };
+    fac(S.player).gold -= terms.cost;
+    bindMarriage(f, 25);
+    const msg = `宗室女下嫁【${fac(f).name}】，两国结姻亲之好。`;
+    log(msg, 'dip');
+    return { ok: true, msg };
+  }
+  function marriageTribute(f) { return Math.round(10 + totalPower(f) / 100); }
+  function marriageRequestTerms(f) {
+    const our = fac(S.player), rules = difficultyRules();
+    const cost = Math.ceil(Math.max(150, (our.income.gold || 0) * 0.5) * rules.coalition.giftMult);
+    return { cost, enabled: our.gold >= cost && !!S.court?.clan?.brides,
+      war: atWar(S.player, f), protection: rules.requestProtection };
+  }
+  function answerMarriageRequest(f, answer, amount) {
+    const p = S.player, clan = S.court?.clan;
+    if (!clan?.brides || !fac(f)?.alive) return;
+    const r = getRel(p, f);
+    if (answer === 'accept') {
+      const terms = marriageRequestTerms(f);
+      if (!terms.enabled) return false;
+      fac(p).gold -= terms.cost;
+      bindMarriage(f, 30, terms.war ? { protection: 0, peaceBonus: 20 } : { protection: terms.protection });
+      COURT.marriageDecree(-6, -10, -5);
+    } else if (answer === 'refuse') {
+      r.op = Math.max(-100, r.op - 30);
+      COURT.marriageDecree(4, 0, 5);
+      if (!r.war && Math.random() < DATA.MARRIAGE.reprisal) S.flags.marriageReprisal = { f, t: S.T + 1 };
+    } else {
+      r.trib = { from: p, to: f, amt: amount ?? marriageTribute(f), turns: DATA.MARRIAGE.tributeSeasons };
+      r.op = Math.min(100, r.op + 10);
+    }
+  }
+  function canAcceptMarriageHeir(f) {
+    if (!fac(f)?.alive || vassalLord(f)) return false;
+    const marriage = getRel(S.player, f).marriage, rules = DATA.MARRIAGE;
+    return !!marriage && coalitionDue(marriage.t + rules.heirSeasons) && totalPower(f) < totalPower(S.player) * rules.heirPower;
+  }
+  function acceptMarriageHeir(f) {
+    if (!canAcceptMarriageHeir(f)) return { ok: false, msg: '此议已不可行。' };
+    return sealVassalage(f);
+  }
+  function playerBorders() {
+    return landBorders(citiesOf(S.player), new Set([S.player]));
+  }
+  function marriageTurn() {
+    const p = S.player, rules = DATA.MARRIAGE, clan = S.court?.clan;
+    if (!clan || !fac(p).alive) return;
+    const refill = Math.floor((Math.round(S.T * 90) - Math.round(clan.t * 90)) / (rules.refill * 90));
+    if (refill > 0) {
+      clan.brides = Math.min(rules.bridesMax, clan.brides + refill);
+      clan.t += refill * rules.refill;
+    }
+    const flags = S.flags, reprisal = flags.marriageReprisal;
+    if (reprisal && coalitionDue(reprisal.t)) {
+      flags.marriageReprisal = null;
+      if (fac(reprisal.f)?.alive) declareWar(reprisal.f, p);
+    }
+    for (const [f, t] of Object.entries(flags.marriageDefeats)) {
+      if (!fac(f)?.alive || coalitionDue(t + rules.defeatWindow)) delete flags.marriageDefeats[f];
+    }
+    if (clan.brides && (flags.marriageAsked == null || coalitionDue(flags.marriageAsked + rules.demandCool)) &&
+        !S.pending.some(q => q.ev === 'marriageRequest')) {
+      const canAsk = f => fac(f)?.alive && !vassalLord(f) && (flags.marriageAskedFrom[f] == null ||
+        coalitionDue(flags.marriageAskedFrom[f] + rules.countryDemandCool));
+      const willing = Object.entries(flags.marriageDefeats).sort((a, b) => b[1] - a[1]);
+      let from = willing.find(([f]) => canAsk(f))?.[0];
+      if (!from && S.newSeason) {
+        let power = playerThreat().power * rules.demandPower;
+        for (const f of playerBorders()) if (canAsk(f)) {
+          const strength = totalPower(f);
+          if (strength > power) { power = strength; from = f; }
+        }
+      }
+      if (from) {
+        meet(p, from, true);
+        flags.marriageAsked = S.T;
+        flags.marriageAskedFrom[from] = S.T;
+        S.pending.push({ ev: 'marriageRequest', from, amt: marriageTribute(from) });
+      }
+    }
+    for (const f of Object.keys(fac(p).met)) {
+      const marriage = S.rel[relKey(p, f)]?.marriage;
+      if (marriage && !marriage.heirAsked && canAcceptMarriageHeir(f) && Math.random() < rules.heirChance * E()) {
+        marriage.heirAsked = true;
+        S.pending.push({ ev: 'marriageHeir', from: f });
+      }
+    }
   }
 
   // ---------- 视野 ----------
@@ -2167,6 +2605,7 @@ var GAME = (function () {
     for (const f in S.factions) if (f !== S.player && fac(f).alive) AI.turn(f);
     computeInbound();
     for (const f in S.factions) processFaction(f);
+    if (fac(S.player).alive) payVassalTributes();
     armyUpkeepTurn();
     diplomacyTurn();
     // 时间推进
@@ -2181,8 +2620,9 @@ var GAME = (function () {
     generalsTurn();
     captivityTurn();
     if (S.newYear) AI.prisonersTurn();
-    if (S.newSeason) assignTerritory(false);
+    if (S.newSeason) { assignTerritory(false); vassalTurn(); }
     coalitionTurn();
+    marriageTurn();
     EVENTS.turn();
     if (typeof COURT !== 'undefined') COURT.turn();
     updateVisibility();
@@ -2247,7 +2687,21 @@ var GAME = (function () {
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     S.difficulty = DATA.DIFFICULTY[S.difficulty] ? +S.difficulty : 1;
     S.flags.coalition ??= {};
-    S.flags.coalitionT ??= null;
+    for (const entry of Object.values(S.flags.coalition)) entry.gifts ??= [];
+    S.flags.league ??= null;
+    S.flags.leagueWave ??= null;
+    S.flags.broken ??= [];
+    S.flags.songDefeats ??= [];
+    S.flags.releaseCommandOffered ??= false;
+    S.flags.marriageAsked ??= null;
+    S.flags.marriageReprisal ??= null;
+    S.flags.marriageDefeats ??= {};
+    S.flags.marriageAskedFrom ??= {};
+    for (const p of S.pending) if (p.ev === 'marriageRequest') S.flags.marriageAskedFrom[p.from] ??= S.flags.marriageAsked ?? S.T;
+    S.flags.lastCityLoss ??= S.cities.reduce((last, c) => c.f !== S.player && c.recentCapture?.from === S.player ?
+      Math.max(last ?? -Infinity, c.recentCapture.t) : last, null);
+    S.flags.autoRankSeason ??= null;
+    S.flags.autoVassalT ??= null;
     S.flags.recommendYear ??= null;
     // 旧档可能保存了汇总值，按当前版本的建筑与科技数据重算。
     for (const c of S.cities) {
@@ -2260,11 +2714,22 @@ var GAME = (function () {
       F.recruitEra ??= reachedEra(F);
       F.lastMainWar ??= -99;
     }
-    for (const r of Object.values(S.rel)) if (r.war) r.since ??= 0;
+    for (const r of Object.values(S.rel)) {
+      if (r.war) r.since ??= 0;
+      r.vassal ??= null;
+      r.marriage ??= null;
+    }
     for (const a of S.armies) { a.fortT ??= null; a.expeditionWarned ??= false; }
     for (const g of S.generals) {
+      g.rank ??= 0;
+      g.powerGuard ??= 0;
+      g.powerIgnored ??= 0;
       if (!g.cul) g.cul = fac(g.f)?.culture || 'han';
       if (g.status === 'captive') repairCaptivity(g);
+    }
+    // 旧档的封爵奏议与「边将自专」曾共用编号，只有前者在发出时记过 powerLast。
+    for (const p of S.pending) {
+      if (p.ev === 'overmighty' && gen(p.gen)?.powerLast === S.T) p.ev = 'court_overmighty';
     }
     const knownNames = new Set(S.generals.map(g => g.name));
     for (const row of DATA.GEN_ADDITIONS) if (!knownNames.has(row[0])) {
@@ -2274,6 +2739,7 @@ var GAME = (function () {
     if (!S.sites) generateSites();
     if (typeof COURT !== 'undefined') {
       COURT.init();
+      S.court.commandReleased ??= false;
       if (S.court.genEmp) COURT.updateEmperorArt(S.court.genEmp, S.year);
     }
     updateVisibility();
@@ -2289,8 +2755,11 @@ var GAME = (function () {
     createArmyRaw, formArmy, transferToArmy, transferToCity, disband, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
     assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
     ransomCost, ransomInfo, ransomCaptive, exchangeOptions, exchangeCaptive, peaceCaptives, defectCaptive,
-    getRel, atWar, allied, warScore, casusBelli, declareWar, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
-    coalitionReady, coalitionWar, answerCoalition,
+    getRel, atWar, allied, warScore, casusBelli, declareWar, peaceTruce, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
+    leagueMember, coalitionGiftTerms, answerCoalition, intrigueTerms, intrigue,
+    vassalTerms, investVassal, canAnnexVassal, annexVassal, mutiny,
+    marriageTerms, marry, marriageProtects, marriageTribute, marriageRequestTerms, answerMarriageRequest, canAcceptMarriageHeir, acceptMarriageHeir,
+    playerBorders, coalitionDue,
     totalPower, militaryPower, playerThreat, difficultyRules, citiesOf, hasTech, availableTechs, techCost, setResearch, tradeSlots, routeTargets, routeValue, openRoute, canRoute, captureCity,
     nearPlayer, updateVisibility, revealAround, assignTerritory, sumStr, rebellion, factionDies, checkVictory, finishGame, rnd, ri, pick, clamp,
   };

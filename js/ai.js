@@ -13,6 +13,7 @@ var AI = (function () {
   function turn(f) {
     const F = GAME.fac(f);
     if (!F.alive) return;
+    if (f === S().player) governSong(F);
     const cities = GAME.citiesOf(f);
     if (f === 'rebel' && !cities.length) { rebelArmies(); return; }
     research(f);
@@ -20,6 +21,52 @@ var AI = (function () {
     economy(f, cities, enemies);
     const declared = f !== 'rebel' && diplomacy(f, enemies);
     military(f, cities, declared ? enemiesOf(f) : enemies);
+  }
+
+  function governSong(F) {
+    const s = S(), flags = s.flags, season = s.year * 4 + s.season;
+    const expenses = (F.income.upkeep || 0) + Math.max(0, -(F.income.trib || 0));
+    if (flags.autoRankSeason !== season && F.gold >= expenses * 3) {
+      let officer = null;
+      for (const g of s.generals) {
+        if (g.f !== s.player || !g.wins || (officer && officer.wins >= g.wins)) continue;
+        const terms = COURT.rankTerms(g);
+        if (terms && !terms.reason) officer = g;
+      }
+      if (officer && COURT.grantRank(officer).ok) flags.autoRankSeason = season;
+    }
+    if (flags.autoVassalT != null && !GAME.coalitionDue(flags.autoVassalT + 8)) return;
+    const power = GAME.totalPower(s.player);
+    let choice = null, opinion = DATA.VASSAL.opinion - 1;
+    for (const f of GAME.playerBorders()) {
+      const op = GAME.getRel(s.player, f).op;
+      if (op > opinion && op >= DATA.VASSAL.opinion && GAME.vassalTerms(f, power)?.ok) {
+        choice = f;
+        opinion = op;
+      }
+    }
+    if (choice && GAME.investVassal(choice).ok) flags.autoVassalT = s.T;
+  }
+
+  function marriageAnswer(p) {
+    const { player, flags } = S();
+    if (GAME.totalPower(player) > GAME.totalPower(p.from)) return 1;
+    const terms = GAME.marriageRequestTerms(p.from);
+    if (terms.war) {
+      return terms.enabled && flags.lastCityLoss != null && !GAME.coalitionDue(flags.lastCityLoss + 2) ? 0 : 1;
+    }
+    const tribute = p.amt ?? GAME.marriageTribute(p.from);
+    return GAME.fac(player).gold >= tribute * DATA.MARRIAGE.tributeSeasons ? 2 : 1;
+  }
+
+  function eventAnswer(p) {
+    if (p.ev === 'marriageRequest') return marriageAnswer(p);
+    if (p.ev === 'vassalAnnex') {
+      const owned = S().cities.filter(c => c.f).length;
+      const extraShare = GAME.citiesOf(p.from).length * (1 - DATA.VASSAL.share) / owned;
+      return GAME.playerThreat().score + extraShare >= GAME.difficultyRules().coalition.threat ? 1 : 0;
+    }
+    return 0;
   }
 
   function enemiesOf(f) {
@@ -143,8 +190,8 @@ var AI = (function () {
         else if (F.gold > 60 && !full && !broke) { const u = chooseUnit(c, atWarNow); if (u) GAME.queueUnit(c.id, u); }
       }
     }
-    // 加急
-    if (F.gold > 350) {
+    // 每季拨一次加急工费；周制不能在同一季反复支用整季额度。
+    if (F.gold > 350 && (S().turn === 0 || S().newSeason)) {
       const cs = cities.filter(c => c.queue.length).sort((a, b) => (isBorder(b, enemies) ? 1 : 0) - (isBorder(a, enemies) ? 1 : 0));
       for (const c of cs.slice(0, 2 + Math.round(6 * rk))) if (F.gold - GAME.hurryCost(c) > 200) GAME.hurry(c.id);
     }
@@ -182,12 +229,16 @@ var AI = (function () {
     return list;
   }
 
+  function focusesOnSong(f) {
+    const { player, difficulty } = S();
+    return f !== player && f !== 'rebel' && GAME.atWar(f, player) &&
+      (difficulty >= 2 || GAME.leagueMember(f));
+  }
   function diplomacy(f, enemies) {
     const F = GAME.fac(f), P = S().player;
     const rules = GAME.difficultyRules().coalition;
     let changed = false;
-    // 严苛、地狱下，与我朝交战的国家专心伐宋：不另启战端（见下方 return），也可随时与他国罢兵
-    const focusSong = f !== P && S().difficulty >= 2 && GAME.atWar(f, P);
+    const focusSong = focusesOnSong(f);
     // 与电脑议和
     for (const e of enemies) {
       if (e === P || e === 'rebel') continue;
@@ -204,7 +255,6 @@ var AI = (function () {
     }
     const realWars = enemies.filter(e => e !== 'rebel' && GAME.atWar(f, e)).length;
     const threat = f !== P ? GAME.playerThreat() : null;
-    if (realWars < 2 && GAME.coalitionReady(f) && rand() < (0.25 + F.aggr * 0.2) * GAME.E() && GAME.coalitionWar(f)) return true;
     // 常规拓边。对我朝的宣战沿用原先的频率与门槛（难度已按此标定）；
     // 电脑之间更常兴兵，也敢打势均力敌或腹背受敌的邻国。玩家势力（含托管）一律沿用原规则。
     if (realWars >= 2 || focusSong) return changed;
@@ -226,12 +276,11 @@ var AI = (function () {
       if (r.war || r.ally || r.truce > 0 || r.op > 25) return false;
       const ratio = myP / (GAME.totalPower(o) + 1);
       if (o === P) {
-        if (S().T < rules.warDelay || (threat?.active && threat.border.has(f))) return false;
+        if (GAME.marriageProtects(f) || S().T < rules.warDelay || (threat?.active && threat.border.has(f))) return false;
         return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
       }
       if (!lively) return ratio > (F.aggr > 0.7 ? 1.0 : 1.35);
-      // 严苛、地狱下，不趁火打劫正与我朝交战的国家（免得替玩家分兵）
-      if (S().difficulty >= 2 && GAME.atWar(o, P)) return false;
+      if (focusesOnSong(o)) return false;
       const busy = enemiesOf(o).some(x => x !== f && x !== P && x !== 'rebel');
       return ratio > (F.aggr > 0.7 ? 0.9 : 1.15) * (busy ? 0.8 : 1);
     });
@@ -291,7 +340,7 @@ var AI = (function () {
     }
     const es = new Set(enemies);
     const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f)),
-      frontier: undefined, rules, fightSong };
+      frontier: undefined, rules, fightSong, focusSong: focusesOnSong(f) };
     for (const a of armies) {
       if (!S().armies.includes(a)) continue;
       try { armyAct(a, cities, enemies, ctx); } catch (e) { console.error('AI army', e); }
@@ -332,6 +381,7 @@ var AI = (function () {
       return estimates.get(tile);
     };
     const assault = c => ctx.fightSong && c.f === S().player ? rules.assault : f === S().player ? 0.9 : AI_ASSAULT;
+    const otherFront = owner => ctx.focusSong && owner !== S().player ? 8 : 0;
     let goal = null;
     const worn = avg < (rules?.retreat ?? 45) || a.morale < (rules?.morale ?? 30);
     const undermanned = rules && a.units.length <= 2 && a.units.length < GAME.armyCap(a) / 2;
@@ -353,7 +403,7 @@ var AI = (function () {
         const nearMine = cities.some(c => GEO.dist(c.tile, o.tile) <= 3);
         if (!nearMine && d > 4) continue;
         const risk = oddsAgainst(o.tile);
-        const score = d + risk;
+        const score = d + risk + otherFront(o.f);
         if (risk < 1.15 && score < td) { td = score; threat = o; }
       }
       // 进攻目标城市
@@ -372,10 +422,10 @@ var AI = (function () {
         const north = f === 'jin' && border && S().T < 20 ? rules.northPush : 0;
         const weakness = border && c.recentCapture && S().T - c.recentCapture.t < rules.reconquest ? (100 - c.loyalty) * rules.unrestWeight : 0;
         const score = d + def / 15 * (border ? rules.defenseWeight : 1) - (c.cap ? 3 : 0) -
-          north - weakness - (reconquest ? 8 : 0);
+          north - weakness - (reconquest ? 8 : 0) + otherFront(c.f);
         if (score < best) { best = score; tgt = c; }
       }
-      if (threat && (!tgt || td < GEO.dist(tgt.tile, a.tile) + oddsAgainst(tgt.tile))) goal = threat.tile;
+      if (threat && (!tgt || td < GEO.dist(tgt.tile, a.tile) + oddsAgainst(tgt.tile) + otherFront(tgt.f))) goal = threat.tile;
       else if (tgt) goal = tgt.tile;
       else {
         // 集结于前线城市
@@ -383,7 +433,7 @@ var AI = (function () {
           let fr0 = null, fd = 1e9;
           for (const c of cities) {
             let ed = 1e9;
-            for (const o of ctx.eCities) { const d = GEO.dist(o.tile, c.tile); if (d < ed) ed = d; }
+            for (const o of ctx.eCities) { const d = GEO.dist(o.tile, c.tile) + otherFront(o.f); if (d < ed) ed = d; }
             if (ed < fd) { fd = ed; fr0 = c; }
           }
           ctx.frontier = fr0;
@@ -446,6 +496,6 @@ var AI = (function () {
     }
   }
 
-  return { turn, prisonersTurn, armyPower, cityDefense };
+  return { turn, prisonersTurn, armyPower, cityDefense, eventAnswer };
 })();
 if (typeof module !== 'undefined') module.exports = AI;

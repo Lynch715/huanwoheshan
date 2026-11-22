@@ -117,9 +117,8 @@ var EVENTS = (function () {
       title: '十二道金牌',
       text: () => '郾城一战，金兀术拐子马、铁浮屠尽为岳家军所破，中原父老箪食壶浆以迎王师。然朝中秦桧力主和议，奏请急发十二道金字牌，催岳飞班师。\n\n岳飞北望中原，上表请乘胜北进。\n\n陛下，此诏发与不发，在此一念。',
       choices: [
-        { t: '发金牌，召岳飞班师，与金议和', d: () => '岁币 25 贯/季，和约二十年；岳家军南撤。' + peaceTerms('jin'), fn: () => {
-          GAME.makePeace('song', 'jin', { from: 'song', to: 'jin', amt: 25, turns: 80 });
-          GAME.getRel('song', 'jin').truce = 40;
+        { t: '发金牌，召岳飞班师，与金议和', d: () => `岁币 25 贯/季，和约 ${GAME.peaceTruce('song', 'jin', { truce: 40 })} 季；岳家军南撤。` + peaceTerms('jin'), fn: () => {
+          GAME.makePeace('song', 'jin', { from: 'song', to: 'jin', amt: 25, turns: 80 }, { truce: 40 });
           for (const a of G().armies.filter(a => a.f === 'song')) {
             const o = GAME.tileOwner(a.tile);
             if (o !== 'song') { const c = nearestOwnCity('song', a.tile); const t = freeTileNear(c.tile, 3); if (t >= 0) { a.tile = t; a.path = []; } }
@@ -347,11 +346,55 @@ var EVENTS = (function () {
     },
     coalitionQuestion: {
       title: '诸国遣使诘问',
-      text: p => `${p.members.map(f => fac(f).name).join('、')}遣使至阙，问我朝举兵之由。若不释其疑，诸国或于两季后合纵来犯。`,
+      text: p => `${p.members.map(f => fac(f).name).join('、')}遣使至阙，问我朝举兵之由。若不释其疑，诸国或于一二季内歃血会盟。`,
       choices: [
-        { t: '厚礼安抚', d: p => `费钱 ${p.cost} 贯，各国好感 +15，八季内不从合纵`, fn: p => GAME.answerCoalition(p, 'gift') },
+        { t: '厚礼安抚', d: p => {
+          const { cost, opinion, terms } = GAME.coalitionGiftTerms(p), durations = new Map();
+          for (const { f, seasons } of terms) {
+            if (!durations.has(seasons)) durations.set(seasons, []);
+            durations.get(seasons).push(fac(f).name);
+          }
+          const wait = durations.size === 1 ? `各国 ${terms[0].seasons} 季内不从合纵` :
+            [...durations].map(([seasons, names]) => `${names.join('、')} ${seasons} 季内不从合纵`).join('；');
+          return `费钱 ${cost} 贯，各国好感 +${opinion}${wait ? '，' + wait : ''}`;
+        }, fn: p => GAME.answerCoalition(p, 'gift') },
         { t: '上表陈情', d: p => p.justified ? '出师有名，各国好感 +8' : '出师无可陈之名，此议不增好感', fn: p => GAME.answerCoalition(p, 'explain') },
-        { t: '置之不理', d: '使臣空返，诸国可即谋来犯', fn: p => GAME.answerCoalition(p, 'ignore') },
+        { t: '置之不理', d: '使臣空返，诸国可于一季后会盟', fn: p => GAME.answerCoalition(p, 'ignore') },
+      ],
+    },
+    leagueMuster: {
+      title: '诸国会盟',
+      text: p => `【${fac(p.leader).name}】执诸国牛耳，与${p.members.filter(f => f !== p.leader).map(f => fac(f).name).join('、')}歃血为盟。探报诸国约于${p.delay === 1 ? '下季' : '两季之后'}同日犯境，宜早为之备。`,
+      choices: [{ t: '朕知之', fn: () => {} }],
+    },
+    vassalAnnex: {
+      title: p => fac(p.from).name + '请纳土',
+      text: p => `【${fac(p.from).name}】奉藩有年，今遣使携版籍至阙，愿尽纳山川城邑，编户为我朝之民。`,
+      choices: [
+        { t: '准其纳土归附', d: '诸城并入我朝，计入一统。', fn: p => GAME.annexVassal(p.from) },
+        { t: '仍令奉藩如故', d: '保有其国，照旧进贡。', fn: () => {} },
+      ],
+    },
+    marriageRequest: {
+      title: p => fac(p.from).name + '遣使求亲',
+      text: p => `【${fac(p.from).name}】挟兵威遣使至阙，请我朝下嫁宗室女。群臣以为此议有损国体，然边患未息，亦有主张姑为缓计者。`,
+      choices: [
+        { t: '许之', d: p => {
+            const terms = GAME.marriageRequestTerms(p.from);
+            const effect = terms.war ? '两军仍战，彼国议和意愿 +20' : `彼国 ${terms.protection} 季内不犯边`;
+            return `宗室女 −1，嫁妆 ${terms.cost} 贯，好感 +30。${effect}。权威 −6，朝议偏和 10，主战者忠诚 −5。${terms.enabled ? '' : '国帑不足。'}`;
+          }, disabled: p => !GAME.marriageRequestTerms(p.from).enabled, fn: p => GAME.answerMarriageRequest(p.from, 'accept') },
+        { t: '严词拒之', d: '好感 −30，权威 +4，主战者忠诚 +5。彼国或于两季内举兵。', fn: p => GAME.answerMarriageRequest(p.from, 'refuse') },
+        { t: '以岁币代之', d: p => `季输 ${p.amt ?? GAME.marriageTribute(p.from)} 贯，凡十二季，好感 +10。`,
+          fn: p => GAME.answerMarriageRequest(p.from, 'tribute', p.amt) },
+      ],
+    },
+    marriageHeir: {
+      title: p => fac(p.from).name + '嗣君，宋室之甥也',
+      text: p => `【${fac(p.from).name}】新君，我宗室女之子也。今奉表认亲，愿受册奉藩，岁修职贡。`,
+      choices: [
+        { t: '准其奉藩', d: '册为藩属，输贡从征。', fn: p => GAME.acceptMarriageHeir(p.from) },
+        { t: '仍叙姻亲之好', fn: () => {} },
       ],
     },
     allycall: {
@@ -366,7 +409,8 @@ var EVENTS = (function () {
       title: p => p.longxing ? '隆兴和议' : fac(p.from).name + '遣使求和',
       text: p => p.longxing ? '江淮交兵日久，行阵疲敝，沿边百姓屡离故土。金使持书至阙，愿议叔侄之礼，减岁币而罢两国戍兵。诸臣各陈可否：一谓休民为急，一谓关河未复，不宜以此时伏甲。和战之议，请陛下决之。' : `【${fac(p.from).name}】使臣入朝，愿罢兵言和` + (p.trib ? `，并岁输钱 ${p.trib} 贯，凡五年。` : '。'),
       choices: [
-        { t: '许和', d: p => (p.longxing ? '宋金休兵六年；宋付金 20 贯/季。' : '停战，五年内不得再起兵戈。') + peaceTerms(p.from), fn: p => {
+        { t: '许和', d: p => `两国休兵 ${GAME.peaceTruce(P(), p.from)} 季。` +
+          (p.longxing ? '宋付金 20 贯/季。' : '') + peaceTerms(p.from), fn: p => {
           if (!alive(p.from) || !GAME.atWar(P(), p.from)) return;
           const tribute = p.longxing ? { from: P(), to: p.from, amt: 20, turns: 24 } :
             p.trib ? { from: p.from, to: P(), amt: p.trib, turns: 20 } : null;
@@ -2115,7 +2159,7 @@ var EVENTS = (function () {
 
   // 冷却以季计；年度从玩家开局之日算起，换刻度不重开年度。
   const categoryWait = { local: 0.4, situation: 0.45, person: 1, court: 2, diplomacy: 1, battle: 0.5, 农事: 1.5, 灾异: 2, 风俗: 1.5, 工役: 1.5, 释道: 2, 市易: 1.5, 学术: 1.5, 乡政: 1.5, 宾客: 2 };
-  const systemEvents = new Set(['levelup', 'info', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
+  const systemEvents = new Set(['levelup', 'info', 'leagueMuster', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
   const registry = [];
   const elapsedDays = () => (G().year - 1140) * 360 + G().doy - 189;
   const isDecision = id => !systemEvents.has(id);
@@ -2164,7 +2208,7 @@ var EVENTS = (function () {
       return [p.news, row.text.replaceAll('{城}', city?.name || '本州').replaceAll('{人}', g?.name || '其人')
         .replaceAll('{迹}', p.site || '道旁旧迹').replaceAll('{学}', DATA.TECHS[p.tech]?.name || '新法')].filter(Boolean).join('\n\n');
     }, choices: row.choices.map(([t, effects]) => ({
-      t, d: p => [describeEffects(effects)
+      t, d: p => [describeEffects(effects, p)
         .replaceAll('本城', GAME.city(p.city)?.name || '本城')
         .replaceAll('本人', GAME.gen(p.gen)?.name || '本人')
         .replaceAll('两国好感', (fac(p.from)?.name || '对方') + '好感'), effects.peace && peaceTerms(p.from)].filter(Boolean).join('。'),
@@ -2174,11 +2218,11 @@ var EVENTS = (function () {
   const effectNames = { gold: '钱', food: '粮', man: '兵源', sci: '文教', auth: '权威',
     happy: '本城民心', wall: '本城城防', loyalty: '本人忠诚', tong: '本人统率', wu: '本人武勇',
     zhi: '本人智略', zheng: '本人政略', morale: '本军士气', opinion: '两国好感', retire: '致仕', peace: '议和', inf: '守军步营' };
-  function describeEffects(effects) {
+  function describeEffects(effects, p) {
     return Object.entries(effects).map(([k, n]) => {
       if (!(k in effectNames) || !Number.isFinite(n)) throw new Error('事件效果有误 ' + k);
       if (k === 'retire') return '本人解职归田，退出仕籍';
-      if (k === 'peace') return '两国息兵' + n + '季';
+      if (k === 'peace') return '两国息兵' + (alive(p.from) ? GAME.peaceTruce(P(), p.from, { truce: n }) : n) + '季';
       return effectNames[k] + (n > 0 ? ' +' : ' −') + Math.abs(n);
     }).join('，');
   }
@@ -2195,7 +2239,7 @@ var EVENTS = (function () {
       else if (k === 'opinion' && alive(p.from)) {
         const rel = GAME.getRel(P(), p.from); rel.op = GAME.clamp(rel.op + n, -100, 100);
       } else if (k === 'peace' && alive(p.from) && GAME.atWar(P(), p.from)) {
-        GAME.makePeace(P(), p.from); GAME.getRel(P(), p.from).truce = n;
+        GAME.makePeace(P(), p.from, null, { truce: n });
       } else if (g && k === 'loyalty') {
         COURT.ensure(g);
         g.loyalty = GAME.clamp(g.loyalty + n, 0, 100);
@@ -2671,6 +2715,11 @@ var EVENTS = (function () {
 
   function presentable(p) {
     if (p.ev === 'peaceoffer' || p.ev === 'longxingPeace') return alive(p.from) && GAME.atWar(P(), p.from);
+    if (p.ev === 'leagueMuster') return G().flags.league?.stage === 'ally' && G().flags.league.leader === p.leader;
+    if (p.ev === 'vassalAnnex') return GAME.canAnnexVassal(p.from);
+    if (p.ev === 'marriageRequest') return alive(p.from) && G().court?.clan?.brides > 0;
+    if (p.ev === 'marriageHeir') return GAME.canAcceptMarriageHeir(p.from);
+    if (p.ev === 'court_overmighty') return !!COURT.powerBase(p.gen);
     const row = DEFS[p.ev];
     return !row?.person || (GAME.gen(p.gen)?.name === row.person && !!playerGeneral(p.gen));
   }
@@ -2679,11 +2728,14 @@ var EVENTS = (function () {
     const d = DEFS[p.ev];
     const val = (x) => typeof x === 'function' ? x(p) : x;
     if (d.type === 'pick') return { title: val(d.title), text: val(d.text), type: 'pick', options: p.options, max: p.max };
-    return { title: val(d.title), text: val(d.text), gen: p.gen, choices: val(d.choices).map(c => ({ t: val(c.t), d: val(c.d) || '' })) };
+    return { title: val(d.title), text: val(d.text), gen: p.gen,
+      choices: val(d.choices).map(c => ({ t: val(c.t), d: val(c.d) || '', disabled: !!val(c.disabled) })) };
   }
   function resolve(p, choice) {
     const d = DEFS[p.ev];
     if (!presentable(p)) return;
+    const option = d.type === 'pick' ? null : (typeof d.choices === 'function' ? d.choices(p) : d.choices)[choice];
+    if (d.type !== 'pick' && (!option || (typeof option.disabled === 'function' ? option.disabled(p) : option.disabled))) return;
     if (isDecision(p.ev)) {
       const state = scheduleState();
       state.count++;
@@ -2691,7 +2743,7 @@ var EVENTS = (function () {
       state.lastDay[p.ev] = elapsedDays();
     }
     if (d.type === 'pick') resolveCandidates(p, choice || []);
-    else (typeof d.choices === 'function' ? d.choices(p) : d.choices)[choice].fn(p);
+    else option.fn(p);
     GAME.emit('change');
   }
   // 自动处理（无人值守/AI）

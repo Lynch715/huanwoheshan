@@ -26,22 +26,26 @@ var COURT = (function () {
   const LOYAL = ['岳飞', '韩世忠', '岳云', '张宪', '岳雷', '文天祥', '陆秀夫', '张世杰', '孟珙', '余玠', '王坚', '张珏', '辛弃疾', '虞允文', '李庭芝', '刘锜', '姜才'];
   const AMB = { '秦桧': 95, '韩侂胄': 82, '史弥远': 88, '贾似道': 92, '张俊': 60, '吴曦': 90, '刘整': 70, '吕文焕': 55, '范文虎': 65 };
   const STANCE_NAME = { war: '主战', peace: '主和', mid: '中立' };
+  const serving = g => g?.f === P() && ['idle', 'army', 'gov', 'court'].includes(g.status);
+  const military = g => g.tong + g.wu >= g.zhi + g.zheng;
 
   function init() {
     const s = S();
-    if (s.court) return;
-    s.court = { auth: 55, lean: -20, offices: {}, emp: 0, wins: 0, losses: 0, lastEv: -9, log: [] };
+    const clan = { brides: 2, t: s.T };
+    if (s.court) { s.court.clan ??= clan; return; }
+    s.court = { auth: 55, lean: -20, offices: {}, emp: 0, wins: 0, losses: 0, lastEv: -9, log: [], commandReleased: false, clan };
     // 开局朝臣
     const byName = n => s.generals.find(g => g.name === n && g.f === P() && g.status === 'idle');
     const put = (o, n) => { const g = byName(n); if (g) assign(o, g.id); };
     put('zaixiang', '秦桧'); put('shumi', '张浚'); put('hanlin', '赵鼎');
   }
   function ensure(g) {
+    g.rank ??= 0;
     if (g.stance) return g;
     if (WAR.includes(g.name)) g.stance = 'war';
     else if (PEACE.includes(g.name)) g.stance = 'peace';
     else {
-      const mil = g.tong + g.wu >= g.zhi + g.zheng;
+      const mil = military(g);
       const r = GEO.hash(g.id, 17, 5);
       g.stance = mil ? (r < 0.55 ? 'war' : r < 0.9 ? 'mid' : 'peace') : (r < 0.25 ? 'war' : r < 0.6 ? 'mid' : 'peace');
     }
@@ -133,6 +137,82 @@ var COURT = (function () {
     c.lean = Math.max(-100, Math.min(100, c.lean));
   }
 
+  function rankTerms(g) {
+    if (!serving(g)) return null;
+    const rank = (g.rank || 0) + 1, title = DATA.RANKS[rank];
+    if (!title) return null;
+    const requirements = `需 ${title.lv} 级、${title.wins} 胜、权威 ${title.auth}、钱 ${title.cost} 贯`;
+    const full = title.limit && S().generals.filter(o => o.f === P() && o.rank === rank &&
+      o.status !== 'dead' && o.status !== 'gone').length >= title.limit;
+    const qualified = (g.lv || 1) >= title.lv && (g.wins || 0) >= title.wins &&
+      S().court.auth >= title.auth && GAME.fac(P()).gold >= title.cost;
+    const reason = full ? '郡王二席已满。' : qualified ? null : requirements + '。';
+    return { ...title, rank, reason, requirements, loyalty: 10 + 5 * rank };
+  }
+  function grantRank(g) {
+    const terms = rankTerms(g);
+    if (!terms || terms.reason) return { ok: false, msg: terms?.reason || '此人已不可晋爵。' };
+    ensure(g);
+    GAME.fac(P()).gold -= terms.cost;
+    g.rank = terms.rank;
+    g.loyalty = Math.min(100, g.loyalty + terms.loyalty);
+    const msg = `晋封${g.name}为${terms.name}。`;
+    GAME.log(msg, 'big');
+    return { ok: true, msg };
+  }
+  function powerBase(id) {
+    const g = GAME.gen(id), rules = DATA.OVERMIGHTY;
+    if (!serving(g) || g.rank < 4 || g.status !== 'army' || g.loyalty >= 60) return null;
+    const seat = GAME.city(GAME.fac(P()).capital);
+    if (!seat) return null;
+    const armies = S().armies.filter(a => a.f === P() && a.gen === id);
+    const troops = armies.reduce((sum, a) => sum + GAME.sumStr(a.units), 0);
+    if (troops <= rules.troops + (g.powerGuard || 0) || !armies.some(a => GEO.dist(a.tile, seat.tile) > rules.distance)) return null;
+    return { g, armies, troops };
+  }
+  function recallCommand(g) {
+    for (const a of S().armies) if (a.gen === g.id) a.gen = null;
+    if (g.status === 'army') GAME.unassign(g.id);
+  }
+  function commandEvents() {
+    const s = S(), rules = DATA.OVERMIGHTY;
+    const active = s.generals.filter(g => serving(g) && g.rank >= 3);
+    for (const g of active) {
+      if (g.powerLast != null && s.T + 0.001 < g.powerLast + rules.cooldown) continue;
+      if (!powerBase(g.id) || s.pending.some(p => p.ev === 'court_overmighty' && p.gen === g.id)) continue;
+      if (Math.random() < Math.min(0.75, rules.base + rules.ignore * (g.powerIgnored || 0))) {
+        g.powerLast = s.T;
+        s.pending.push({ ev: 'court_overmighty', gen: g.id });
+      }
+    }
+    if (!s.flags.releaseCommandOffered && s.court.auth >= 55 &&
+        active.filter(g => g.status === 'army').length >= 2 && !s.pending.some(p => p.ev === 'court_overmighty')) {
+      s.flags.releaseCommandOffered = true;
+      s.pending.push({ ev: 'releaseCommand' });
+    }
+  }
+  function answerOvermighty(id, answer) {
+    const command = powerBase(id);
+    if (!command) return;
+    const { g, armies } = command, rules = DATA.OVERMIGHTY, c = S().court;
+    if (answer === 'recall') {
+      const revolt = g.loyalty < 35 && Math.random() < rules.mutiny;
+      g.loyalty = Math.max(0, g.loyalty - 20);
+      if (revolt) { GAME.mutiny(g, armies); return; }
+      recallCommand(g);
+      c.auth = Math.min(100, c.auth + 3);
+    } else if (answer === 'comfort') {
+      const F = GAME.fac(P());
+      if (F.gold < rules.comfort) { GAME.log('国帑不足，加官之赏未及颁下。', 'war'); return; }
+      F.gold -= rules.comfort;
+      g.loyalty = Math.min(100, g.loyalty + 15);
+      g.powerGuard = (g.powerGuard || 0) + rules.raise;
+    } else {
+      c.auth = Math.max(0, c.auth - 4);
+      g.powerIgnored = (g.powerIgnored || 0) + 1;
+    }
+  }
+
   // ---------- 每回合 ----------
   function turn() {
     const s = S(); if (!s.court || !GAME.fac(P()).alive) return;
@@ -167,11 +247,13 @@ var COURT = (function () {
       if (g.stance === 'peace' && c.lean > 30) t -= 10;
       if (g.amb > 70) t -= (g.amb - 70) / 2;
       if (g.loyal) t = Math.max(t, 80);
+      t += 2 * g.rank - (c.commandReleased && military(g) ? 3 : 0);
       g.loyalty += Math.max(-3 * e * 4, Math.min(3 * e * 4, t - g.loyalty));
       g.loyalty = Math.max(0, Math.min(100, g.loyalty));
       // 叛逃 / 辞官
       if (!g.loyal && g.loyalty < 25 && rnd() < 0.08 * e) desert(g);
     }
+    if (s.newSeason) commandEvents();
   }
   function desert(g) {
     const s = S();
@@ -180,7 +262,7 @@ var COURT = (function () {
       let to = null, bd = 9;
       if (a) for (const o of s.cities) if (o.f !== P() && o.f !== 'rebel' && GAME.atWar(P(), o.f)) { const d = GEO.dist(o.tile, a.tile); if (d < bd) { bd = d; to = o.f; } }
       if (a && to) {
-        a.f = to; a.path = []; g.f = to; g.status = 'army';
+        a.f = to; a.path = []; g.f = to; g.status = 'army'; g.rank = 0;
         GAME.log(`${g.name}积怨已久，竟率所部 ${a.units.length} 营叛投【${GAME.fac(to).name}】！`, 'war', a.tile);
         s.pending.push({ ev: 'info', title: '将领叛逃', text: `${g.name}久怀不满，今率部众叛投【${GAME.fac(to).name}】。朝野震动。\n\n（提示：将领忠诚过低会叛逃。可在“将领”中赏赐，或在“朝堂”中任御史中丞以纠察百官。）` });
         S().court.auth = Math.max(0, S().court.auth - 6);
@@ -216,10 +298,42 @@ var COURT = (function () {
     F.gold -= 50; ensure(g); g.loyalty = Math.min(100, g.loyalty + 12);
     return true;
   }
+  function marriageDecree(auth, lean, loyalty) {
+    const c = S().court;
+    c.auth = GAME.clamp(c.auth + auth, 0, 100);
+    c.lean = GAME.clamp(c.lean + lean, -100, 100);
+    for (const g of S().generals) if (serving(g) && ensure(g).stance === 'war') {
+      g.loyalty = GAME.clamp(g.loyalty + loyalty, 0, 100);
+    }
+  }
 
   // ---------- 朝堂事件 ----------
   const G = id => GAME.gen(id);
   const DEFS = {
+    court_overmighty: {
+      title: p => G(p.gen).name + '拥兵自重',
+      text: p => `${G(p.gen).name}久镇远方，所部颇众。台谏言军心唯知其将，请早议收兵之策。`,
+      choices: [
+        { t: '诏令还朝', d: '解除兵权，忠诚 −20，奉诏则权威 +3。忠诚低于三十五者或将抗命。', fn: p => answerOvermighty(p.gen, 'recall') },
+        { t: '加官安抚', d: `费钱 ${DATA.OVERMIGHTY.comfort} 贯，忠诚 +15，日后兵力须多 ${DATA.OVERMIGHTY.raise} 人方再触发。`, fn: p => answerOvermighty(p.gen, 'comfort') },
+        { t: '暂且隐忍', d: '权威 −4，此人日后愈易恃兵。', fn: p => answerOvermighty(p.gen, 'ignore') },
+      ],
+    },
+    releaseCommand: {
+      title: '杯酒释兵权',
+      text: () => '有臣请援太祖杯酒释兵权之故事，宴功臣于内殿，以厚禄全君臣之义，而收诸将兵柄。',
+      choices: [
+        { t: '设燕收兵柄', d: '伯及以上者解兵权，忠诚 +10，权威 +10。自此武将忠诚所趋 −3。', fn: () => {
+          for (const g of S().generals) if (serving(g) && g.rank >= 3) {
+            recallCommand(g);
+            g.loyalty = Math.min(100, g.loyalty + 10);
+          }
+          S().court.auth = Math.min(100, S().court.auth + 10);
+          S().court.commandReleased = true;
+        } },
+        { t: '仍任诸将领兵', fn: () => {} },
+      ],
+    },
     court_newemp: {
       title: '新君即位',
       text: p => `先帝${p.old}龙驭上宾（或内禅退位），陛下以${p.name}${p.nm}即皇帝位，承继大统。时，${reignNote(p.name, p.note)}。百官各怀心思，朝局为之一变。`,
@@ -288,6 +402,7 @@ var COURT = (function () {
   };
   function register() { if (typeof EVENTS !== 'undefined') Object.assign(EVENTS.DEFS, DEFS); }
   register();
-  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, updateEmperorArt, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
+  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, updateEmperorArt, reignNote, holder, assign, vacate, bonus, officeOf,
+    vote, applyVote, turn, onWin, onLoss, reward, members, rankTerms, grantRank, powerBase, marriageDecree };
 })();
 if (typeof module !== 'undefined') module.exports = COURT;

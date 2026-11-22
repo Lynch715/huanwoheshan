@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.14.3';
+  const VERSION = '0.15.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -576,6 +576,7 @@ var UI = (function () {
   function relText(f) {
     const r = GAME.getRel(P(), f);
     if (r.war) return '<span class=neg>交战</span>';
+    if (r.vassal?.lord === P()) return '<span class=pos>藩属</span>';
     if (r.ally) return '<span class=pos>同盟</span>';
     if (r.truce > 0) return `和约（${Math.ceil(r.truce)}季）`;
     return r.op >= 0 ? '通好' : '冷淡';
@@ -1152,7 +1153,9 @@ var UI = (function () {
       return button('ransom', '赎回') + button('exchange', '换俘') + (!detail && generalLocation(g) ? button('find', '寻') : '');
     }
     if (readOnly || g.f !== P() || !GEN_STATUSES.some(([status]) => status === g.status)) return '';
+    const rank = detail ? COURT.rankTerms(g) : null;
     return button('reward', '赏', 'aria-label="赏赐 50 贯" title="赏赐 50 贯，忠诚 +12"') +
+      (rank ? button('rank', '封爵', `title="${rank.requirements}" ${rank.reason ? 'disabled' : ''}`) : '') +
       (g.status === 'idle' ? button('gov', '任知州') + (detail ? button('assign', '任将') : '') : button('recall', '召回')) +
       (generalLocation(g) ? button('find', '寻') : '');
   }
@@ -1174,6 +1177,14 @@ var UI = (function () {
   }
   function handleGeneralAction(k, id, redraw) {
     const g = GAME.gen(id);
+    if (k === 'rank') {
+      const terms = COURT.rankTerms(g);
+      if (!terms || terms.reason) return;
+      confirmBox(`晋封${g.name}为${terms.name}，费钱 ${terms.cost} 贯，忠诚 +${terms.loyalty}。`, () => {
+        toast(COURT.grantRank(g).msg); refreshTop(); refreshSide(); redraw();
+      }, redraw);
+      return;
+    }
     if (k === 'find') {
       const where = generalLocation(g);
       if (where) { closeModal(); select(where); RENDER.centerOn(where.tile); }
@@ -1276,6 +1287,7 @@ var UI = (function () {
     const skills = GAME.skillList(g).map(k => [k, DATA.SKILLS[k] || '']);
     const items = (g.items || []).map(i => DATA.ITEMS[i]).filter(Boolean).map(i => [i.name, i.desc]);
     const buttons = generalButtons(g, true, readOnly);
+    const rank = readOnly ? null : COURT.rankTerms(g);
     const next = GAME.nextLv(g);
     openModal(`<h1>将领详情</h1><div class="scroll general-detail" style="max-height:72vh">
       <div class="record-head general-profile">${PORTRAIT.img(g, 96, 'alt=""')}
@@ -1294,7 +1306,9 @@ var UI = (function () {
         <span class="chip">野心 ${g.amb ?? '未详'}</span><span class="chip">精忠 ${g.loyal == null && g.f !== P() ? '未详' : g.loyal ? '是' : '否'}</span>
       </div><p class="note">立场关乎廷议，忠诚关系去留，野心越盛越易争权，精忠之臣较少离心。</p>
       <div class="sec">战绩</div><div class="chips"><span class="chip">胜 ${g.wins || 0} 阵</span>
+        ${g.rank || rank ? `<span class="chip">爵位 ${DATA.RANKS[g.rank || 0].name}</span>` : ''}
         ${service ? `<span class="chip">本纪 · 胜 ${service.wins || 0} / 败 ${service.losses || 0}</span>` : ''}</div>
+      ${rank ? `<p class="note">晋${rank.name}${rank.reason === '郡王二席已满。' ? ' · ' + rank.reason : ' · ' + rank.requirements}</p>` : ''}
       <p class="note">史臣曰，${esc(EVENTS.generalBio(g))}。</p>
       <div class="record-actions"><button class="btn" type="button" data-general-back>返回</button>${buttons}</div></div>`, { width: '640px' });
     $('modal').onclick = e => {
@@ -1361,28 +1375,62 @@ var UI = (function () {
       ratio > 0.5 ? '略逊' : '<span class="pos">弱小</span>';
   }
   function tributeText(r) {
-    if (!r.trib) return '无';
+    const vassal = r.vassal?.lord === P() ? `<span class="pos">藩贡 ${Math.round(DATA.VASSAL.tribute * 100)}%</span>` : '';
+    if (!r.trib) return vassal || '无';
     const pay = r.trib.from === P();
-    return `<span class="${pay ? 'neg' : 'pos'}">${pay ? '纳' : '收'} ${r.trib.amt} 贯/季</span> · 余 ${Math.ceil(r.trib.turns)} 季`;
+    return `<span class="${pay ? 'neg' : 'pos'}">${pay ? '纳' : '收'} ${r.trib.amt} 贯/季</span> · 余 ${Math.ceil(r.trib.turns)} 季` + (vassal ? ' · ' + vassal : '');
   }
   function opinionText(r) {
     const op = Math.round(r.op), width = Math.min(100, Math.abs(op)) / 2;
     const color = op >= 0 ? 'pos' : 'neg';
     return `<span class="opinion ${color}">${op ? sgn(op) : 0}<span class="opinion-bar" aria-hidden="true"><i style="width:${width}%;left:${op < 0 ? 50 - width : 50}%"></i></span></span>`;
   }
-  function diplomacyButtons(f) {
+  function diplomacyButtons(f, myPower) {
     const r = GAME.getRel(P(), f);
     const btn = (action, text, main, extra = '') => `<button type="button" class="btn sm ${main ? 'red' : ''}" data-d="${action}" data-f="${f}" ${extra}>${text}</button>`;
     const envoy = btn('envoy', `遣使 ${GAME.envoyCost(P())}`, !r.war);
-    if (r.war) return btn('peace', '议和', true) + envoy;
+    const member = GAME.leagueMember(f);
+    const intrigue = member ? btn('intrigue', '离间') : '';
+    const terms = GAME.vassalTerms(f, myPower);
+    const invest = terms?.ok ? btn('vassal', '册封', false, 'title="册为藩属，罢兵输贡，从我征伐"') : '';
+    const marry = GAME.marriageTerms(f)?.ok ? btn('marry', '联姻', false, 'title="宗室女下嫁，十二季内对方不犯边"') : '';
+    if (r.war) return btn('peace', '议和', true, `title="和约 ${GAME.peaceTruce(P(), f)} 季"`) + envoy + intrigue +
+      (member ? btn('separate', '单独媾和', false, 'title="愿纳岁币，换取此国单独罢兵退盟，和约二十四季"') : '') + invest;
     const truce = r.truce > 0 ? 'title="和约未满，背约则近邦与敌之盟国尤为不满"' : '';
-    return envoy + btn('war', '宣战 · ' + GAME.casusBelli(P(), f).name, false, truce) + (r.ally ? '' : btn('ally', '结盟')) + btn('trib', '索贡');
+    return envoy + btn('war', '宣战 · ' + GAME.casusBelli(P(), f).name, false, truce) +
+      (r.ally ? '' : btn('ally', '结盟', false, 'title="远交结盟，可求援兵"')) + btn('trib', '索贡') + intrigue + invest + marry;
+  }
+  function showIntrigue(f, redraw, finish) {
+    const others = S().flags.league?.members.filter(m => m !== f) || [];
+    if (!GAME.leagueMember(f) || !others.length) { redraw(); return; }
+    const choices = others.map(m => {
+      const { cost, chance } = GAME.intrigueTerms(f, m);
+      return `<button class="choice" data-intrigue="${m}">${esc(facName(m))}<small>费钱 ${cost} 贯，事成约 ${Math.round(chance * 100)}%</small></button>`;
+    }).join('');
+    openModal(`<h1>离间合纵</h1><div class="story">欲离间【${esc(facName(f))}】与何国？</div><div class="choices">${choices}</div>`, { width: '520px', onClose: redraw });
+    $('modal').onclick = e => {
+      const target = e.target.closest('[data-intrigue]');
+      if (target) finish(GAME.intrigue(f, target.dataset.intrigue));
+    };
   }
   function diplomacyAction(action, f, redraw) {
     const finish = result => { toast(result.msg); refreshTop(); redraw(); };
     if (action === 'envoy') { finish(GAME.sendEnvoy(P(), f)); return; }
     if (action === 'ally') { finish(GAME.proposeAlliance(P(), f)); return; }
     if (action === 'trib') { finish(GAME.demandTribute(P(), f)); return; }
+    if (action === 'marry') {
+      const terms = GAME.marriageTerms(f);
+      if (!terms?.ok) { toast(terms?.msg || '此邦不可议婚。'); return; }
+      confirmBox(`议以宗室女下嫁【${facName(f)}】，费钱 ${terms.cost} 贯，好感 +25。该国十二季内不犯边。`,
+        () => finish(GAME.marry(f)), redraw);
+      return;
+    }
+    if (action === 'vassal') {
+      confirmBox(`册封【${facName(f)}】为藩。两国自此休兵结盟，其国每季以钱收入的 ${Math.round(DATA.VASSAL.tribute * 100)}% 入贡，并从我朝出征。`,
+        () => { const result = GAME.investVassal(f); RENDER.buildPolitical(); finish(result); }, redraw);
+      return;
+    }
+    if (action === 'intrigue') { showIntrigue(f, redraw, finish); return; }
     if (action === 'war') {
       const r = GAME.getRel(P(), f);
       const cause = GAME.casusBelli(P(), f);
@@ -1396,17 +1444,30 @@ var UI = (function () {
       }, cause.name, redraw), redraw);
       return;
     }
-    if (action === 'peace') {
+    if (action === 'peace' || action === 'separate') {
+      const separate = action === 'separate';
       const terms = EVENTS.peaceTerms(f);
       const vote = () => courtVote('peace', f, () => {
-        const result = GAME.proposePeace(P(), f);
+        const result = GAME.proposePeace(P(), f, null, separate);
         if (!result.ok && result.counter) {
-          confirmBox([result.msg + '　允否？', terms].filter(Boolean).join('\n\n'), () => finish(GAME.proposePeace(P(), f, result.counter)), redraw);
+          const truce = GAME.peaceTruce(P(), f, { separate });
+          confirmBox([result.msg + `　和约 ${truce} 季，允否？`, terms].filter(Boolean).join('\n\n'),
+            () => finish(GAME.proposePeace(P(), f, result.counter, separate)), redraw);
         } else finish(result);
       }, esc(terms), redraw);
       if (terms) confirmBox(`拟与【${facName(f)}】议和。\n\n${terms}`, vote, redraw);
       else vote();
     }
+  }
+  function threatSummary() {
+    const { score, parts, level } = GAME.playerThreat(), league = S().flags.league;
+    const pct = n => (Math.round(n * 1000) / 10) + '%';
+    const labels = [['share', '疆土', '我朝所辖城池占天下有主城池之比'], ['rank', '国力', '国力第一加四分，第二、第三加二分'],
+      ['speed', '拓土', '近八季从他国所得城池，按其占比与难度计入'], ['broken', '背约', '近二十季每次背弃和约，按难度加计']];
+    const chips = labels.map(([key, label, description]) => `<span class="chip" title="${description}">${label} ${pct(parts[key])}</span>`).join('');
+    return `<div class="sec" title="疆土、国力、拓土与背约四项合计。诸国视此议定合纵。">天下侧目 ${pct(score)} · ${['安定', '警惕', '合纵', '共讨'][level]}</div>
+      <div class="chips">${chips}</div>
+      ${league ? `<p class="note"><b>${league.stage === 'war' ? '共讨诸国' : '合纵诸国'}</b>　${esc(facName(league.leader))}（盟主${GAME.leagueMember(league.leader) ? '' : '，已和'}）${league.members.filter(f => f !== league.leader).map(f => '、' + esc(facName(f))).join('')}</p>` : ''}`;
   }
   function showDiplomacy() {
     const me = GAME.fac(P()), myPower = GAME.totalPower(P());
@@ -1418,19 +1479,21 @@ var UI = (function () {
     const choices = [['war', '交战中'], ['allies', '盟友'], ['neighbors', '邻国'], ['all', '全部']];
     const rows = list.map(f => {
       const r = GAME.getRel(P(), f), cities = GAME.citiesOf(f).length;
-      const name = `<button type="button" class="record-link"><b>${esc(facName(f))}</b></button>`;
+      const name = `<button type="button" class="record-link"><b>${esc(facName(f))}</b></button>` +
+        (GAME.leagueMember(f) ? ' <span class="chip red">合纵</span>' : '') +
+        (r.marriage ? ' <span class="chip">姻亲</span>' : '');
       const relation = relText(f), power = powerText(f, myPower), opinion = opinionText(r), tribute = tributeText(r);
       if (phone.matches) return recordCard(
         `${facSeal(f)} <div class="record-name">${name}</div><span class="chip">${relation}</span>`,
         `<div class="chips"><span class="chip">城 ${cities}</span><span class="chip">国力 ${power}</span><span class="chip">好感 ${opinion}</span>
-          <span class="chip">岁币 ${tribute}</span></div>`, diplomacyButtons(f), `data-nation="${f}"`);
+          <span class="chip">岁币 ${tribute}</span></div>`, diplomacyButtons(f, myPower), `data-nation="${f}"`);
       return `<tr class="card-link" data-nation="${f}"><td>${facSeal(f)}</td><td>${name}</td><td>${cities}</td><td>${power}</td><td>${opinion}</td>
-        <td>${relation}</td><td>${tribute}</td><td><div class="record-actions">${diplomacyButtons(f)}</div></td></tr>`;
+        <td>${relation}</td><td>${tribute}</td><td><div class="record-actions">${diplomacyButtons(f, myPower)}</div></td></tr>`;
     }).join('');
     const listHTML = !rows ? '<p class="note">此列暂无邦国。</p>' : phone.matches ? `<div class="record-list">${rows}</div>` :
       `<table class="t dip-table"><tr><th></th><th>国</th><th>城</th><th>国力</th><th>好感</th><th>关系</th><th>岁币</th><th>操作</th></tr>${rows}</table>`;
-    openModal(`<h1>鸿胪寺</h1>${filterTabs('dipfilter', '外交筛选', choices, dipFilter)}
-      <div class="scroll dip-page" style="max-height:70vh">${listHTML}
+    openModal(`<h1>鸿胪寺</h1><div class="scroll dip-page" style="max-height:70vh">${threatSummary()}
+      ${filterTabs('dipfilter', '外交筛选', choices, dipFilter)}${listHTML}
       <p class="note">列已结识之邦，邻国以陆地接壤为准。好感随遣使、通商而升。无名出师、背弃和约，近邦及敌之盟国多有非议。</p></div>`, { width: '980px' });
     $('modal').onclick = e => {
       const action = e.target.closest('[data-d]');
@@ -1470,7 +1533,8 @@ var UI = (function () {
       <div class="nation-grid">${row('都城', esc(cap?.name || '未定'))}${row('城数', cs.length)}
         ${row('户口', population + ' 万')}${row('国力', powerText(f, GAME.totalPower(P())))}</div>
       <div class="sec">与我关系</div><div class="chips"><span class="chip">${f === 'rebel' ? '交战' : relText(f)}</span>
-        <span class="chip">好感 ${opinionText(r)}</span><span class="chip">岁币 ${tributeText(r)}</span></div>
+        <span class="chip">好感 ${opinionText(r)}</span><span class="chip">岁币 ${tributeText(r)}</span>
+        ${r.marriage ? '<span class="chip">姻亲</span>' : ''}</div>
       ${row('交战中', esc(front.join('、') || '无'))}${row('盟友', esc(allies.join('、') || '无'))}
       <div class="sec">名将</div><div class="nation-leaders">${leaderLinks || '<span class="note">未闻其将。</span>'}</div>
       <div class="sec">史略</div><p class="nation-history">${esc(history || '此为群起的义军，未有一朝可纪。')}</p>
@@ -1554,7 +1618,8 @@ var UI = (function () {
         <div class="row court-metric"><span>皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
         <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
         <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受时议、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
-        <div class="chips court-stances"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip pos">主和 ${cnt('peace')}</span></div>
+        <div class="chips court-stances"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip pos">主和 ${cnt('peace')}</span>
+          <span class="chip" title="每六季增一人，最多三人">宗室可下嫁 ${C.clan.brides} 人</span></div>
       </div></div>
       <div class="sec">百官</div>
       ${phone.matches ? `<div class="record-list office-list">${offices}</div>` :
@@ -1759,7 +1824,8 @@ var UI = (function () {
     const northernGuard = d.northGarrison < 0 ? `减 ${-d.northGarrison} 营（最低为零）` : `+${d.northGarrison} 营`;
     return `他国工钱 ${Math.round(d.aiYield * 100)}%、战力 ${Math.round(d.aiBattle * 100)}%。` +
       `金夏开局守营 ${northernGuard}，野战军最多加 ${d.northArmy} 营，对宋军团上限 +${ai.armies}。` +
-      `开局前 ${co.warDelay} 季有宣战保护，威胁度达 ${Math.round(co.threat * 1000) / 10}% 后，接壤诸国合纵所需国力为我朝 ${Math.round(co.ratio * 100)}%。` +
+      `开局前 ${co.warDelay} 季有宣战保护。威胁度达 ${Math.round(co.threat * 1000) / 10}% 时，接壤诸国合纵所需国力合计为我朝 ${Math.round(co.ratio * 100)}%，此后门槛随我朝威势而降。` +
+      `共讨至多 ${co.waveMax} 国同日来犯，尽罢兵后至少隔 ${co.waveCool} 季再起。我朝可离间其盟、纳币单独媾和，或远交求援。` +
       `诸国军队再攻同一宋城，须相隔约 ${Math.round(ai.siegeInterval * 90)} 日。` +
       `新附城产出最多减 ${Math.round(c.production * 100)}%，历 ${c.seasons} 季。` +
       (debt.governance ? `四十城外每多一城，治理支出按基础支出的 ${Math.round(debt.governance * 1000) / 10}% 加计。` : '') +
@@ -1792,7 +1858,7 @@ var UI = (function () {
   function showHelp() {
     openModal(`<h1>玩法说明</h1><div class="scroll help" style="max-height:72vh;max-width:760px">
       <h3>大势</h3><p>绍兴十年（1140）七月，岳飞郾城大捷。你是大宋天子（开局为宋高宗赵构），岳飞、韩世忠诸将皆为你麾下之臣。经营江南，北伐中原，进而西出玉门、南下天竺、远征大食与拂菻。<b>占领所有有主城池</b>即为一统天下。开局可选每回合推进一周、一旬、一月或一季；城池产出以“每季”计，按回合折算。</p>
-      <h3>难度</h3><p>以大宋城数占比与国力名次定威胁。弱城与新附城易遭敌军窥伺，委任知州、赈济可缓和新附之患。</p>
+      <h3>难度</h3><p>各档的邻国起兵门槛、合纵规模与新附城损耗各异。弱城与新附城易遭敌军窥伺，委任知州、赈济可缓和新附之患。</p>
       <ul class="difficulty-help">${DATA.DIFFICULTY.map(d => `<li><b>${d.name}</b>　${difficultyDescription(d)}</li>`).join('')}</ul>
       <h3>回合动画</h3><p>结束回合后，视野内的行军、交战会依次演示：兵锋推进、刀兵相交、伤亡跳字与胜负印章。点击地图或按空格可跳过；顶栏“动画”按钮可切换常速/快速/关闭。</p>
       ${TOUCH.matches ? '<h3>手机操作</h3><ul><li>单指拖动平移，双指捏合缩放，轻点选取城池或军队。</li><li>选中我军后，底部出现<b>军令条</b>：轻点地图上的目的地，军令条显示路程与胜算，点<b>「出发」</b>（或再点一次该格）即行军；点「取消」重选。</li><li>「详情」可展开军团或城池的全部信息；右下「下一周」结束回合。</li></ul>' : ''}
@@ -1821,7 +1887,19 @@ var UI = (function () {
       <li>皇帝权威影响民心与忠诚；将领忠诚过低会挂冠而去，甚至率部叛逃。可赏赐、任以要职，或设御史中丞纠察百官。历代宋帝依次继位，各朝时议随之而变。</li></ul>
       <h3>海贸</h3><ul><li>临海之城建<b>市舶司</b>后可开辟航线，与同一海域、已结识且未交战的外国港口通商。路途越远、对方越大，获利越丰；研习“远洋”后航线不限远近。</li></ul>
       <h3>用钱之道</h3><ul><li><b>捐资助学</b>（科技面板）：每 5 贯折文教 1，每季最多捐半季文教之数。</li><li><b>赈济</b>（城池·内政）：民心 +15、民变之势 −15，每城一年一次。</li><li><b>移民实边</b>（城池·内政）：户口 +1 万，限十二万以下的非都城，每城两年一次。</li><li><b>犒军</b>（军团）：士气 +30、主将经验 +15，每军两季一次。</li><li>电脑诸国库银充裕时也会如此用钱。</li></ul>
-      <h3>外交</h3><ul><li>鸿胪寺中可遣使修好、宣战、议和、结盟、索贡。电脑诸国亦会彼此征伐，天下大势随史而动：十字军东征、萨拉丁崛起、成吉思汗称汗……</li></ul>
+      <h3>外交</h3><p>鸿胪寺中可遣使修好、宣战、议和、结盟、索贡。诸国也会彼此征伐，天下大势随史而动。</p>
+      <h3>合纵连横</h3><ul>
+      <li>鸿胪寺的「天下侧目」合计疆土、国力名次、近季拓土与背约。势盛则邻国可遣使诘问，继而会盟，同日举兵共讨。</li>
+      <li>出师有名，可陈情消嫌。厚礼屡遣则礼金渐增、免从合纵之期渐短。已至共讨之势，厚礼只可缓三季。</li>
+      <li>可择盟中两国施离间计，使其失和退盟。交战时可用岁币单独媾和，换得二十四季和约。平日亦可远交结盟，共御来犯。</li></ul>
+      <h3>封爵与册封藩属</h3><ul>
+      <li>于将领详情可依等级、战功与君上权威，费钱逐等晋爵，以结其心。侯以上远镇重兵而失忠，或拥兵自重，须议召还、安抚或隐忍。</li>
+      <li>有两名伯以上之将统兵，且权威足以服众，朝臣或请行杯酒释兵权，收诸功臣之兵柄。</li>
+      <li>鸿胪寺可册封有好感或有意议和的弱国。藩属输贡从征，奉藩满二十季且好感达七十，或请纳土归附。</li></ul>
+      <h3>宗室联姻</h3><ul>
+      <li>两国休兵且交好，可由鸿胪寺遣宗室女下嫁。姻邦十二季内不犯我境，二十季内较难加入合纵。</li>
+      <li>强邻或乘胜遣使求亲。可备嫁妆许亲、以岁币代之，或严词拒之。息兵之期随难度而异，交战时许亲可增对方议和之意，战事仍继续。</li>
+      <li>联姻满三十季，姻邦势弱，或有外孙继统，请奉宋室为宗主。</li></ul>
       <h3>存档</h3><p>每季自动存档；可手动存于五栏，并可导出为文件长期保存。</p></div>`, { width: '820px' });
   }
 
@@ -2171,11 +2249,11 @@ var UI = (function () {
     }
     const pg = v.gen != null ? GAME.gen(v.gen) : null;
     let h = `<h1>${esc(v.title)}</h1>${pg ? `<div style="text-align:center">${PORTRAIT.img(pg, 84)}</div>` : ''}<div class="story">${esc(v.text)}</div><div class="choices">`;
-    v.choices.forEach((c, i) => { h += `<button class="choice" data-ch="${i}">${esc(c.t)}${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; });
+    v.choices.forEach((c, i) => { h += `<button class="choice" data-ch="${i}"${c.disabled ? ' disabled' : ''}>${esc(c.t)}${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; });
     h += `</div>`;
     openModal(h, { lock: true, width: '700px' });
     $('modal').onclick = e => {
-      const b = e.target.closest('[data-ch]'); if (!b) return;
+      const b = e.target.closest('[data-ch]'); if (!b || b.disabled) return;
       $('modal').onclick = null;
       EVENTS.resolve(p, +b.dataset.ch);
       if (ending) { showSettlement(ending); return; }
