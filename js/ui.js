@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.12.0';
+  const VERSION = '0.13.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -777,7 +777,13 @@ var UI = (function () {
       <div class="tabs">${tabs.map(([k, n]) => `<button data-act="ctab" data-arg="${k}" class="${cityTab === k ? 'on' : ''}">${n}</button>`).join('')}</div>`;
     if (cityTab === 'gov') {
       h += `<div class="sec">营造队列 ${c.queue.length ? `<span class="r"><button class="btn sm" data-act="hurry" ${GAME.fac(P()).gold < GAME.hurryCost(c) ? 'disabled' : ''}>加急 ${GAME.hurryCost(c)} 贯</button></span>` : ''}</div>`;
-      h += c.queue.length ? c.queue.map((q, k) => `<div class="row"><span class="grow">${q.kind === 'b' ? B[q.id].name : '募' + unitName(P(), q.id)}<br>${meter(q.prog, q.cost, 'gold')}</span><span class="cost">${Math.max(0, Math.ceil((q.cost - q.prog) / Math.max(0.1, y.prod * GAME.E())))} ${TU()}</span><button class="btn sm" data-act="deq" data-arg="${k}">撤</button></div>`).join('') : '<div class="note">空闲——请择一项营建或征兵。</div>';
+      let rounds = 0;
+      h += c.queue.length ? c.queue.map((q, k) => {
+        const work = Math.max(0, q.cost - q.prog);
+        if (y.prod > 0) rounds += Math.max(1, Math.ceil(work / (y.prod * GAME.E())));
+        const duration = y.prod > 0 ? '约需 ' + +(rounds * GAME.E()).toFixed(2) + ' 季' : '工事暂滞';
+        return `<div class="row"><span class="grow">${q.kind === 'b' ? B[q.id].name : '募' + unitName(P(), q.id)}<br>${meter(q.prog, q.cost, 'gold')}</span><span class="cost">${duration}</span><button class="btn sm" data-act="deq" data-arg="${k}">撤</button></div>`;
+      }).join('') : '<div class="note">空闲——请择一项营建或征兵。</div>';
       {
         const gold = GAME.fac(P()).gold, rk = GAME.reliefCost(c), mk = GAME.migrateCost(c);
         const rOk = GAME.reliefReady(c), mOk = GAME.migrateOk(c);
@@ -1103,7 +1109,16 @@ var UI = (function () {
     if (g.status === 'gov') return '知 ' + esc(GAME.city(g.loc)?.name || '州府');
     if (g.status === 'idle') return '<span class="pos">候命</span>';
     if (g.status === 'court') { const o = COURT.OFFICES.find(o => o.id === COURT.officeOf(g)); return '<span class="skill">' + (o ? o.name : '朝臣') + '</span>'; }
-    return { captive: '被俘', dead: '已故', future: '未出仕', gone: '离任', cand: '待选' }[g.status] || '未详';
+    if (g.status === 'captive') {
+      const where = generalLocation(g);
+      return '陷于' + esc(facName(g.capBy)) + ' · ' + (where ? esc(GAME.city(where.id).name) : '下落未明');
+    }
+    return { dead: '已故', future: '未出仕', gone: '离任', cand: '待选' }[g.status] || '未详';
+  }
+  function captiveTenure(g) {
+    const days = Math.max(0, Math.round(S().T * 90) - Math.round((g.capT ?? S().T) * 90));
+    const seasons = Math.floor(days / 90), remainder = days % 90;
+    return days ? '被俘 ' + [seasons && seasons + ' 季', remainder && remainder + ' 日'].filter(Boolean).join(' ') : '新近被俘';
   }
   function stanceTag(g) { COURT.ensure(g); const c = g.stance === 'war' ? 'neg' : g.stance === 'peace' ? 'pos' : ''; return `<span class="${c}">${COURT.STANCE_NAME[g.stance]}</span>`; }
   function generalName(g) {
@@ -1122,6 +1137,10 @@ var UI = (function () {
       const c = GAME.city(g.loc);
       if (c && (c.f === P() || S().explored[c.tile])) return { type: 'city', id: c.id, tile: c.tile };
     }
+    if (g.status === 'captive') {
+      const c = GAME.city(g.jail);
+      if (c && c.f === g.capBy && S().explored[c.tile]) return { type: 'city', id: c.id, tile: c.tile };
+    }
     return null;
   }
   function generalButtons(g, detail = false, readOnly = false) {
@@ -1129,10 +1148,29 @@ var UI = (function () {
     if (g.status === 'captive' && g.capBy === P() && !readOnly) {
       return button('recruit', '招降') + button('release', '释放') + button('exec', '斩');
     }
+    if (g.status === 'captive' && g.f === P() && !readOnly) {
+      return button('ransom', '赎回') + button('exchange', '换俘') + (!detail && generalLocation(g) ? button('find', '寻') : '');
+    }
     if (readOnly || g.f !== P() || !GEN_STATUSES.some(([status]) => status === g.status)) return '';
     return button('reward', '赏', 'aria-label="赏赐 50 贯" title="赏赐 50 贯，忠诚 +12"') +
       (g.status === 'idle' ? button('gov', '任知州') + (detail ? button('assign', '任将') : '') : button('recall', '召回')) +
       (generalLocation(g) ? button('find', '寻') : '');
+  }
+  function pickExchange(g, redraw) {
+    const options = GAME.exchangeOptions(g);
+    const rows = options.map(({ prisoner, cost }) => `<button type="button" class="choice" data-exchange="${prisoner.id}">${esc(prisoner.name)}
+      <small>${cost ? '须补钱 ' + cost + ' 贯' : '以将易将，无须补钱'}</small></button>`).join('');
+    openModal(`<h1 class="captive-exchange">择将换俘</h1><p class="note">与【${esc(facName(g.capBy))}】换回${esc(g.name)}，各遣其将归国。</p>
+      <div class="scroll" style="max-height:56vh">${rows ? '<div class="choices">' + rows + '</div>' : '<p class="note">我朝手中并无该国俘将。</p>'}</div>
+      <div class="record-actions"><button type="button" class="btn" data-general-back>返回</button></div>`, { width: '540px', onClose: redraw });
+    $('modal').onclick = e => {
+      if (e.target.closest('[data-general-back]')) { redraw(); return; }
+      const chosen = e.target.closest('[data-exchange]');
+      if (!chosen) return;
+      const result = GAME.exchangeCaptive(g.id, +chosen.dataset.exchange);
+      if (result.ok) { refreshTop(); refreshSide(); redraw(); }
+      else toast(result.msg);
+    };
   }
   function handleGeneralAction(k, id, redraw) {
     const g = GAME.gen(id);
@@ -1141,6 +1179,19 @@ var UI = (function () {
       if (where) { closeModal(); select(where); RENDER.centerOn(where.tile); }
       return;
     }
+    if (k === 'ransom') {
+      const { cost, chance, reason } = GAME.ransomInfo(g);
+      if (reason) { toast(reason); return; }
+      const terms = GAME.atWar(P(), g.capBy) ? `许赎约 ${Math.round(chance * 100)}%，不允则不费国帑，一季内不可再请。`
+        : '两国未交兵，对方有意许赎。';
+      confirmBox(`遣使赎${g.name}，若得归朝，须付钱 ${cost} 贯。\n${terms}`, () => {
+        const result = GAME.ransomCaptive(id);
+        if (!result.ok) toast(result.msg);
+        refreshTop(); refreshSide(); redraw();
+      }, redraw);
+      return;
+    }
+    if (k === 'exchange') { pickExchange(g, redraw); return; }
     if (k === 'gov') {
       pickCity('任 ' + g.name + ' 为知州', () => true, cid => {
         if (GAME.assignGovernor(id, cid)) { guide('gov'); toast(`${g.name}出知${GAME.city(cid).name}`); }
@@ -1164,7 +1215,9 @@ var UI = (function () {
     redraw();
   }
   function showGenerals() {
+    const seats = GAME.citiesOf(P()), filled = seats.filter(c => c.governor != null).length, vacancies = seats.length - filled;
     const mine = S().generals.filter(g => g.f === P() && GEN_STATUSES.some(([status]) => status === g.status)).map(g => COURT.ensure(g));
+    const missing = S().generals.filter(g => g.f === P() && g.status === 'captive');
     const caps = S().generals.filter(g => g.status === 'captive' && g.capBy === P());
     const value = GEN_SORT.find(([id]) => id === genSort)[2];
     const roster = mine.filter(g => genFilter === 'all' || g.status === genFilter)
@@ -1174,7 +1227,7 @@ var UI = (function () {
     const desktopName = g => `${PORTRAIT.img(g, 30, 'alt=""')} <button type="button" class="record-link">${generalName(g)}</button>`;
     const card = g => recordCard(
       `${PORTRAIT.img(g, 44, 'alt=""')} <div class="record-name"><button type="button" class="record-link">${generalName(g)}</button>
-       <span class="note">${g.status === 'captive' ? esc(facName(g.f)) + ' · 被俘' : statusText(g)}</span></div><span class="chip">Lv ${g.lv || 1}</span>`,
+       <span class="note">${g.status === 'captive' ? g.f === P() ? statusText(g) + ' · ' + captiveTenure(g) : esc(facName(g.f)) + ' · 被俘' : statusText(g)}</span></div><span class="chip">Lv ${g.lv || 1}</span>`,
       `<div class="chips">${generalStatChips(g)}</div>${generalTags(g) ? `<div class="record-tags">${generalTags(g)}</div>` : ''}`,
       generalButtons(g), `data-general="${g.id}"`);
     const list = phone.matches ? `<div class="record-list">${roster.map(card).join('')}</div>` :
@@ -1187,10 +1240,16 @@ var UI = (function () {
     const captiveList = phone.matches ? `<div class="record-list">${caps.map(card).join('')}</div>` :
       `<table class="t"><tr><th>姓名</th><th>原属</th><th>四维</th><th>特技</th><th></th></tr>${caps.map(g =>
         `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${esc(facName(g.f))}</td><td>${generalStatChips(g)}</td><td>${generalTags(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
+    const missingList = phone.matches ? `<div class="record-list">${missing.map(card).join('')}</div>` :
+      `<table class="t"><tr><th>姓名</th><th>羁押之所</th><th>时日</th><th>四维</th><th></th></tr>${missing.map(g =>
+        `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${statusText(g)}</td><td>${captiveTenure(g)}</td>
+          <td>${generalStatChips(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
     openModal(`<h1>文武百官</h1>
+      <p class="note governor-count ${vacancies ? 'neg' : ''}">州郡 ${seats.length} 座，知州 ${filled} 员，缺 ${vacancies} 员</p>
       ${filterTabs('genfilter', '职守筛选', filters, genFilter)}
       ${phone.matches ? `<div class="sort-chips" role="group" aria-label="将领排序">${GEN_SORT.map(([key, title]) => sortControl(key, title)).join('')}</div>` : ''}
       <div class="scroll" data-general-roster style="max-height:68vh">${roster.length ? list : '<p class="note">此列暂无将领。</p>'}
+      ${missing.length ? '<div class="sec">陷敌诸将</div>' + missingList : ''}
       ${caps.length ? '<div class="sec">囚中敌将</div>' + captiveList : ''}</div>`, { width: '1040px' });
     $('modal').onclick = e => {
       const sort = e.target.closest('[data-g-sort]');
@@ -1221,7 +1280,8 @@ var UI = (function () {
     openModal(`<h1>将领详情</h1><div class="scroll general-detail" style="max-height:72vh">
       <div class="record-head general-profile">${PORTRAIT.img(g, 96, 'alt=""')}
         <div class="record-name"><h2>${generalName(g)}</h2><div class="chips">${chips}</div><div class="general-duty">${statusText(g)}
-         ${generalLocation(g) ? `<button type="button" class="btn sm" data-g="find" data-id="${g.id}">前往</button>` : ''}</div></div></div>
+         ${g.status === 'captive' ? ' · ' + captiveTenure(g) : ''}
+         ${generalLocation(g) ? `<button type="button" class="btn sm" data-g="find" data-id="${g.id}">${g.status === 'captive' ? '寻' : '前往'}</button>` : ''}</div></div></div>
       <div class="general-bars">${Object.entries(GAME.STAT_NAME).map(([k, label]) => statBar(label, g[k] || 0, 100)).join('')}
         ${statBar('等级 ' + (g.lv || 1), Math.round(g.exp || 0), next, 'gold', ' / ' + next)}</div>
       <div class="general-detail-grid">
@@ -1315,8 +1375,8 @@ var UI = (function () {
     const btn = (action, text, main, extra = '') => `<button type="button" class="btn sm ${main ? 'red' : ''}" data-d="${action}" data-f="${f}" ${extra}>${text}</button>`;
     const envoy = btn('envoy', `遣使 ${GAME.envoyCost(P())}`, !r.war);
     if (r.war) return btn('peace', '议和', true) + envoy;
-    const truce = r.truce > 0 ? 'title="和约未满，背约将失信于天下"' : '';
-    return envoy + btn('war', '宣战', false, truce) + (r.ally ? '' : btn('ally', '结盟')) + btn('trib', '索贡');
+    const truce = r.truce > 0 ? 'title="和约未满，背约则近邦与敌之盟国尤为不满"' : '';
+    return envoy + btn('war', '宣战 · ' + GAME.casusBelli(P(), f).name, false, truce) + (r.ally ? '' : btn('ally', '结盟')) + btn('trib', '索贡');
   }
   function diplomacyAction(action, f, redraw) {
     const finish = result => { toast(result.msg); refreshTop(); redraw(); };
@@ -1325,18 +1385,28 @@ var UI = (function () {
     if (action === 'trib') { finish(GAME.demandTribute(P(), f)); return; }
     if (action === 'war') {
       const r = GAME.getRel(P(), f);
-      courtVote('war', f, () => {
-        if (r.truce > 0) for (const x in S().factions) if (x !== P() && x !== 'rebel') GAME.getRel(P(), x).op -= 15;
+      const cause = GAME.casusBelli(P(), f);
+      const opinion = cause.kind === 'none' ? '无名出师，依远近减他国好感 0.8 至 8。' : '出师有名，第三国不因举兵而减好感。';
+      const breach = r.truce > 0 ? '和约未满，背约另减 1 至 10。' : '';
+      const ties = cause.kind === 'none' || breach ? '敌国盟友所减加倍。' : '';
+      const rivals = cause.kind === 'reclaim' ? '敌国之宿敌好感 +5。' : ties ? '其宿敌反增好感 +3。' : '';
+      const terms = `出师名分：${cause.name}。\n${opinion}${breach}${ties}${rivals}敌国好感降至 −30 或更低，其盟国或应约参战。`;
+      confirmBox(terms, () => courtVote('war', f, () => {
         GAME.declareWar(P(), f); RENDER.buildPolitical(); refreshTop(); redraw();
-      }, r.truce > 0 ? '（背弃和约，诸国好感 −15）' : '', redraw);
+      }, cause.name, redraw), redraw);
       return;
     }
-    if (action === 'peace') courtVote('peace', f, () => {
-      const result = GAME.proposePeace(P(), f);
-      if (!result.ok && result.counter) {
-        confirmBox(`${result.msg}　允否？`, () => finish(GAME.proposePeace(P(), f, result.counter)), redraw);
-      } else finish(result);
-    }, '', redraw);
+    if (action === 'peace') {
+      const terms = EVENTS.peaceTerms(f);
+      const vote = () => courtVote('peace', f, () => {
+        const result = GAME.proposePeace(P(), f);
+        if (!result.ok && result.counter) {
+          confirmBox([result.msg + '　允否？', terms].filter(Boolean).join('\n\n'), () => finish(GAME.proposePeace(P(), f, result.counter)), redraw);
+        } else finish(result);
+      }, esc(terms), redraw);
+      if (terms) confirmBox(`拟与【${facName(f)}】议和。\n\n${terms}`, vote, redraw);
+      else vote();
+    }
   }
   function showDiplomacy() {
     const me = GAME.fac(P()), myPower = GAME.totalPower(P());
@@ -1361,7 +1431,7 @@ var UI = (function () {
       `<table class="t dip-table"><tr><th></th><th>国</th><th>城</th><th>国力</th><th>好感</th><th>关系</th><th>岁币</th><th>操作</th></tr>${rows}</table>`;
     openModal(`<h1>鸿胪寺</h1>${filterTabs('dipfilter', '外交筛选', choices, dipFilter)}
       <div class="scroll dip-page" style="max-height:70vh">${listHTML}
-      <p class="note">列已结识之邦，邻国以陆地接壤为准。好感随遣使、通商而升，和约未满而宣战则失信于诸国。</p></div>`, { width: '980px' });
+      <p class="note">列已结识之邦，邻国以陆地接壤为准。好感随遣使、通商而升。无名出师、背弃和约，近邦及敌之盟国多有非议。</p></div>`, { width: '980px' });
     $('modal').onclick = e => {
       const action = e.target.closest('[data-d]');
       if (action) { diplomacyAction(action.dataset.d, action.dataset.f, showDiplomacy); return; }
@@ -1739,7 +1809,8 @@ var UI = (function () {
       <li>舟师足够（每三营陆军配一营舟师）的军团可渡海。军队离境过远、粮尽或国库亏空会减员。</li></ul>
       ${terrainGuideHTML()}
       <h3>科举与将领</h3><ul><li>每三年春殿试放榜，可从候选中择优录用；史上名臣（朱熹、虞允文、陆游、范成大……）会在其登第之年出现。</li>
-      <li>武将多会在其出仕之年“慕义来投”。战败的敌将可能被俘，可招降、释放或处斩。</li></ul>
+      <li>武将多会在其出仕之年“慕义来投”。战败的敌将可能被俘，可招降、释放或处斩。</li>
+      <li>我朝将领陷敌，可由「文武百官 · 陷敌诸将」遣使赎回、以俘易俘，亦可克其羁押之城救人。和议既成，双方互归所俘将领；若欲招降，须先处置再议和。</li></ul>
       <h3>战前军议与临阵指挥</h3><ul><li>我军进攻时先开<b>战前军议</b>：可见双方将领、兵种、地形与胜算；可择一<b>计策</b>（火攻、夜袭、水淹、诱敌、激将、疑兵），成败取决于双方主将之智与地形时令。</li>
       <li>可选“自动决战”，也可于六角战场亲自调度。两种战法皆按军议所列地形调整各营战力。临阵每营每回合可移动后攻击一次，弓弩、火器、砲车可远射，砲车尤善破墙，包夹敌营可增伤。十回合内击溃敌军（兵力不足三成或士气崩溃）即胜。</li>
       <li><b>敌军来犯</b>：敌方回合结束后，凡敌军攻我城池或军团，逐一请示方略：可施守策（劫营、火攻、坚壁、疑兵），再选“亲自守城/迎战”或“交由守将”。亲自守御时敌军先攻，守满十回合即算守住。可在“设置”中改为仅守城时过问或全部交由守将。</li></ul>
@@ -1944,11 +2015,12 @@ var UI = (function () {
     y += 84;
     for (const [i, { g, wins }] of chronicle.generals.entries()) {
       const x = left + i * width / 3, top = y - 32;
-      draws.push(() => {
-        ctx.drawImage(PORTRAIT.get(g), x, top, 78, 78);
+      const drawPortrait = () => {
+        ctx.drawImage(PORTRAIT.get(g, drawPortrait), x, top, 78, 78);
         ctx.strokeStyle = '#c5b28b';
         ctx.strokeRect(x, top, 78, 78);
-      });
+      };
+      draws.push(drawPortrait);
       text(g.name, x + 92, y - 7, 36, { bold: true, width: width / 3 - 105 });
       text(`胜 ${wins} 场`, x + 92, y + 34, 33, { color: muted });
     }
@@ -2082,10 +2154,11 @@ var UI = (function () {
         let h = `<h1>${v.title}</h1><div class="story">${esc(v.text)}</div><div style="text-align:center">`;
         for (const id of v.options) {
           const g = GAME.gen(id);
-          const civ = g.zheng >= g.wu;
-          h += `<div class="cand ${chosen.has(id) ? 'on' : ''}" data-c="${id}">${PORTRAIT.img(g, 56, 'style="float:right;width:56px;height:56px"')}<b>${g.name}</b>${g.hist ? ' <span class="chip red">史</span>' : ''}<br><span class="note">${civ ? '进士' : '武举'}　${S().year - g.birth}岁</span><br>统 ${g.tong}　武 ${g.wu}<br>智 ${g.zhi}　政 ${g.zheng}<br>${g.skill ? `<span class="skill">【${g.skill}】</span>` : '&nbsp;'}</div>`;
+          const track = p.ev === 'recommend' ? '荐士' : g.zheng >= g.wu ? '进士' : '武举';
+          h += `<div class="cand ${chosen.has(id) ? 'on' : ''}" data-c="${id}">${PORTRAIT.img(g, 56, 'style="float:right;width:56px;height:56px"')}<b>${esc(g.name)}</b>${g.hist ? ' <span class="chip red">史</span>' : ''}<br><span class="note">${track}　${S().year - g.birth}岁</span><br>统 ${g.tong}　武 ${g.wu}<br>智 ${g.zhi}　政 ${g.zheng}<br>${g.skill ? `<span class="skill">【${g.skill}】</span>` : '&nbsp;'}</div>`;
         }
-        h += `</div><div class="choices" style="margin-top:10px"><button class="choice" id="kj">钦点 ${chosen.size}/${v.max} 人，放榜</button></div>`;
+        const decision = p.ev === 'recommend' ? (chosen.size ? `准录 ${chosen.size}/${v.max} 人入仕` : '悉遣诸士还乡') : `钦点 ${chosen.size}/${v.max} 人，放榜`;
+        h += `</div><div class="choices" style="margin-top:10px"><button class="choice" id="kj">${decision}</button></div>`;
         openModal(h, { lock: true, width: '760px' });
         $('modal').onclick = e => {
           const c = e.target.closest('[data-c]');

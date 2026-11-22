@@ -1,6 +1,10 @@
 // 将领画像：按文化与文武程序化生成的小像
 var PORTRAIT = (function () {
   const cache = new Map(), urls = new Map();
+  const art = new Map(), artCanvases = new Map();
+  const historicalKeys = new Map((typeof DATA === 'undefined' ? [] : DATA.GEN)
+    .map(([name, faction, birth]) => [name + '\n' + birth, faction + '_' + name]));
+  const available = new Set(typeof PORTRAIT_ASSETS === 'undefined' ? [] : PORTRAIT_ASSETS);
   const SZ = 96;
   function rnd(seed) { let s = seed * 9301 + 49297; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
   const EURO = { frankish: 1, english: 1, german: 1, iberian: 1, italian: 1, polish: 1, magyar: 1, norse: 1 };
@@ -174,8 +178,7 @@ var PORTRAIT = (function () {
     }
   }
 
-  function key(g) { return g.id + ':' + (g.f) + ':' + Math.floor(((GAME.S && GAME.S.year) || 1140 - g.birth) / 10); }
-  function get(g) {
+  function classic(g) {
     if (!g) return null;
     const k = g.id;
     let c = cache.get(k);
@@ -189,15 +192,95 @@ var PORTRAIT = (function () {
   }
   function url(g) {
     if (!g) return '';
-    const c = get(g);
+    const c = classic(g);
     let u = urls.get(g.id);
     if (!u || u._f !== g.f) { u = new String(c.toDataURL()); u._f = g.f; urls.set(g.id, u); }
     return String(u);
   }
+
+  function imagePath(g) {
+    if (available.size === 0 || !g || !Number.isInteger(g.id) || g.id < 0) return '';
+    let key;
+    if (g.hist) {
+      key = historicalKeys.get(g.name + '\n' + g.birth);
+    } else if (g.hist === false) {
+      const culture = g.cul || GAME.fac(g.f)?.culture;
+      const role = g.zheng > g.wu + 5 ? 'civil' : 'military';
+      const age = (GAME.S?.year || 1140) - g.birth;
+      const band = age >= 50 ? 'old' : age >= 35 ? 'middle' : 'young';
+      const variant = ((Math.imul(g.id, 2654435761) >>> 28) % 4) + 1;
+      key = `generic/${culture}_${role}_${band}_${variant}`;
+    }
+    if (!available.has(key)) return '';
+    return 'portraits/' + key.split('/').map(encodeURIComponent).join('/') + '.webp';
+  }
+
+  function color(g) {
+    const ink = GAME.fac(g.f)?.color;
+    return /^#[0-9a-f]{6}$/i.test(ink) ? ink : '#555555';
+  }
+
+  function finish(path, image) {
+    const old = art.get(path);
+    if (old?.ready) return;
+    art.set(path, { ready: true, image });
+    if (!image) return;
+    if (typeof RENDER !== 'undefined') RENDER.markDirty();
+    for (const redraw of old?.redraws || []) redraw();
+  }
+
+  function get(g, redraw) {
+    if (!g) return null;
+    // 本地文件图片的来源可能不透明，避免影响长卷导出。
+    if (typeof location !== 'undefined' && location.protocol === 'file:') return classic(g);
+    const path = imagePath(g);
+    if (!path || typeof Image === 'undefined') return classic(g);
+    let asset = art.get(path);
+    if (!asset) {
+      const image = new Image();
+      asset = { ready: false, redraws: new Set() };
+      art.set(path, asset);
+      image.onload = () => finish(path, image);
+      image.onerror = () => finish(path, null);
+      image.src = path;
+    }
+    if (!asset.ready && redraw) asset.redraws.add(redraw);
+    if (!asset.image) return classic(g);
+    const ink = color(g);
+    const key = path + ink;
+    let canvas = artCanvases.get(key);
+    if (canvas) return canvas;
+    canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(asset.image, 0, 0, 64, 64);
+    ctx.strokeStyle = ink;
+    ctx.strokeRect(.5, .5, 63, 63);
+    artCanvases.set(key, canvas);
+    return canvas;
+  }
+
+  function onImageLoad(image) {
+    const path = image.getAttribute('src');
+    if (path.startsWith('portraits/')) finish(path, image);
+  }
+
+  function onImageError(image) {
+    const path = image.getAttribute('src');
+    if (!path.startsWith('portraits/')) return;
+    finish(path, null);
+    const general = GAME.S?.generals?.[Number(image.dataset.portraitGeneral)];
+    if (general && imagePath(general) === path) image.src = url(general);
+  }
+
   function img(g, size, extra) {
     if (!g) return `<span class="pimg none" style="width:${size}px;height:${size}px">军</span>`;
-    return `<img class="pimg" src="${url(g)}" style="width:${size}px;height:${size}px" ${extra || ''}>`;
+    const path = imagePath(g);
+    if (!path || art.get(path)?.image === null) {
+      return `<img class="pimg" src="${url(g)}" style="width:${size}px;height:${size}px" ${extra || ''}>`;
+    }
+    return `<img class="pimg" src="${path}" loading="lazy" decoding="async" data-portrait-general="${g.id}" onload="PORTRAIT.onImageLoad(this)" onerror="PORTRAIT.onImageError(this)" style="width:${size}px;height:${size}px;border-color:${color(g)}" ${extra || ''}>`;
   }
-  function clear() { cache.clear(); urls.clear(); }
-  return { get, url, img, clear };
+  function clear() { cache.clear(); urls.clear(); artCanvases.clear(); }
+  return { get, url, img, clear, onImageLoad, onImageError };
 })();

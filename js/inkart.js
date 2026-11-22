@@ -264,5 +264,5 @@ var INKART = (function () {
   }
   function count(kind) { return KINDS[kind] ? KINDS[kind][0] : 0; }
   function warm() { for (const k in KINDS) for (let i = 0; i < KINDS[k][0]; i++) get(k, i); }
-  return { get, count, warm, BOX, SR };
+  return { get, count, warm, BOX, SR, brush, wash, rng };
 })();

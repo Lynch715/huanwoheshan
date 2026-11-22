@@ -67,7 +67,7 @@ var GAME = (function () {
     S = {
       v: 2, turn: 0, year: 1140, season: 2, doy: 189, scale: opts.scale || 7, T: 0, player: 'song', factions: {}, cities: [], armies: [], generals: [],
       tileCity: new Int32Array(N).fill(-1), explored: new Uint8Array(N), visible: new Uint8Array(N),
-      rel: {}, flags: { coalitionAnnounced: false }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
+      rel: {}, flags: { coalition: {}, coalitionT: null, recommendYear: null }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
       settlement: null,
     };
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
@@ -103,11 +103,7 @@ var GAME = (function () {
     for (const cc of S.cities) setupCity(cc);
     assignTerritory(true);
     // 将领
-    for (const g of DATA.GEN) {
-      const [name, f, birth, tong, wu, zhi, zheng, skill, avail] = g;
-      const av = avail || birth + 20;
-      addGeneral({ name, f, birth, tong, wu, zhi, zheng, skill, hist: true, avail: av, status: av <= S.year ? 'idle' : 'future' });
-    }
+    for (const row of DATA.GEN) addHistorical(row);
     // 关系
     for (const a in S.factions) for (const b in S.factions) if (a < b) {
       const r = getRel(a, b);
@@ -192,6 +188,19 @@ var GAME = (function () {
     S.generals.push(g);
     return g;
   }
+  function addHistorical([name, f, birth, tong, wu, zhi, zheng, skill, avail = birth + 20]) {
+    const g = addGeneral({ name, f, birth, tong, wu, zhi, zheng, skill, hist: true, avail, status: 'future' });
+    if (avail <= S.year) enterService(g);
+    return g;
+  }
+  function enterService(g) {
+    if (!fac(g.f)?.alive) {
+      const hosts = Object.values(S.factions).filter(F => F.alive && !F.rebel && F.culture === g.cul && citiesOf(F.id).length);
+      if (!hosts.length) { g.status = 'gone'; return; }
+      g.f = pick(hosts).id;
+    }
+    g.status = 'idle';
+  }
   function genName(culture) {
     const N = DATA.NAMES[culture] || DATA.NAMES.han;
     const s = typeof N.s === 'string' ? N.s[ri(0, N.s.length - 1)] : pick(N.s);
@@ -200,11 +209,11 @@ var GAME = (function () {
     else g = pick(N.g);
     return s + g;
   }
-  function randomGeneral(f, type, q) {
+  function randomGeneral(f, type, q, culture) {
     q = q || 45;
     const st = () => clamp(Math.round(q + rnd(-12, 22)), 20, 92);
-    const cul = fac(f).culture === 'han' || f === 'rebel' ? 'han' : fac(f).culture;
-    let g = { name: genName(cul), f, birth: S.year - ri(22, 40), tong: st(), wu: st(), zhi: st(), zheng: st(), skill: '', hist: false, status: 'idle' };
+    const cul = culture || (f === 'rebel' ? 'han' : fac(f).culture);
+    let g = { name: genName(cul), f, cul, birth: S.year - ri(22, 40), tong: st(), wu: st(), zhi: st(), zheng: st(), skill: '', hist: false, status: 'idle' };
     if (type === 'civil') { g.tong = clamp(g.tong - 20, 15, 80); g.wu = clamp(g.wu - 25, 10, 80); g.zheng = clamp(g.zheng + 12, 30, 95); g.zhi = clamp(g.zhi + 8, 30, 95); }
     if (type === 'mil') { g.zheng = clamp(g.zheng - 15, 15, 80); g.tong += 5; g.wu += 6; g.tong = Math.min(g.tong, 95); g.wu = Math.min(g.wu, 96); }
     if (Math.random() < 0.3) {
@@ -291,28 +300,70 @@ var GAME = (function () {
     for (const c of S.cities) if (c.f === f) for (const m of mine) if (GEO.dist(c.tile, m.tile) <= range) return true;
     return false;
   }
+  function casusBelli(a, b) {
+    if (citiesOf(b).some(c => c.origF === a || a === 'song' && DATA.SONG_RECLAIM.has(c.name))) return { kind: 'reclaim', name: '收复故土' };
+    const relation = getRel(a, b);
+    if (S.T - (relation.struckBy?.[b] ?? -Infinity) <= 4 || relation.brokenBy?.[b]) return { kind: 'provoked', name: '对方先犯' };
+    if (Object.values(S.factions).some(F => F.alive && F.id !== a && F.id !== b && allied(a, F.id) && atWar(b, F.id))) {
+      return { kind: 'ally', name: '援救盟国' };
+    }
+    return { kind: 'none', name: '无名之师' };
+  }
+  function landBorders(owned, excluded) {
+    const border = new Set();
+    for (const c of owned) for (const tile of cityTiles(c)) for (const next of GEO.NBR[tile]) {
+      const owner = tileOwner(next);
+      if (owner && !excluded.has(owner) && owner !== 'rebel') border.add(owner);
+    }
+    return border;
+  }
+  function warOpinions(a, b, cause, broken) {
+    const base = (cause.kind === 'none' ? -8 : 0) - (broken ? 10 : 0);
+    if (!base && cause.kind !== 'reclaim') return;
+    const excluded = new Set([a, b]), seats = S.cities.filter(c => excluded.has(c.f));
+    const border = base ? landBorders(seats, excluded) : new Set();
+    const vicinity = new Set();
+    if (base) for (const c of S.cities) {
+      if (!c.f || excluded.has(c.f) || border.has(c.f) || vicinity.has(c.f)) continue;
+      if (seats.some(seat => GEO.dist(seat.tile, c.tile) <= 15)) vicinity.add(c.f);
+    }
+    for (const F of Object.values(S.factions)) {
+      if (!F.alive || F.rebel || excluded.has(F.id)) continue;
+      const ties = getRel(F.id, b);
+      const hostile = ties.war || ties.op < -30;
+      const delta = hostile ? (cause.kind === 'reclaim' ? 5 : base ? 3 : 0)
+        : base * (border.has(F.id) ? 1 : vicinity.has(F.id) ? 0.5 : 0.1) * (ties.ally ? 2 : 1);
+      const opinion = getRel(F.id, a);
+      opinion.op = clamp(opinion.op + delta, -100, 100);
+    }
+  }
   function declareWar(a, b, quiet) {
     if (a === b || atWar(a, b)) return;
     const r = getRel(a, b);
+    const cause = casusBelli(a, b), broken = r.truce > 0;
+    if (broken) (r.brokenBy ||= {})[a] = true;
+    if (a === S.player) S.flags.lastSortie = { kind: cause.kind, t: S.T };
+    warOpinions(a, b, cause, broken);
     r.war = true; r.ally = false; r.truce = 0; r.op = Math.min(r.op, -30); r.score = 0; r.trib = null; r.since = S.T;
+    delete r.coalitionAlly;
     fac(a).lastWar = S.T;
     // 涉及我朝的宣战另记一笔：电脑之间的战事不应推迟其对我朝起衅的冷却
     if (a === S.player || b === S.player) fac(a).lastMainWar = S.T;
     breakRoutesBetween(a, b);
     if (!quiet) {
       if (b === S.player) log(`【${fac(a).name}】向我朝宣战！`, 'war');
-      else if (a === S.player) log(`我朝向【${fac(b).name}】宣战。`, 'war');
+      else if (a === S.player) log(`我朝以「${cause.name}」向【${fac(b).name}】宣战。`, 'war');
       else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】开战。`, 'world', null, nearPlayer(a) || nearPlayer(b));
     }
     // 盟友参战
     for (const f in S.factions) {
       if (f === a || f === b || !fac(f).alive || f === 'rebel') continue;
       if (allied(f, b) && !allied(f, a) && !atWar(f, a)) {
+        if (a === S.player && getRel(f, b).coalitionAlly) continue;
         if (f === S.player) { EVENTS.offer({ ev: 'allycall', a: f, enemy: a, ally: b }, 'allianceCall'); }
         else declareWar(f, a, false);
       }
     }
-    for (const f in S.factions) if (f !== a && f !== b && f !== 'rebel') { const rr = getRel(f, a); rr.op -= 3; }
   }
   function makePeace(a, b, trib) {
     const r = getRel(a, b);
@@ -324,6 +375,12 @@ var GAME = (function () {
       const o = a === S.player ? b : a;
       log(`与【${fac(o).name}】议和` + (trib ? `，${fac(trib.from).name}岁输 ${trib.amt} 贯，凡 ${trib.turns} 季。` : '。'), 'dip');
     } else if (fac(S.player).met[a] && fac(S.player).met[b]) log(`【${fac(a).name}】与【${fac(b).name}】议和。`, 'world');
+    const { returning, releasing } = peaceCaptives(a, b);
+    for (const g of [...returning, ...releasing]) returnCaptive(g);
+    const home = a === S.player ? returning : b === S.player ? releasing : [];
+    const away = a === S.player ? releasing : b === S.player ? returning : [];
+    if (home.length) log(`和议既成，${home.map(g => g.name).join('、')}归朝。`, 'dip');
+    if (away.length) log(`依和约遣还${away.map(g => g.name).join('、')}。`, 'dip');
   }
 
   // ---------- 势力强弱 ----------
@@ -343,12 +400,64 @@ var GAME = (function () {
     const share = owned.length / Math.max(1, S.cities.filter(c => c.f).length);
     const score = share + (rank === 1 ? 0.04 : rank <= 3 ? 0.02 : 0);
     const active = score >= difficultyRules().coalition.threat;
-    const border = new Set();
-    if (active) for (const c of owned) for (const tile of cityTiles(c)) for (const next of GEO.NBR[tile]) {
-      const f = tileOwner(next);
-      if (f && f !== p && f !== 'rebel') border.add(f);
-    }
+    const border = active ? landBorders(owned, new Set([p])) : new Set();
     return S._playerThreat = { turn: S.turn, power, rank, share, score, active, border };
+  }
+  function coalitionCandidate(f) {
+    const p = S.player, threat = playerThreat(), rules = difficultyRules().coalition, F = fac(f);
+    if (!F?.alive || F.warWeary >= 70 || !threat.active || !threat.border.has(f) || S.T < rules.warDelay) return false;
+    const r = getRel(f, p);
+    if (r.war || r.ally || r.truce > 0 || r.op >= rules.opinion) return false;
+    const others = Object.values(S.factions).filter(other => other.alive && !other.rebel && other.id !== f && other.id !== p);
+    if (others.filter(other => atWar(f, other.id)).length >= 2) return false;
+    const allies = others.filter(other => allied(f, other.id) && atWar(other.id, p));
+    return totalPower(f) + allies.reduce((sum, other) => sum + totalPower(other.id), 0) >= threat.power * rules.ratio;
+  }
+  function coalitionTurn() {
+    const record = S.flags.coalition;
+    const members = [];
+    for (const [f, entry] of Object.entries(record)) {
+      if (entry.until > S.T + 1e-9) continue;
+      if (!coalitionCandidate(f) || entry.until != null) delete record[f];
+    }
+    if (S.pending.some(p => p.ev === 'coalitionQuestion')) return;
+    for (const f of playerThreat().border) {
+      if (record[f] || !coalitionCandidate(f)) continue;
+      record[f] = { asked: S.T };
+      members.push(f);
+      meet(S.player, f, true);
+    }
+    if (!members.length) return;
+    const recent = S.flags.lastSortie;
+    const justified = recent && recent.kind !== 'none' && S.T - recent.t <= 4;
+    S.pending.push({ ev: 'coalitionQuestion', members, justified: !!justified, cost: 40 + 30 * members.length });
+  }
+  function answerCoalition(p, answer) {
+    const members = p.members.filter(f => fac(f)?.alive && S.flags.coalition[f]);
+    const F = fac(S.player);
+    const gift = answer === 'gift' && F.gold >= p.cost;
+    if (gift) F.gold -= p.cost;
+    else if (answer === 'gift') log('国帑不足，厚礼未能遣出。', 'dip');
+    const plus = gift ? 15 : answer === 'explain' && p.justified ? 8 : 0;
+    for (const f of members) {
+      const r = getRel(S.player, f), entry = S.flags.coalition[f];
+      r.op = Math.min(100, r.op + plus);
+      if (gift) entry.until = S.T + 8;
+      else if (answer === 'ignore') entry.ready = true;
+    }
+  }
+  function coalitionReady(f) {
+    const { coalition, coalitionT } = S.flags, entry = coalition[f];
+    if (!entry || entry.until != null || S.pending.some(p => p.ev === 'coalitionQuestion' && p.members.includes(f))) return false;
+    if (coalitionT != null && Math.round(S.T * 90) - Math.round(coalitionT * 90) < 90) return false;
+    return (entry.ready || Math.round(S.T * 90) - Math.round(entry.asked * 90) >= 180) && coalitionCandidate(f);
+  }
+  function coalitionWar(f) {
+    if (!coalitionReady(f)) return false;
+    S.flags.coalitionT = S.T;
+    delete S.flags.coalition[f];
+    declareWar(f, S.player);
+    return true;
   }
   function conquestOpinion() {
     const loss = difficultyRules().coalition.dislike;
@@ -1135,6 +1244,7 @@ var GAME = (function () {
     const B = battleSides(a, tile, M);
     const { defArmy, c, tt, defF, D, A } = B;
     meet(a.f, defF);
+    if (a.f !== 'rebel' && defF !== 'rebel' && defF !== a.f) (getRel(a.f, defF).struckBy ||= {})[a.f] = S.T;
     const before = opts.manual ? opts.manual.before : { a: sumStr(A.units), d: sumStr(D.units), wall: c ? c.wall : 0 };
     const fullWall = a.f === S.player && c?.f === defF && before.wall >= maxWall(c) - 0.01;
     const apply = (units, loss) => { for (const u of units) u.s = Math.round(u.s * (1 - clamp(loss * rnd(0.75, 1.25), 0, 0.95))); };
@@ -1188,7 +1298,7 @@ var GAME = (function () {
         else { rep.result = '敌军溃散'; destroyArmy(defArmy, a.f, rep); }
       }
     }
-    if (a.units.length === 0) { rep.result = (rep.result ? rep.result + '；' : '') + '我军攻势受挫，全军覆没'; destroyArmy(a, defF, rep, true); }
+    if (a.units.length === 0) { rep.result = (rep.result ? rep.result + '；' : '') + '我军攻势受挫，全军覆没'; destroyArmy(a, defF, rep); }
     // 攻城
     if (c && c.f === defF && a.units.length) {
       const stillDef = (armyAt(tile) && armyAt(tile).f === defF) || c.garrison.length > 0;
@@ -1382,12 +1492,17 @@ var GAME = (function () {
     }
     return best;
   }
-  function destroyArmy(a, byF, rep, isAtt) {
+  function destroyArmy(a, byF, rep) {
     const g = gen(a.gen);
     if (g) {
       const roll = Math.random();
       const famous = g.hist && g.tong >= 90;
-      if (roll < 0.35 && byF && byF !== 'rebel') { g.status = 'captive'; g.capBy = byF; g.loc = null; if (rep) rep.captured = (rep.captured ? rep.captured + '，' : '') + '俘获' + g.name; if (byF === S.player) log(`生擒敌将${g.name}！`, 'war'); else if (g.f === S.player) log(`${g.name}兵败被俘！`, 'war'); }
+      if (roll < 0.35 && byF && byF !== 'rebel') {
+        takeCaptive(g, byF, rep?.tile ?? a.tile);
+        if (rep) rep.captured = (rep.captured ? rep.captured + '，' : '') + '俘获' + g.name;
+        if (byF === S.player) log(`生擒敌将${g.name}！`, 'war');
+        else if (g.f === S.player) log(`${g.name}兵败，为【${fac(byF).name}】所俘！`, 'war');
+      }
       else if (roll < 0.45 && !famous) { killGeneral(g, '阵亡'); if (rep) rep.result += `，${g.name}阵亡`; }
       else { g.status = 'idle'; g.loc = null; }
     }
@@ -1399,6 +1514,7 @@ var GAME = (function () {
     if (g.status === 'gov') { const c = S.cities.find(c => c.governor === g.id); if (c) c.governor = null; }
     if (g.status === 'court' && S.court) { for (const k in S.court.offices) if (S.court.offices[k] === g.id) delete S.court.offices[k]; }
     if (g.f === S.player && g.hist && ['idle','army','gov','court'].includes(g.status)) S.flags.lastOfficerDeath = { gen: g.id, t: S.T };
+    if (g.status === 'captive') clearCaptivity(g);
     g.status = 'dead'; g.loc = null;
     if (g.f === S.player) log(`${g.name}${why}。`, why === '阵亡' ? 'war' : 'info');
   }
@@ -1410,13 +1526,23 @@ var GAME = (function () {
     rec({ k: 'cap', city: c.id, from: old, to: f });
     // 知州
     const g = gen(c.governor);
-    if (g) { g.status = 'idle'; g.loc = null; if (Math.random() < 0.4 && f !== 'rebel') { g.status = 'captive'; g.capBy = f; } }
+    if (g) {
+      g.status = 'idle'; g.loc = null;
+      if (Math.random() < 0.4 && f !== 'rebel') takeCaptive(g, f, c.tile);
+    }
     c.governor = null;
     for (const a of S.armies.filter(x => x.tile === c.tile && x.f === old)) destroyArmy(a, f);
     c.garrison = []; c.queue = [];
     const loot = c.pop * 12;
     F_new.gold += loot;
     c.f = f; c.loyalty = 30; c.unrest = 30; c.pop = Math.max(1, c.pop - 1);
+    for (const prisoner of S.generals) {
+      if (prisoner.status !== 'captive' || prisoner.jail !== c.id) continue;
+      if (prisoner.f === f) {
+        returnCaptive(prisoner);
+        if (f === S.player) log(`王师克复${c.name}，救出${prisoner.name}。`, 'war', c.tile);
+      } else prisoner.capBy = f;
+    }
     c.siegeStart = c.siegeLast = null;
     c.recentCapture = { from: old, t: S.T };
     S._playerThreat = null;
@@ -1440,6 +1566,7 @@ var GAME = (function () {
       if (byArmy) S.pending.push(notice); // 战后按实况改为处置或撤去。
       else EVENTS.offer(notice, 'battle');
       revealAround(c.tile, 3);
+      if (old !== f && old !== 'rebel' && Math.random() < 0.3) EVENTS.offerFormerOfficial(c, F_old.culture);
     }
     if (old === S.player) log(`${c.name}失守于【${F_new.name}】！`, 'war', c.tile);
     // 天下大事：电脑之间攻城略地
@@ -1461,9 +1588,16 @@ var GAME = (function () {
       conquestOpinion();
     }
     F.alive = false;
+    for (const g of S.generals) if (g.status === 'captive' && g.capBy === f) {
+      returnCaptive(g);
+      if (g.f === S.player && g.status === 'idle') {
+        log(by === g.f ? `王师灭【${F.name}】，救回${g.name}。` : `【${F.name}】已亡，${g.name}脱囚归朝。`, 'war');
+      } else if (by === g.f && g.status === 'idle') log(`【${fac(by).name}】灭【${F.name}】，救回${g.name}。`, 'world');
+    }
     for (const a of S.armies.filter(a => a.f === f)) destroyArmy(a, by);
     for (const g of S.generals) if (g.f === f && (g.status === 'idle' || g.status === 'future')) {
-      if (g.status === 'idle' && by !== 'rebel' && Math.random() < 0.5) { g.status = 'captive'; g.capBy = by; } else if (g.status === 'idle') g.status = 'gone';
+      if (g.status === 'idle' && by && by !== 'rebel' && Math.random() < 0.5) takeCaptive(g, by, city(F.capital)?.tile);
+      else if (g.status === 'idle') g.status = 'gone';
       else g.f = by === 'rebel' ? f : g.f; // 未出仕者
     }
     for (const k in S.rel) { if (k.split('|').includes(f)) { S.rel[k].war = false; S.rel[k].ally = false; S.rel[k].trib = null; } }
@@ -1547,6 +1681,51 @@ var GAME = (function () {
     if (!b.units.length) { if (b.gen != null) { const g = gen(b.gen); g.status = 'idle'; g.loc = null; } S.armies = S.armies.filter(x => x !== b); }
     return true;
   }
+  function nearestJail(f, tile) {
+    const capital = city(fac(f)?.capital);
+    let best = capital?.f === f ? capital : null, distance = Infinity;
+    if (best && tile == null) return best.id;
+    for (const c of S.cities) {
+      if (c.f !== f) continue;
+      if (tile == null) return c.id;
+      const steps = GEO.dist(c.tile, tile);
+      if (steps < distance) { best = c; distance = steps; }
+    }
+    return best?.id ?? null;
+  }
+  function takeCaptive(g, f, tile) {
+    g.status = 'captive'; g.capBy = f; g.loc = null;
+    g.jail = nearestJail(f, tile); g.capT = S.T;
+    delete g.capRansomT;
+  }
+  function clearCaptivity(g) {
+    delete g.capBy; delete g.jail; delete g.capT; delete g.capRansomT;
+    g.loc = null;
+  }
+  function returnCaptive(g) {
+    g.status = fac(g.f)?.alive ? 'idle' : 'gone';
+    clearCaptivity(g);
+  }
+  function repairCaptivity(g) {
+    if (!fac(g.capBy)?.alive) { returnCaptive(g); return; }
+    const jail = city(g.jail);
+    if (!jail || jail.f !== g.capBy) g.jail = nearestJail(g.capBy, jail?.tile);
+    g.capT ??= S.T;
+    g.loc = null;
+  }
+  function peaceCaptives(a, b) {
+    const returning = [], releasing = [];
+    for (const g of S.generals) if (g.status === 'captive') {
+      if (g.f === a && g.capBy === b) returning.push(g);
+      else if (g.f === b && g.capBy === a) releasing.push(g);
+    }
+    return { returning, releasing };
+  }
+  function joinCaptor(g, f) {
+    if (f === S.player) S.flags.achievementProgress.recruits++;
+    g.f = f; g.status = 'idle'; g.loyalty = 55;
+    clearCaptivity(g);
+  }
   function recruitCaptive(gid, f) {
     const g = gen(gid);
     if (!g || g.status !== 'captive' || g.capBy !== f) return null;
@@ -1554,8 +1733,8 @@ var GAME = (function () {
     if (g.loyalty > 90) ch -= 0.2;
     if (g.name === '完颜宗弼') ch = 0.1;
     if (Math.random() < ch) {
-      if (f === S.player) S.flags.achievementProgress.recruits++;
-      g.f = f; g.status = 'idle'; g.loyalty = 55; delete g.capBy; return true;
+      joinCaptor(g, f);
+      return true;
     }
     g.loyalty -= 10;
     return false;
@@ -1563,10 +1742,85 @@ var GAME = (function () {
   function releaseCaptive(gid) {
     const g = gen(gid);
     if (!g || g.status !== 'captive') return;
-    const by = g.capBy; g.status = fac(g.f).alive ? 'idle' : 'gone'; delete g.capBy; g.loc = null;
-    if (by && fac(g.f).alive) getRel(by, g.f).op += 12;
+    const by = g.capBy;
+    returnCaptive(g);
+    if (by && fac(g.f)?.alive) getRel(by, g.f).op += 12;
   }
-  function executeCaptive(gid) { const g = gen(gid); if (!g) return; const by = g.capBy; g.status = 'dead'; if (by && fac(g.f).alive) getRel(by, g.f).op -= 15; }
+  function executeCaptive(gid) {
+    const g = gen(gid); if (g?.status !== 'captive') return;
+    const by = g.capBy;
+    g.status = 'dead'; clearCaptivity(g);
+    if (by && fac(g.f)?.alive) getRel(by, g.f).op -= 15;
+  }
+  function ransomCost(g) {
+    const base = (g.tong + g.wu + g.zhi + g.zheng) * 1.2 + (g.hist ? 120 : 0);
+    const opinion = g.capBy ? clamp(getRel(g.f, g.capBy).op, -100, 100) : 0;
+    return Math.round(base * difficultyRules().ransom * (1 - opinion / 500));
+  }
+  function heldAbroad(g) {
+    return g?.status === 'captive' && g.f === S.player && g.capBy !== g.f && fac(g.capBy)?.alive;
+  }
+  function ransomInfo(g) {
+    if (!heldAbroad(g)) return { reason: '此将并未陷于敌国。' };
+    const by = g.capBy, cost = ransomCost(g), atWarNow = atWar(g.f, by), r = getRel(g.f, by);
+    if (!atWarNow && r.op < -30) return { reason: `【${fac(by).name}】怨意未消，不许赎归。` };
+    const chance = atWarNow ? clamp(0.35 + r.op / 200 - Math.max(0, warScore(g.f, by)) / 200, 0, 1) : 1;
+    const reason = g.capRansomT != null && Math.round(S.T * 90) - Math.round(g.capRansomT * 90) < 90 ? '一季之内，不可再请赎此将。'
+      : fac(g.f).gold < cost ? '国库不足。' : '';
+    return { cost, chance, reason };
+  }
+  function ransomCaptive(gid) {
+    const g = gen(gid), { cost, chance, reason } = ransomInfo(g);
+    if (reason) return { ok: false, msg: reason };
+    const by = g.capBy, r = getRel(g.f, by);
+    g.capRansomT = S.T;
+    if (Math.random() >= chance) {
+      r.op = clamp(r.op - 5, -100, 100);
+      return { ok: false, msg: `【${fac(by).name}】不许赎归，未费国帑，好感 −5。` };
+    }
+    fac(g.f).gold -= cost; fac(by).gold += cost;
+    r.op = clamp(r.op + 5, -100, 100);
+    returnCaptive(g);
+    const msg = `费钱 ${cost} 贯，赎得${g.name}归朝。`;
+    log(msg, 'dip');
+    return { ok: true, msg };
+  }
+  function exchangeOptions(g) {
+    if (!heldAbroad(g)) return [];
+    const minimum = Math.ceil(ransomCost(g) * 0.8);
+    return S.generals.filter(prisoner => prisoner.status === 'captive' && prisoner.f === g.capBy && prisoner.capBy === g.f)
+      .map(prisoner => ({ prisoner, cost: Math.max(0, minimum - ransomCost(prisoner)) }));
+  }
+  function exchangeCaptive(gid, otherId) {
+    const g = gen(gid), option = exchangeOptions(g).find(({ prisoner }) => prisoner.id === otherId);
+    if (!option) return { ok: false, msg: '无此俘将可换。' };
+    const { prisoner, cost } = option;
+    if (cost && fac(g.f).gold < cost) return { ok: false, msg: '国库不足。' };
+    fac(g.f).gold -= cost; fac(prisoner.f).gold += cost;
+    returnCaptive(g); returnCaptive(prisoner);
+    const msg = `与【${fac(prisoner.f).name}】交换俘将，${g.name}归朝。`;
+    log(msg, 'dip');
+    return { ok: true, msg };
+  }
+  function defectCaptive(g) {
+    if (!heldAbroad(g)) return;
+    const by = g.capBy;
+    joinCaptor(g, by);
+    log(`${g.name}在囚受降，已转投【${fac(by).name}】。`, 'dip', null, true);
+  }
+  function captivityTurn() {
+    for (const g of S.generals) {
+      if (g.status !== 'captive') continue;
+      if (S.newSeason) repairCaptivity(g);
+      if (!heldAbroad(g)) continue;
+      const cunning = hasSkill(g, '运筹') ? 0.01 : 0;
+      const chance = 0.02 + Math.max(0, g.wu - 70) / 1000 + Math.max(0, g.zhi - 70) / 1000 + cunning;
+      if (Math.random() < chance * E()) {
+        returnCaptive(g);
+        log(`${g.name}伺隙脱身，间道归朝。`, 'dip', null, true);
+      }
+    }
+  }
 
   // ---------- 外交（玩家发起） ----------
   function envoyCost(f) { return Math.round(60 / (1 + (techFx(f).diplo || 0))); }
@@ -1615,7 +1869,7 @@ var GAME = (function () {
     let common = false;
     for (const x in S.factions) if (fac(x).alive && atWar(f, x) && atWar(to, x) && x !== 'rebel') common = true;
     if (r.war) return { ok: false, msg: '交战之国，何谈结盟。' };
-    if (r.op >= 70 || (r.op >= 40 && common)) { r.ally = true; return { ok: true, msg: `与【${fac(to).name}】歃血为盟。` }; }
+    if (r.op >= 70 || (r.op >= 40 && common)) { r.ally = true; delete r.coalitionAlly; return { ok: true, msg: `与【${fac(to).name}】歃血为盟。` }; }
     return { ok: false, msg: `【${fac(to).name}】婉拒结盟（需好感 70，或 40 且有共同之敌）。` };
   }
 
@@ -1860,12 +2114,6 @@ var GAME = (function () {
     const e = E();
     const p = S.player, rules = difficultyRules().coalition;
     const united = new Set(Object.keys(S.factions).filter(f => f !== p && f !== 'rebel' && fac(f).alive && atWar(p, f)));
-    if (playerThreat().active && !S.flags.coalitionAnnounced) {
-      S.flags.coalitionAnnounced = true;
-      const text = '诸国畏宋之强，合纵之议起矣。';
-      log('史官记曰：' + text, 'big');
-      S.pending.push({ ev: 'info', title: '合纵之议', text });
-    }
     for (const k in S.rel) {
       const r = S.rel[k];
       if (r.truce > 0) r.truce = Math.max(0, r.truce - e);
@@ -1874,8 +2122,8 @@ var GAME = (function () {
       if (united.size >= 2) {
         const [a, b] = k.split('|');
         if (united.has(a) && united.has(b)) {
-          r.op = Math.min(100, r.op + rules.rapport * e);
-          if (!r.war && !r.ally && r.op >= rules.allyAt && Math.random() < 0.5 * e) r.ally = true;
+          r.op = Math.min(100, r.op + rules.rapport * 0.5 * e);
+          if (!r.war && !r.ally && r.op >= rules.allyAt && Math.random() < 0.25 * e) { r.ally = true; r.coalitionAlly = true; }
         }
       }
       else r.op += (r.op > 0 ? -0.3 : 0.5) * e;
@@ -1888,13 +2136,12 @@ var GAME = (function () {
   function generalsTurn() {
     for (const g of S.generals) {
       if (g.status === 'future' && S.year >= g.avail) {
-        if (!fac(g.f).alive) { g.status = 'gone'; continue; }
-        if (g.f === S.player) {
-          if (g.zheng > g.wu + 5) continue; // 文臣经科举入仕
-          g.status = 'idle';
+        if (g.f === S.player && fac(g.f).alive && g.zheng > g.wu + 5) continue;
+        enterService(g);
+        if (g.f === S.player && g.status === 'idle') {
           log(`${g.name}慕义来投，愿效犬马。`, 'big');
           emit('event', { kind: 'newgen', gen: g.id });
-        } else g.status = 'idle';
+        }
       }
     }
     if (S.season === 3 && S.newSeason) {
@@ -1905,11 +2152,11 @@ var GAME = (function () {
       }
     }
     // AI 自动补将
-    for (const f in S.factions) {
-      if (f === S.player || !fac(f).alive) continue;
-      const idle = S.generals.filter(g => g.f === f && g.status === 'idle').length;
-      const noGen = S.armies.filter(a => a.f === f && a.gen == null).length;
-      if (idle === 0 && noGen > 0 && Math.random() < 0.15 * E() && citiesOf(f).length) randomGeneral(f, Math.random() < 0.8 ? 'mil' : 'civil', 45 + Math.min(20, citiesOf(f).length));
+    const idle = {}, seats = {};
+    for (const g of S.generals) if (g.status === 'idle') idle[g.f] = (idle[g.f] || 0) + 1;
+    for (const c of S.cities) if (c.f) seats[c.f] = (seats[c.f] || 0) + 1;
+    for (const f in S.factions) if (f !== S.player && f !== 'rebel' && fac(f).alive && (idle[f] || 0) < Math.ceil((seats[f] || 0) / 6) && Math.random() < 0.3 * E()) {
+      randomGeneral(f, Math.random() < 0.8 ? 'mil' : 'civil', 45 + Math.min(20, seats[f]));
     }
   }
 
@@ -1932,7 +2179,10 @@ var GAME = (function () {
     S.newSeason = S.season !== oldSeason || S.year !== oldYear;
     S.newYear = S.year !== oldYear;
     generalsTurn();
+    captivityTurn();
+    if (S.newYear) AI.prisonersTurn();
     if (S.newSeason) assignTerritory(false);
+    coalitionTurn();
     EVENTS.turn();
     if (typeof COURT !== 'undefined') COURT.turn();
     updateVisibility();
@@ -1993,7 +2243,9 @@ var GAME = (function () {
     S.settlement ??= null;
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     S.difficulty = DATA.DIFFICULTY[S.difficulty] ? +S.difficulty : 1;
-    S.flags.coalitionAnnounced ??= false;
+    S.flags.coalition ??= {};
+    S.flags.coalitionT ??= null;
+    S.flags.recommendYear ??= null;
     for (const c of S.cities) {
       c.recentCapture ??= null;
       c.lastSiege ??= null;
@@ -2004,7 +2256,15 @@ var GAME = (function () {
     }
     for (const r of Object.values(S.rel)) if (r.war) r.since ??= 0;
     for (const a of S.armies) { a.fortT ??= null; a.expeditionWarned ??= false; }
-    for (const g of S.generals) if (!g.cul) g.cul = g.f === 'rebel' ? 'han' : fac(g.f).culture;
+    for (const g of S.generals) {
+      if (!g.cul) g.cul = fac(g.f)?.culture || 'han';
+      if (g.status === 'captive') repairCaptivity(g);
+    }
+    const knownNames = new Set(S.generals.map(g => g.name));
+    for (const row of DATA.GEN_ADDITIONS) if (!knownNames.has(row[0])) {
+      addHistorical(row);
+      knownNames.add(row[0]);
+    }
     if (!S.sites) generateSites();
     if (typeof COURT !== 'undefined') COURT.init();
     updateVisibility();
@@ -2019,7 +2279,9 @@ var GAME = (function () {
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,
     createArmyRaw, formArmy, transferToArmy, transferToCity, disband, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
     assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
-    getRel, atWar, allied, warScore, declareWar, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
+    ransomCost, ransomInfo, ransomCaptive, exchangeOptions, exchangeCaptive, peaceCaptives, defectCaptive,
+    getRel, atWar, allied, warScore, casusBelli, declareWar, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
+    coalitionReady, coalitionWar, answerCoalition,
     totalPower, militaryPower, playerThreat, difficultyRules, citiesOf, hasTech, availableTechs, techCost, setResearch, tradeSlots, routeTargets, routeValue, openRoute, canRoute, captureCity,
     nearPlayer, updateVisibility, revealAround, assignTerritory, sumStr, rebellion, factionDies, checkVictory, finishGame, rnd, ri, pick, clamp,
   };

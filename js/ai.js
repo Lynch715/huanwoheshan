@@ -28,6 +28,16 @@ var AI = (function () {
     return out;
   }
 
+  function prisonersTurn() {
+    for (const g of S().generals) {
+      if (g.status !== 'captive' || g.capBy === S().player || !GAME.fac(g.capBy)?.alive) continue;
+      if (g.f === S().player) {
+        if (typeof COURT !== 'undefined') COURT.ensure(g);
+        if (!(g.hist && g.loyal) && rand() < 0.05) GAME.defectCaptive(g);
+      } else GAME.recruitCaptive(g.id, g.capBy);
+    }
+  }
+
   function research(f) {
     const F = GAME.fac(f);
     if (F.research) return;
@@ -194,16 +204,7 @@ var AI = (function () {
     }
     const realWars = enemies.filter(e => e !== 'rebel' && GAME.atWar(f, e)).length;
     const threat = f !== P ? GAME.playerThreat() : null;
-    if (threat?.active && threat.border.has(f) && S().T >= rules.warDelay && realWars < 3) {
-      const r = GAME.getRel(f, P);
-      if (!r.war && !r.ally && r.truce <= 0 && r.op < rules.opinion &&
-          rand() < (0.25 + F.aggr * 0.2) * GAME.E()) {
-        let combined = GAME.totalPower(f);
-        for (const o in S().factions) if (o !== P && o !== f && o !== 'rebel' &&
-          GAME.fac(o).alive && GAME.allied(f, o) && GAME.atWar(o, P)) combined += GAME.totalPower(o);
-        if (combined >= threat.power * rules.ratio) { GAME.declareWar(f, P); return true; }
-      }
-    }
+    if (realWars < 2 && GAME.coalitionReady(f) && rand() < (0.25 + F.aggr * 0.2) * GAME.E() && GAME.coalitionWar(f)) return true;
     // 常规拓边。对我朝的宣战沿用原先的频率与门槛（难度已按此标定）；
     // 电脑之间更常兴兵，也敢打势均力敌或腹背受敌的邻国。玩家势力（含托管）一律沿用原规则。
     if (realWars >= 2 || focusSong) return changed;
@@ -445,6 +446,6 @@ var AI = (function () {
     }
   }
 
-  return { turn, armyPower, cityDefense };
+  return { turn, prisonersTurn, armyPower, cityDefense };
 })();
 if (typeof module !== 'undefined') module.exports = AI;

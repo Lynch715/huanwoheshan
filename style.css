@@ -144,6 +144,7 @@ table.t td { border-bottom: 1px dashed rgba(34,30,25,.2); padding: 4px 6px; }
 .record-head > img { flex: 0 0 auto; }
 .record-name { min-width: 0; flex: 1; }
 .record-name > .note { display: block; }
+.governor-count.neg { color: var(--red); }
 .record-name h2 { margin: 0 0 6px; font-size: 24px; }
 .record-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 13px; }
 .record-link { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; border: 0; padding: 2px 0;
@@ -349,7 +350,7 @@ table.t td .pimg { margin-right: 4px; }
 .settings-about { margin-top: 14px; padding-bottom: 12px; }
 .settings-about p { margin: 6px 0; }
 #about-wechat { -webkit-user-select: text; user-select: text; }
-body:has(#modal-bg:not(.hidden) :is(.settings-about, .settlement-page)) #toasts { z-index: 31; }
+body:has(#modal-bg:not(.hidden) :is(.settings-about, .settlement-page, [data-general-roster], .general-detail, .captive-exchange)) #toasts { z-index: 31; }
 body:has(#modal-bg:not(.hidden) .settlement-page) #toasts .toast:not(.scroll-error) { display: none; }
 
 @media (max-width: 1200px), (max-height: 500px) {

@@ -922,7 +922,11 @@ var RENDER = (function () {
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 1.5, y + 2, R, 0, 7); ctx.fill();
     ctx.save();
     ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.clip();
-    if (g) { const pc = PORTRAIT.get(g); ctx.drawImage(pc, 8, 4, 80, 80, x - R, y - R, R * 2, R * 2); }
+    if (g) {
+      const portrait = PORTRAIT.get(g);
+      if (portrait.width === 64) ctx.drawImage(portrait, x - R, y - R, R * 2, R * 2);
+      else ctx.drawImage(portrait, 8, 4, 80, 80, x - R, y - R, R * 2, R * 2);
+    }
     else { ctx.fillStyle = F.color; ctx.fillRect(x - R, y - R, R * 2, R * 2); ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R)}px ${FONT}`; ctx.fillText('军', x, y + 1); }
     ctx.restore();
     ctx.strokeStyle = F.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.stroke();
