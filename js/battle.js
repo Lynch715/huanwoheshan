@@ -118,7 +118,7 @@ var TACTIC = (function () {
     const c = B.c && B.c.f === B.defF ? B.c : null;
     let pick = null;
     const terr = GEO.TERRAIN[B.tt];
-    const unitsHTML = (units, f) => { const m = {}; for (const u of units) m[u.t] = (m[u.t] || 0) + 1; return Object.entries(m).map(([t, n]) => `<span class="chip">${unitName(f, t)}×${n}</span>`).join(' '); };
+    const unitsHTML = (units, f) => { const m = {}; for (const u of units) m[u.t] = (m[u.t] || 0) + 1; return Object.entries(m).map(([t, n]) => `<span class="chip uchip">${UNITART.img(f, t, 22)}${unitName(f, t)}×${n}</span>`).join(' '); };
     const canManual = !B.water;
     const render = () => {
       const plan = pick ? P.list.find(x => x.id === pick) : null;
@@ -447,12 +447,16 @@ var TACTIC = (function () {
         const px = hx(x.c, x.r), py = hy(x.r);
         const F = GAME.fac(st.facs[x.side]);
         cx.globalAlpha = x.side === me && x.done && !st.over ? 0.55 : 1;
-        cx.fillStyle = F.color; cx.beginPath(); cx.arc(px, py, R * 0.62, 0, 7); cx.fill();
-        cx.strokeStyle = st.sel === x ? '#d4a02a' : 'rgba(20,18,16,0.9)'; cx.lineWidth = st.sel === x ? 3.5 : 1.5; cx.stroke();
-        cx.fillStyle = '#f6eedb'; cx.font = `bold 15px ${FONT}`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
-        cx.fillText(unitName(st.facs[x.side], x.t).slice(0, 2), px, py - 2);
-        cx.fillStyle = 'rgba(0,0,0,0.5)'; cx.fillRect(px - 18, py + 13, 36, 4);
-        cx.fillStyle = x.side === me ? '#5f9a4a' : '#c0463a'; cx.fillRect(px - 18, py + 13, 36 * x.hp / 100, 4);
+        // 兵种立绘圆章：攻方面右、守方面左
+        UNITART.token(cx, st.facs[x.side], x.t, px, py - 7, R * 0.66, { flip: x.side === 1, sel: st.sel === x });
+        const tag = unitName(st.facs[x.side], x.t).slice(0, 2);
+        cx.font = `bold 10px ${FONT}`; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+        const tw = cx.measureText(tag).width + 8;
+        cx.fillStyle = F.color; cx.fillRect(px - tw / 2, py + 9, tw, 12);
+        cx.strokeStyle = 'rgba(20,18,16,0.8)'; cx.lineWidth = 1; cx.strokeRect(px - tw / 2, py + 9, tw, 12);
+        cx.fillStyle = '#f6eedb'; cx.fillText(tag, px, py + 15.5);
+        cx.fillStyle = 'rgba(0,0,0,0.5)'; cx.fillRect(px - 16, py + 22, 32, 4);
+        cx.fillStyle = x.side === me ? '#5f9a4a' : '#c0463a'; cx.fillRect(px - 16, py + 22, 32 * x.hp / 100, 4);
         cx.globalAlpha = 1;
       }
       st.floats = st.floats.filter(f => now - f.t < 1100);
@@ -466,7 +470,7 @@ var TACTIC = (function () {
     function info(x) {
       if (!x) { el.querySelector('#tinfo').innerHTML = '点选我军各营：绿色为可移动范围，红圈为可攻击之敌。每营每回合可移动后攻击一次。弓弩、火器、砲车可远射。'; return; }
       const t = grid[x.r][x.c];
-      el.querySelector('#tinfo').innerHTML = `<b>${unitName(st.facs[x.side], x.t)}</b>　兵 ${Math.round(x.hp * 5)}　士气 ${Math.round(st.morale[x.side])}　攻 ${U[x.t].atk} 守 ${U[x.t].def} 行 ${MV[x.t] || 2}${RNG[x.t] ? ' 射程 ' + RNG[x.t] : ''}　地形：${TNAME[t]}　${U[x.t].desc}`;
+      el.querySelector('#tinfo').innerHTML = `${UNITART.img(st.facs[x.side], x.t, 56, 'tinfo-art' + (x.side === 1 ? ' flip' : ''))}<b>${unitName(st.facs[x.side], x.t)}</b>　兵 ${Math.round(x.hp * 5)}　士气 ${Math.round(st.morale[x.side])}　攻 ${U[x.t].atk} 守 ${U[x.t].def} 行 ${MV[x.t] || 2}${RNG[x.t] ? ' 射程 ' + RNG[x.t] : ''}　地形：${TNAME[t]}　${U[x.t].desc}`;
     }
     function selectUnit(x) {
       st.sel = x; reachSet = []; tgtSet = [];
@@ -559,7 +563,7 @@ var TACTIC = (function () {
     const c = B.c && B.c.f === B.defF ? B.c : null;
     let pick = null;
     const terr = GEO.TERRAIN[B.tt];
-    const unitsHTML = (units, f) => { const m = {}; for (const u of units) m[u.t] = (m[u.t] || 0) + 1; return Object.entries(m).map(([t, n]) => `<span class="chip">${unitName(f, t)}×${n}</span>`).join(' '); };
+    const unitsHTML = (units, f) => { const m = {}; for (const u of units) m[u.t] = (m[u.t] || 0) + 1; return Object.entries(m).map(([t, n]) => `<span class="chip uchip">${UNITART.img(f, t, 22)}${unitName(f, t)}×${n}</span>`).join(' '); };
     const fmt = n => n >= 10000 ? (n / 10000).toFixed(1) + '万' : Math.round(n);
     const defName = B.defArmy ? GAME.armyName(B.defArmy) : c.name + '守军';
     const render = () => {

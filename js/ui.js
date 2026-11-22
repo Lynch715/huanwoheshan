@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.13.0';
+  const VERSION = '0.14.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -801,14 +801,14 @@ var UI = (function () {
       const cap = c.garrison.length;
       const gcap = GAME.garrisonCap(c);
       h += `<div class="sec">守军（${cap}/${gcap} 营${cap > gcap ? ' <span class=neg>超编，军饷加倍</span>' : ''}）<span class="r">${c.garrison.length ? `<button class="btn sm red" data-act="form">组建军团${garrisonPick.size ? '（' + garrisonPick.size + '）' : ''}</button>` : ''}</span></div>`;
-      h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
+      h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
       if (c.garrison.length) h += `<div class="note">点选守军营后组建军团（不选则全选）。军团规模受主将统率所限。</div>`;
       const a = GAME.armyAt(c.tile);
       if (a && a.f === P()) h += `<div class="row click" data-act="selarmy" data-arg="${a.id}"><span class="grow">城中驻有：<b>${esc(GAME.armyName(a))}</b>（${a.units.length} 营）</span><span class="cost">选取 ›</span></div>`;
       h += `<div class="sec">征兵</div>`;
       for (const u of GAME.unitOptions(c)) {
         const k = GAME.unitCost(c, u), ok = GAME.canAffordUnit(c, u);
-        h += `<div class="row ${ok ? 'click' : ''}" ${ok ? `data-act="recruit" data-arg="${u}"` : ''} style="${ok ? '' : 'opacity:.45'}"><span class="unit-ic">${unitName(P(), u)[0]}</span><span class="grow"><b>${unitName(P(), u)}</b> <span class="note">攻${U[u].atk} 守${U[u].def} 行${U[u].mv}</span><br><span class="note">${U[u].desc}</span></span><span class="cost">钱${k.gold} 兵${k.man}${k.horse ? ' 马' + k.horse : ''}${k.iron ? ' 铁' + k.iron : ''}<br>工${k.prod}·${Math.ceil(k.prod / Math.max(0.1, y.prod * GAME.E()))}${TU()}</span></div>`;
+        h += `<div class="row ${ok ? 'click' : ''}" ${ok ? `data-act="recruit" data-arg="${u}"` : ''} style="${ok ? '' : 'opacity:.45'}">${UNITART.img(P(), u, 52, 'big')}<span class="grow"><b>${unitName(P(), u)}</b> <span class="note">攻${U[u].atk} 守${U[u].def} 行${U[u].mv}</span><br><span class="note">${U[u].desc}</span></span><span class="cost">钱${k.gold} 兵${k.man}${k.horse ? ' 马' + k.horse : ''}${k.iron ? ' 铁' + k.iron : ''}<br>工${k.prod}·${Math.ceil(k.prod / Math.max(0.1, y.prod * GAME.E()))}${TU()}</span></div>`;
       }
     } else {
       const slots = GAME.tradeSlots(c);
@@ -856,10 +856,10 @@ var UI = (function () {
     if (exposure) h += `<p class="neg">水土不服，每季损员 ${Math.round(exposure * 100)}%${GEO.terrain[a.tile] === GEO.T.TUNDRA ? '（仅计冬日）' : ''}。</p>`;
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
     h += `<div class="sec">各营</div>`;
-    h += a.units.map((u, i) => `<div class="row"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
+    h += a.units.map((u, i) => `<div class="row">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
     if (inOwn && c.garrison.length && a.units.length < GAME.armyCap(a)) {
       h += `<div class="sec">城中守军可补入</div>`;
-      h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}"><span class="unit-ic">${unitName(P(), u.t)[0]}</span><span class="grow">${unitName(P(), u.t)}　${fmt(u.s * 5)} 人</span><span class="cost">补入 ›</span></div>`).join('');
+      h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}　${fmt(u.s * 5)} 人</span><span class="cost">补入 ›</span></div>`).join('');
     }
     if (near.length) h += `<div class="sec">相邻友军</div>` + near.map(o => `<div class="row"><span class="grow">${esc(GAME.armyName(o))}（${o.units.length} 营）</span><button class="btn sm" data-act="merge" data-arg="${o.id}">并入本军</button></div>`).join('');
     h += `<p class="note">${TOUCH.matches ? '轻点目标格看路线，再点一次（或点「出发」）即行军' : '选中后右键目标格行军，或左键点两次'}；目标为交战之敌则进攻。城外每季休整 +8，入城 +20；粮尽则减员。</p>`;
@@ -870,7 +870,7 @@ var UI = (function () {
     const cnt = {}; for (const u of a.units) cnt[u.t] = (cnt[u.t] || 0) + 1;
     return `<div class="ph">${facSeal(a.f, '')}<div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">【${facName(a.f)}】${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人</div></div><button class="x" data-act="desel">×</button></div>
       ${genBlock(g, a.f)}
-      <div class="chips">${Object.entries(cnt).map(([t, n]) => `<span class="chip">${unitName(a.f, t)}×${n}</span>`).join('')}</div>
+      <div class="chips">${Object.entries(cnt).map(([t, n]) => `<span class="chip uchip">${UNITART.img(a.f, t, 22)}${unitName(a.f, t)}×${n}</span>`).join('')}</div>
       <p>关系：${a.f === 'rebel' ? '<span class=neg>乱军</span>' : relText(a.f)}　士气 ${Math.round(a.morale)}</p>`;
   }
 
