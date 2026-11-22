@@ -397,9 +397,9 @@ var DATA = (function () {
     wengcheng: { name: '瓮城', prod: 100, tech: 'wengcheng', needB: 'walls', minPop: 9,
       desc: '城防 +40，民心 +4，钱 +1', eff: { wall: 40, happy: 4, gold: 1 } },
     zhenshi: { name: '镇市', prod: 75, tech: 'shiyi', needB: 'market', minPop: 6,
-      desc: '钱 +3，本城钱产 +10%', eff: { gold: 3, goldPct: 0.10 } },
+      desc: '钱 +5，本城钱产 +15%', eff: { gold: 5, goldPct: 0.15 } },
     jiaoyinpu: { name: '交引铺', prod: 105, tech: 'yanchao', needB: 'zhenshi', minPop: 8, only: ['song', 'jin', 'xia', 'goryeo', 'daviet'],
-      desc: '钱 +4，本城钱产 +10%，限宋、金、西夏、高丽、交趾', eff: { gold: 4, goldPct: 0.10 } },
+      desc: '钱 +7，本城钱产 +18%，限宋、金、西夏、高丽、交趾', eff: { gold: 7, goldPct: 0.18 } },
     zhouxue: { name: '州学', prod: 80, tech: 'zhoukuan', needB: 'academy', minPop: 7,
       desc: '文 +4，民心 +2', eff: { sci: 4, happy: 2 } },
     taixue: { name: '太学', prod: 120, tech: 'taixue', needB: 'zhouxue', capital: true, minPop: 10,
@@ -407,7 +407,7 @@ var DATA = (function () {
     haichuanchang: { name: '海船场', prod: 98, tech: 'shuigecang', needB: 'dock', coastal: true, minPop: 7,
       desc: '工 +4，钱 +1，可造舟师', eff: { prod: 4, gold: 1, dock: true } },
     boboyuan: { name: '泊舶院', prod: 112, tech: 'hangcheng', needB: ['shibosi', 'haichuanchang'], coastal: true, minPop: 8,
-      desc: '钱 +3，可开海贸航线 1 条，本城海贸 +8%', eff: { gold: 3, tradeSlot: 1, tradePct: 0.08 } },
+      desc: '钱 +6，可开海贸航线 1 条，本城海贸 +12%', eff: { gold: 6, tradeSlot: 1, tradePct: 0.12 } },
   };
 
   // ---------- 科技 ----------
@@ -445,7 +445,7 @@ var DATA = (function () {
     shecang: { name: '社仓之法', branch: '农桑', era: 1, cost: 180, req: ['changping'], desc: '解锁社仓' },
     tangyan: { name: '陂塘灌田', branch: '农桑', era: 2, cost: 445, req: ['weitian', 'nongshu'], desc: '粮产 +8%，解锁堰渠', eff: { foodPct: 0.08 } },
     haitang: { name: '海塘修筑', branch: '农桑', era: 2, cost: 580, req: ['tangyan', 'haichuan'], desc: '解锁海塘' },
-    canmulue: { name: '蚕桑谱', branch: '农桑', era: 2, cost: 725, req: ['mianfang', 'yinshua'], desc: '钱 +7%', eff: { goldPct: 0.07 } },
+    canmulue: { name: '蚕桑谱', branch: '农桑', era: 2, cost: 725, req: ['mianfang', 'yinshua'], desc: '钱 +12%', eff: { goldPct: 0.12 } },
     nongsangtupu: { name: '农桑图谱', branch: '农桑', era: 3, cost: 1050, req: ['tangyan', 'canmulue'], desc: '粮产 +8%，增长所需存粮 -8%', eff: { foodPct: 0.08, growth: 0.08 } },
     quanji: { name: '乡里劝农', branch: '农桑', era: 3, cost: 1460, req: ['shecang', 'nongsangtupu'], desc: '粮产 +6%，民心 +2', eff: { foodPct: 0.06, happy: 2 } },
     liangzhong: { name: '良种留储', branch: '农桑', era: 3, cost: 1780, req: ['quanji', 'haitang'], desc: '粮产 +9%，增长所需存粮 -10%', eff: { foodPct: 0.09, growth: 0.10 } },
@@ -470,11 +470,11 @@ var DATA = (function () {
     // 文治
     shiyi: { name: '市易法', branch: '文治', era: 1, cost: 245, req: ['honglu'], desc: '钱 +4%，解锁镇市', eff: { goldPct: 0.04 } },
     zhoukuan: { name: '州学课士', branch: '文治', era: 2, cost: 475, req: ['shuyuan', 'yinshua'], desc: '文 +7%，解锁州学', eff: { sciPct: 0.07 } },
-    yanchao: { name: '盐钞法', branch: '文治', era: 2, cost: 655, req: ['shiyi', 'mianfang'], desc: '钱 +7%，解锁交引铺', eff: { goldPct: 0.07 } },
+    yanchao: { name: '盐钞法', branch: '文治', era: 2, cost: 655, req: ['shiyi', 'mianfang'], desc: '钱 +12%，解锁交引铺', eff: { goldPct: 0.12 } },
     xiangyue: { name: '乡约', branch: '文治', era: 2, cost: 810, req: ['lixue', 'zhoukuan'], desc: '民心 +3', eff: { happy: 3 } },
     taixue: { name: '太学条法', branch: '文治', era: 3, cost: 1100, req: ['zhoukuan', 'kejugaige', 'xiangyue'], desc: '文 +12%，解锁太学', eff: { sciPct: 0.12 } },
     tongzhi: { name: '州县图经', branch: '文治', era: 3, cost: 1450, req: ['taixue', 'yingzao'], desc: '文 +8%，民心 +2', eff: { sciPct: 0.08, happy: 2 } },
-    liangce: { name: '钱谷会计', branch: '文治', era: 3, cost: 1900, req: ['yanchao', 'tongzhi'], desc: '钱 +8%，民心 +2', eff: { goldPct: 0.08, happy: 2 } },
+    liangce: { name: '钱谷会计', branch: '文治', era: 3, cost: 1900, req: ['yanchao', 'tongzhi'], desc: '钱 +14%，民心 +2', eff: { goldPct: 0.14, happy: 2 } },
 
     // 航海
     gangxu: { name: '海舶市例', branch: '航海', era: 1, cost: 210, req: ['zhinanzhen'], desc: '海贸 +7%', eff: { tradePct: 0.07 } },

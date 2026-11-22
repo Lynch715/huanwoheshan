@@ -2229,7 +2229,10 @@ var GAME = (function () {
     o.tileCity = encodeTA(new Int16Array(S.tileCity)); o.tileCityFmt = 16; o.explored = encodeTA(S.explored); o.visible = undefined;
     // 已故/离去的非史实人物只留名
     o.generals = S.generals.map(g => (!g.hist && (g.status === 'dead' || g.status === 'gone')) ? { id: g.id, name: g.name, f: g.f, status: g.status, birth: g.birth, tong: 0, wu: 0, zhi: 0, zheng: 0 } : g);
-    return JSON.stringify(o, (k, v) => typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v);
+    return JSON.stringify(o, (k, v) => {
+      if (k === '_fx' || k === '_bfx') return undefined;
+      return typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v;
+    });
   }
   function deserialize(str) {
     GEO.generate();
@@ -2246,11 +2249,14 @@ var GAME = (function () {
     S.flags.coalition ??= {};
     S.flags.coalitionT ??= null;
     S.flags.recommendYear ??= null;
+    // 旧档可能保存了汇总值，按当前版本的建筑与科技数据重算。
     for (const c of S.cities) {
+      delete c._bfx;
       c.recentCapture ??= null;
       c.lastSiege ??= null;
     }
     for (const F of Object.values(S.factions)) {
+      delete F._fx;
       F.recruitEra ??= reachedEra(F);
       F.lastMainWar ??= -99;
     }
