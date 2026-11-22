@@ -18,9 +18,44 @@ var AI = (function () {
     if (f === 'rebel' && !cities.length) { rebelArmies(); return; }
     research(f);
     const enemies = enemiesOf(f);
+    if (f === S().player) dismissForDebt(F, cities, enemies);
     economy(f, cities, enemies);
     const declared = f !== 'rebel' && diplomacy(f, enemies);
     military(f, cities, declared ? enemiesOf(f) : enemies);
+  }
+
+  function dismissForDebt(F, cities, enemies) {
+    const s = S(), season = s.year * 4 + s.season;
+    const debt = (s._dismissalDebt ||= { since: null, season, dismissed: 0 });
+    if (debt.season !== season) { debt.season = season; debt.dismissed = 0; }
+    if (F.gold >= 0) { debt.since = null; return; }
+    debt.since ??= s.T;
+    if (debt.dismissed >= 4 || !GAME.coalitionDue(debt.since + 2)) return;
+    const capital = GAME.city(F.capital);
+    if (s.flags.league?.stage === 'war' || cities.length <= 3 || capital?.f !== F.id || GAME.enemyAdjacent(capital.tile, F.id)) return;
+
+    function dismiss(owner, indices) {
+      const result = GAME.dismissUnits(owner, indices.slice(0, 4 - debt.dismissed));
+      if (result.ok) debt.dismissed += result.indices.length;
+    }
+    const over = c => c.garrison.length - GAME.garrisonCap(c);
+    for (const c of cities.filter(c => over(c) > 0).sort((a, b) => over(b) - over(a))) {
+      if (debt.dismissed >= 4) return;
+      const cap = GAME.garrisonCap(c);
+      dismiss(c, c.garrison.slice(cap).map((u, i) => cap + i));
+    }
+    if (debt.dismissed >= 4) return;
+
+    const front = [...s.cities, ...s.armies].filter(o => enemies.includes(o.f)).map(o => o.tile);
+    const armies = s.armies.filter(a => a.f === F.id && !GAME.dismissalReason(a)).map(a => ({
+      a, distance: front.reduce((nearest, tile) => Math.min(nearest, GEO.dist(a.tile, tile)), Infinity), power: armyPower(a),
+    }));
+    armies.sort((a, b) => b.distance - a.distance || a.power - b.power);
+    for (const { a } of armies) {
+      if (debt.dismissed >= 4) break;
+      const indices = a.units.map((u, i) => i).sort((i, j) => unitPower(a.units[i]) - unitPower(a.units[j]));
+      dismiss(a, indices);
+    }
   }
 
   function governSong(F) {
@@ -149,7 +184,7 @@ var AI = (function () {
     const inc = F.income || {};
     // 量入为出：粮钱入不敷出时不再扩军
     const broke = (F.food < 150 && (inc.food || 0) - (inc.foodUp || 0) < 0) || (F.gold < 100 && (inc.gold || 0) + (inc.trib || 0) - (inc.upkeep || 0) < 0);
-    if (broke && F.food < 0) {
+    if (f !== S().player && broke && F.food < 0) {
       // 粮尽：裁撤超额守军
       for (const c of cities) while (c.garrison.length > Math.max(1, GAME.garrisonCap(c) - 2)) c.garrison.pop();
     }
@@ -291,7 +326,8 @@ var AI = (function () {
   }
 
   // ---------- 军事 ----------
-  function armyPower(a) { return a.units.reduce((s, u) => s + (U[u.t].atk + U[u.t].def) / 2 * u.s / 100, 0) * (a.gen != null ? 1.1 : 0.9); }
+  function unitPower(u) { return (U[u.t].atk + U[u.t].def) / 2 * u.s / 100; }
+  function armyPower(a) { return a.units.reduce((s, u) => s + unitPower(u), 0) * (a.gen != null ? 1.1 : 0.9); }
   function cityDefense(c) {
     let p = c.garrison.reduce((s, u) => s + U[u.t].def * u.s / 100, 0) * 1.2 + c.wall * 0.6 + 4;
     const a = GAME.armyAt(c.tile); if (a && a.f === c.f) p += armyPower(a) * 1.2;

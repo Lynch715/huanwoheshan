@@ -808,6 +808,15 @@ var GAME = (function () {
   }
   function growthTh(c) { return (10 + c.pop * 5) * (1 - Math.min(0.5, techFx(c.f).growth || 0)); }
   function garrisonCap(c) { return 4 + Math.floor(c.pop / 4) + (c.cap ? 2 : 0); }
+  function supplyMultiplier(f) { return 1 - Math.min(0.6, techFx(f).supply || 0); }
+  function armyUpkeep(a, units = a.units, foodMul = supplyMultiplier(a.f), total = { gold: 0, food: 0 }) {
+    const fm = foodMul * (hasSkill(gen(a.gen), '运筹') ? 0.5 : 1);
+    for (const u of units) {
+      total.gold += ['hcav', 'elite', 'fire'].includes(u.t) ? 2.5 : (['cav', 'hbow', 'navy'].includes(u.t) ? 2 : 1.5);
+      total.food += U[u.t].food * fm;
+    }
+    return total;
+  }
   function maxWall(c) {
     let w = 10 + c.pop * 2;
     w += bldFx(c).wall || 0;
@@ -1396,6 +1405,8 @@ var GAME = (function () {
     const B = battleSides(a, tile, M);
     const { defArmy, c, tt, defF, D, A } = B;
     meet(a.f, defF);
+    if (a.f === S.player) (S._armyBattles ||= new Set()).add(a.id);
+    if (defArmy?.f === S.player) (S._armyBattles ||= new Set()).add(defArmy.id);
     if (a.f !== 'rebel' && defF !== 'rebel' && defF !== a.f) (getRel(a.f, defF).struckBy ||= {})[a.f] = S.T;
     const before = opts.manual ? opts.manual.before : { a: sumStr(A.units), d: sumStr(D.units), wall: c ? c.wall : 0 };
     const fullWall = a.f === S.player && c?.f === defF && before.wall >= maxWall(c) - 0.01;
@@ -1863,6 +1874,42 @@ var GAME = (function () {
     if (a.gen != null) { const g = gen(a.gen); g.status = 'idle'; g.loc = null; }
     S.armies = S.armies.filter(x => x !== a);
     rec({ k: 'die', id: a.id, quiet: true });
+  }
+  function enemyAdjacent(tile, f) {
+    return GEO.NBR[tile].some(t => {
+      const a = armyAt(t);
+      return a && atWar(f, a.f);
+    });
+  }
+  function dismissalReason(owner) {
+    if (!owner || owner.f !== S.player || (owner.units ? army(owner.id) !== owner : city(owner.id) !== owner)) return '此军不可遣散';
+    if (owner.units && (S._armyBattles?.has(owner.id) || enemyAdjacent(owner.tile, owner.f))) return '临敌不可散军';
+    return '';
+  }
+  function dismissalInfo(owner, idxs) {
+    const reason = dismissalReason(owner);
+    if (reason) return { ok: false, msg: reason };
+    const units = owner.units || owner.garrison;
+    const indices = [...new Set(idxs)].filter(i => Number.isInteger(i) && i >= 0 && i < units.length);
+    if (!indices.length) return { ok: false, msg: '未选兵营' };
+    const selected = indices.map(i => units[i]);
+    const home = tileOwner(owner.tile) === S.player ? city(S.tileCity[owner.tile]) : null;
+    const man = home ? selected.reduce((n, u) => n + unitCost(home, u.t).man * u.s / 100 * 0.5, 0) : 0;
+    return { ok: true, indices, man, abroad: !home, upkeep: owner.units ? armyUpkeep(owner, selected) : null };
+  }
+  function dismissUnits(owner, idxs) {
+    const result = dismissalInfo(owner, idxs);
+    if (!result.ok) return result;
+    const units = owner.units || owner.garrison;
+    for (const i of result.indices.sort((a, b) => b - a)) units.splice(i, 1);
+    fac(owner.f).man += result.man;
+    if (owner.units) {
+      if (units.length) {
+        owner.mp = Math.min(owner.mp, armyMP(owner));
+        rec({ k: 'gain', id: owner.id, f: owner.f, tile: owner.tile, n: units.length, str: sumStr(units), quiet: true });
+      } else disband(owner.id);
+    }
+    return result;
   }
   function mergeArmies(aid, bid) { // b 并入 a（相邻）
     const a = army(aid), b = army(bid);
@@ -2348,6 +2395,23 @@ var GAME = (function () {
   function setResearch(f, id) { fac(f).research = id; }
 
   // ---------- 回合结算 ----------
+  function factionUpkeep(f, cities = citiesOf(f)) {
+    const total = { gold: 0, food: 0, governance: 0 };
+    const foodMul = supplyMultiplier(f);
+    for (const a of S.armies) if (a.f === f) armyUpkeep(a, a.units, foodMul, total);
+    for (const c of cities) {
+      total.gold += Object.keys(c.buildings).length * 0.5;
+      const cap = garrisonCap(c);
+      c.garrison.forEach((u, i) => {
+        const over = i >= cap;
+        total.gold += over ? 1.6 : 0.8;
+        total.food += (over ? 1 : 0.5) * foodMul;
+      });
+    }
+    total.gold += S.generals.filter(g => g.f === f && ['idle', 'army', 'gov', 'court'].includes(g.status)).length * 2;
+    if (f === S.player) total.governance = total.gold * Math.max(0, cities.length - 40) * difficultyRules().debt.governance;
+    return total;
+  }
   function log(text, type, tile, hot) {
     const e = { t: S.turn, d: dateStr(), text, type: type || 'info' };
     if (tile != null && tile >= 0) e.tile = tile;
@@ -2413,15 +2477,7 @@ var GAME = (function () {
       if (revolt > 0 && f !== 'rebel' && Math.random() < revolt * e) rebellion(c);
     }
     // 军费
-    let upGold = 0, upFood = 0;
-    const foodMul = 1 - Math.min(0.6, techFx(f).supply || 0);
-    for (const a of S.armies) if (a.f === f) {
-      const g = gen(a.gen);
-      const fm = foodMul * (g && hasSkill(g, '运筹') ? 0.5 : 1);
-      for (const u of a.units) { upGold += ['hcav', 'elite', 'fire'].includes(u.t) ? 2.5 : (['cav', 'hbow', 'navy'].includes(u.t) ? 2 : 1.5); upFood += U[u.t].food * fm; }
-    }
-    for (const c of cs) { upGold += Object.keys(c.buildings).length * 0.5; const gc = garrisonCap(c); c.garrison.forEach((u, i) => { const over = i >= gc; upGold += over ? 1.6 : 0.8; upFood += (over ? 1 : 0.5) * foodMul; }); }
-    const salaries = S.generals.filter(g => g.f === f && ['idle', 'army', 'gov', 'court'].includes(g.status)).length * 2;
+    const { gold: upGold, food: upFood, governance } = factionUpkeep(f, cs);
     // 岁币
     let trib = 0;
     for (const k in S.rel) {
@@ -2434,10 +2490,8 @@ var GAME = (function () {
       if (r.trib.to === f) trib += r.trib.amt;
     }
     const st = strategicIncome(f);
-    const upkeep = upGold + salaries;
-    const governance = player ? upkeep * Math.max(0, cs.length - 40) * rules.debt.governance : 0;
-    F.income = { gold: Math.round(goldIn), upkeep: Math.round(upkeep + governance), governance: Math.round(governance), trib, food: foodIn, foodUp: Math.round(upFood), sci: Math.round(sciIn * 10) / 10, horse: st.horse, iron: st.iron, man: Math.round(popTot * 0.12 * 10) / 10, prod: prodTot };
-    F.gold += (goldIn - upkeep - governance + trib) * e;
+    F.income = { gold: Math.round(goldIn), upkeep: Math.round(upGold + governance), governance: Math.round(governance), trib, food: foodIn, foodUp: Math.round(upFood), sci: Math.round(sciIn * 10) / 10, horse: st.horse, iron: st.iron, man: Math.round(popTot * 0.12 * 10) / 10, prod: prodTot };
+    F.gold += (goldIn - upGold - governance + trib) * e;
     F.food += (foodIn - upFood) * e;
     F.man = Math.min(popTot * 1.6 + 20, F.man + popTot * 0.12 * e);
     F.horse = Math.min(300, F.horse + st.horse * e);
@@ -2610,6 +2664,7 @@ var GAME = (function () {
     diplomacyTurn();
     // 时间推进
     S.turn++;
+    S._armyBattles?.clear();
     S.T += E();
     const oldSeason = S.season, oldYear = S.year;
     S.doy += S.scale;
@@ -2752,7 +2807,7 @@ var GAME = (function () {
     get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum,
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,
-    createArmyRaw, formArmy, transferToArmy, transferToCity, disband, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
+    createArmyRaw, formArmy, transferToArmy, transferToCity, disband, dismissUnits, dismissalReason, dismissalInfo, enemyAdjacent, armyUpkeep, factionUpkeep, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
     assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
     ransomCost, ransomInfo, ransomCaptive, exchangeOptions, exchangeCaptive, peaceCaptives, defectCaptive,
     getRel, atWar, allied, warScore, casusBelli, declareWar, peaceTruce, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,

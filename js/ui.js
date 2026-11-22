@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.15.0';
+  const VERSION = '0.16.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -45,6 +45,8 @@ var UI = (function () {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmt = n => { n = Math.round(n); return n >= 10000 ? (n / 10000).toFixed(1) + '万' : String(n); };
   const fmtShort = n => Math.abs(n) >= 10000 ? (n / 10000).toFixed(1) + '万' : Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + '千' : String(Math.round(n));
+  const fmtAmount = n => (n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+  const upkeepText = ({ gold, food }) => `钱 ${fmtAmount(gold)} 贯、粮 ${fmtAmount(food)} 石`;
   const sgn = n => (n >= 0 ? '+' : '') + Math.round(n);
   function unitName(f, t) { const c = GAME.fac(f).culture; return (DATA.CULTURE_UNIT_NAME[c] && DATA.CULTURE_UNIT_NAME[c][t]) || U[t].name; }
   function facSeal(f, cls) { const F = GAME.fac(f); return `<span class="seal ${cls || 'sm'}" style="background:${F.color}">${F.seal}</span>`; }
@@ -186,17 +188,19 @@ var UI = (function () {
   function showTreasury() {
     const F = GAME.fac(P()), inc = F.income || {};
     const { tech, cost, eta, pct } = researchProgress(F, inc);
-    const amount = n => (n || 0).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
+    const amount = fmtAmount;
     const row = (label, value) => `<div class="row"><span class="grow">${label}</span><strong>${value}</strong></div>`;
     const resource = (name, value, unit, detail) => `<section class="treasury-group"><div class="sec">${name}<span class="r">${amount(value)} ${unit}</span></div>${detail}</section>`;
     const trib = inc.trib || 0;
-    const governance = inc.governance || 0;
+    const { gold, food, governance } = GAME.factionUpkeep(P());
+    const deficit = (inc.gold != null && inc.gold + trib < gold + governance) || (inc.food != null && inc.food < food);
     openModal(`<h1>府库</h1>
       <p class="note treasury-date">公元 ${S().year} 年 · ${GAME.dateStr()} · 第 ${S().turn + 1} ${TU()}</p>
+      ${deficit ? '<div class="treasury-alert"><button class="btn sm" type="button" data-act="armies">兵多饷重，可于军中遣散</button></div>' : ''}
       <div class="treasury-grid">
-        ${resource('钱', F.gold, '贯', row('岁入 / 季', amount(inc.gold)) + row('军费、俸禄与营缮 / 季', amount((inc.upkeep || 0) - governance)) +
+        ${resource('钱', F.gold, '贯', row('岁入 / 季', amount(inc.gold)) + row('军费、俸禄与营缮 / 季', amount(gold)) +
           (governance ? row('治理支出 / 季', amount(governance)) : '') + row('岁币 / 季', trib ? sgn(trib) : 0))}
-        ${resource('粮', F.food, '石', row('诸州输粮 / 季', amount(inc.food)) + row('军粮 / 季', amount(inc.foodUp)))}
+        ${resource('粮', F.food, '石', row('诸州输粮 / 季', amount(inc.food)) + row('军粮 / 季', amount(food)))}
         ${resource('兵源', F.man, '', row('增兵源 / 季', amount(inc.man)) + row('募兵每营', '耗 5（约五百人）'))}
         ${resource('马', F.horse, '匹', row('入马 / 季', amount(inc.horse)) + row('骑兵每营', '耗 3 匹'))}
         ${resource('铁', F.iron, '', row('入铁 / 季', amount(inc.iron)) + row('甲骑、火器每营', '耗 2'))}
@@ -224,8 +228,8 @@ var UI = (function () {
       $('mobile-research').style.setProperty('--research-pct', pct + '%');
       $('mobile-research').textContent = r ? `${r.name} · ${eta ? '余 ' + eta + TU() : '待计'}` : '研究未定';
     } else $('res').innerHTML = `
-      <div class="rbox" title="岁入 ${inc.gold || 0}，军费、俸禄、营缮与治理 ${inc.upkeep || 0}，岁币 ${inc.trib || 0}"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></div>
-      <div class="rbox" title="诸州输粮 ${inc.food || 0}，军粮 ${inc.foodUp || 0}"><span class="k">粮</span> <b>${fmt(F.food)}</b> <span class="d ${fnet >= 0 ? 'pos' : 'neg'}">${sgn(fnet)}/季</span></div>
+      <button type="button" data-act="treasury" class="rbox resource-cell" title="岁入 ${inc.gold || 0}，军费、俸禄、营缮与治理 ${inc.upkeep || 0}，岁币 ${inc.trib || 0}。点击查看府库"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></button>
+      <button type="button" data-act="treasury" class="rbox resource-cell" title="诸州输粮 ${inc.food || 0}，军粮 ${inc.foodUp || 0}。点击查看府库"><span class="k">粮</span> <b>${fmt(F.food)}</b> <span class="d ${fnet >= 0 ? 'pos' : 'neg'}">${sgn(fnet)}/季</span></button>
       <div class="rbox" title="每营需兵源 5（约五百人）；每季 +${inc.man || 0}"><span class="k">兵源</span> <b>${fmt(F.man)}</b></div>
       <div class="rbox" title="骑兵每营耗马 3；每季 +${inc.horse || 0}"><span class="k">马</span> <b>${fmt(F.horse)}</b></div>
       <div class="rbox" title="甲骑、火器每营耗铁 2；每季 +${inc.iron || 0}"><span class="k">铁</span> <b>${fmt(F.iron)}</b></div>
@@ -801,7 +805,8 @@ var UI = (function () {
     } else if (cityTab === 'mil') {
       const cap = c.garrison.length;
       const gcap = GAME.garrisonCap(c);
-      h += `<div class="sec">守军（${cap}/${gcap} 营${cap > gcap ? ' <span class=neg>超编，军饷加倍</span>' : ''}）<span class="r">${c.garrison.length ? `<button class="btn sm red" data-act="form">组建军团${garrisonPick.size ? '（' + garrisonPick.size + '）' : ''}</button>` : ''}</span></div>`;
+      h += `<div class="sec">守军（${cap}/${gcap} 营）${cap > gcap ? '<span class="neg">超编，可遣散</span>' : ''}</div>`;
+      if (cap) h += `<div class="btns garrison-actions"><button class="btn sm red" data-act="form">组建军团${garrisonPick.size ? '（' + garrisonPick.size + '）' : ''}</button><button class="btn sm" data-act="dismiss-garrison" ${garrisonPick.size ? '' : 'disabled'}>遣散所选</button></div>`;
       h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
       if (c.garrison.length) h += `<div class="note">点选守军营后组建军团（不选则全选）。军团规模受主将统率所限。</div>`;
       const a = GAME.armyAt(c.tile);
@@ -848,16 +853,19 @@ var UI = (function () {
     const c = GAME.cityAt(a.tile), inOwn = c && c.f === P();
     const near = S().armies.filter(o => o !== a && o.f === P() && GEO.dist(o.tile, a.tile) === 1);
     const fortHint = '驻守满一回合，守方战力 +10%；在本国城中，士气恢复 +50%。';
+    const dismissal = GAME.dismissalReason(a);
+    const locked = dismissal ? `disabled title="${esc(dismissal)}"` : '';
     let h = `<div class="ph"><div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">${a.units.length}/${GAME.armyCap(a)} 营 · ${fmt(GAME.sumStr(a.units))} 人${inOwn ? ' · 驻' + c.name : ''}</div></div><button class="x" data-act="desel">×</button></div>`;
     h += genBlock(GAME.gen(a.gen), a.f);
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, 100, a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
-    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband">解散入城</button>' : ''}</div>`;
+    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband" title="诸营并入守军，每营每季军饷编内 0.8 贯、超编 1.6 贯">解散入城</button>' : ''}<button class="btn" data-act="dismiss-army" ${locked}>遣散全军</button></div>`;
     h += `<p class="note">${a.fortT != null ? (GAME.fortified(a) ? '已筑垒。' : '筑垒中。') : ''}${fortHint}</p>`;
     const exposure = GAME.expeditionRate(a);
     if (exposure) h += `<p class="neg">水土不服，每季损员 ${Math.round(exposure * 100)}%${GEO.terrain[a.tile] === GEO.T.TUNDRA ? '（仅计冬日）' : ''}。</p>`;
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
-    h += `<div class="sec">各营</div>`;
-    h += a.units.map((u, i) => `<div class="row">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}</div>`).join('');
+    h += `<div class="sec">各营</div><div class="note army-upkeep">每季军饷 ${upkeepText(GAME.armyUpkeep(a))}</div>`;
+    if (dismissal) h += `<div class="note neg">${esc(dismissal)}</div>`;
+    h += a.units.map((u, i) => `<div class="row">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}<button class="btn sm" data-act="dismiss-unit" data-arg="${i}" aria-label="遣散第 ${i + 1} 营" ${locked}>散</button></div>`).join('');
     if (inOwn && c.garrison.length && a.units.length < GAME.armyCap(a)) {
       h += `<div class="sec">城中守军可补入</div>`;
       h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}　${fmt(u.s * 5)} 人</span><span class="cost">补入 ›</span></div>`).join('');
@@ -873,6 +881,28 @@ var UI = (function () {
       ${genBlock(g, a.f)}
       <div class="chips">${Object.entries(cnt).map(([t, n]) => `<span class="chip uchip">${UNITART.img(a.f, t, 22)}${unitName(a.f, t)}×${n}</span>`).join('')}</div>
       <p>关系：${a.f === 'rebel' ? '<span class=neg>乱军</span>' : relText(a.f)}　士气 ${Math.round(a.morale)}</p>`;
+  }
+
+  function dismissSelected(owner, indices) {
+    const result = GAME.dismissUnits(owner, indices);
+    if (!result.ok) { toast(result.msg); return; }
+    garrisonPick.clear();
+    if (owner.units && !GAME.army(owner.id)) {
+      const c = GAME.cityAt(owner.tile);
+      select(c?.f === P() ? { type: 'city', id: c.id, tile: c.tile } : null);
+    } else {
+      showSavedPath(); refreshSide(); RENDER.markDirty();
+    }
+    refreshTop();
+    const detail = result.abroad ? '客军散于异域，无可收还' : `收还丁口 ${fmtAmount(result.man)}`;
+    toast(`已遣散 ${result.indices.length} 营。${detail}。`);
+  }
+  function confirmDismissArmy(a) {
+    const indices = a.units.map((u, i) => i);
+    const info = GAME.dismissalInfo(a, indices);
+    if (!info.ok) { toast(info.msg); return; }
+    const detail = info.abroad ? '客军散于异域，无可收还。' : `可收还丁口 ${fmtAmount(info.man)}。`;
+    confirmBox(`遣散全军 ${indices.length} 营，每季可省${upkeepText(info.upkeep)}。${detail}可准此议？`, () => dismissSelected(a, indices));
   }
 
   // ---------- 动作 ----------
@@ -902,6 +932,7 @@ var UI = (function () {
       case 'govpick': pickGeneral('任命知州', g => true, g => g.zheng, gid => { GAME.assignGovernor(gid, c.id); guide('gov'); refreshSide(); }); break;
       case 'govoff': GAME.unassign(c.governor); refreshSide(); break;
       case 'gpick': { const i = +arg; garrisonPick.has(i) ? garrisonPick.delete(i) : garrisonPick.add(i); refreshSide(); break; }
+      case 'dismiss-garrison': dismissSelected(c, [...garrisonPick]); break;
       case 'form': {
         if (GAME.armyAt(c.tile)) { toast('城中已驻一军，请先令其出城或将守军补入该军'); break; }
         const idx = garrisonPick.size ? [...garrisonPick] : c.garrison.map((u, i) => i);
@@ -929,6 +960,8 @@ var UI = (function () {
       case 'sentry': if (a && a.f === P()) sentryOrder(a); break;
       case 'genpick': pickGeneral(a.gen != null ? '更换主将' : '任命主将', g => true, g => g.tong, gid => { GAME.setArmyGeneral(a.id, gid); refreshSide(); }, true); break;
       case 'disband': GAME.disband(a.id); select({ type: 'city', id: GAME.cityAt(sel.tile).id, tile: sel.tile }); break;
+      case 'dismiss-unit': dismissSelected(a, [+arg]); break;
+      case 'dismiss-army': if (a) confirmDismissArmy(a); break;
       case 'toCity': GAME.transferToCity(a.id, +arg); if (!GAME.army(a.id)) select({ type: 'city', id: GAME.cityAt(sel.tile).id, tile: sel.tile }); else refreshSide(); RENDER.markDirty(); refreshTop(); break;
       case 'toArmy': if (!GAME.transferToArmy(a.id, +arg)) toast('军团已满'); refreshSide(); RENDER.markDirty(); refreshTop(); break;
       case 'merge': if (GAME.mergeArmies(a.id, +arg)) { refreshSide(); RENDER.markDirty(); refreshTop(); } break;
@@ -958,7 +991,7 @@ var UI = (function () {
       case 'dipfilter': dipFilter = arg; showDiplomacy(); break;
       case 'nation': showNation(arg); break;
       case 'cities': showCities(); break;
-      case 'armies': showArmies(); break;
+      case 'armies': showArmies(arg); break;
       case 'chron': showChronicle(arg); break;
       case 'honors': showHonors(); break;
       case 'retire': confirmBox('禅位封卷，依当下功业结算本局。旧卷仍可从存档读取。', () => showSettlement('retire'), showSettings); break;
@@ -1709,12 +1742,15 @@ var UI = (function () {
     h += `</table></div>`;
     openModal(h, { width: '900px' });
   }
-  function showArmies() {
-    const as = S().armies.filter(a => a.f === P());
-    let h = `<h1>诸军</h1><div class="scroll" style="max-height:72vh"><table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th></tr>`;
-    for (const a of as) {
+  function showArmies(sort) {
+    const rows = S().armies.filter(a => a.f === P()).map(a => ({ a, upkeep: GAME.armyUpkeep(a) }));
+    if (sort === 'gold' || sort === 'food') rows.sort((a, b) => b.upkeep[sort] - a.upkeep[sort]);
+    const sortButtons = [['gold', '按钱饷排序'], ['food', '按粮饷排序']].map(([key, label]) =>
+      `<button class="btn sm ${sort === key ? 'red' : ''}" type="button" data-act="armies" data-arg="${key}" aria-pressed="${sort === key}">${label}</button>`).join('');
+    let h = `<h1>诸军</h1><div class="btns">${sortButtons}</div><div class="scroll" style="max-height:65vh"><table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th><th>每季军饷</th></tr>`;
+    for (const { a, upkeep } of rows) {
       const c = GAME.cityAt(a.tile), own = GAME.tileOwner(a.tile);
-      h += `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${esc(GAME.armyName(a))}</b></td><td>${a.gen != null ? GAME.gen(a.gen).name : '—'}</td><td>${a.units.length}</td><td>${fmt(GAME.sumStr(a.units))}</td><td>${Math.round(a.morale)}</td><td>${c ? c.name : (own ? facName(own) + '境内' : '荒野')}</td><td>${a.path && a.path.length ? '行军中' : a.sentry ? '驻守' : a.mp > 0 ? '<span class=pos>待命</span>' : '已动'}</td></tr>`;
+      h += `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${esc(GAME.armyName(a))}</b></td><td>${a.gen != null ? GAME.gen(a.gen).name : '—'}</td><td>${a.units.length}</td><td>${fmt(GAME.sumStr(a.units))}</td><td>${Math.round(a.morale)}</td><td>${c ? c.name : (own ? facName(own) + '境内' : '荒野')}</td><td>${a.path && a.path.length ? '行军中' : a.sentry ? '驻守' : a.mp > 0 ? '<span class=pos>待命</span>' : '已动'}</td><td class="army-upkeep">${upkeepText(upkeep)}</td></tr>`;
     }
     h += `</table></div>`;
     openModal(h, { width: '760px' });
@@ -1870,6 +1906,7 @@ var UI = (function () {
       <li>民心低于 25 易生民变。寺观、常平仓、知州、奢侈物产（茶丝瓷香料）可安民；战事日久则厌战。</li>
       <li>委任<b>政</b>高之臣为知州，可大增一城产出。</li></ul>
       <h3>军事</h3><ul><li>在城中“军务”页征兵，募成后为守军；点选守军并择将即可<b>组建军团</b>。主将<b>统</b>越高，可统营数越多（最多十营）。</li>
+      <li>遣散兵营可省军饷，在本国境内按现有兵力收还半数征募丁口。“解散入城”则将诸营并入守军。</li>
       <li>兵种相克：步卒克骑，弓弩克步，骑兵克弓与砲车。甲骑、背嵬军、火器营为强兵。攻城宜带砲车，城防降至三成以下且守军尽没方可破城。</li>
       <li>战力取决于兵力、相克、主将统武智、特技、地形与士气。</li>
       <li>舟师足够（每三营陆军配一营舟师）的军团可渡海。军队离境过远、粮尽或国库亏空会减员。</li></ul>
