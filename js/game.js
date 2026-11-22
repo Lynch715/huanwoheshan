@@ -2266,7 +2266,10 @@ var GAME = (function () {
       knownNames.add(row[0]);
     }
     if (!S.sites) generateSites();
-    if (typeof COURT !== 'undefined') COURT.init();
+    if (typeof COURT !== 'undefined') {
+      COURT.init();
+      if (S.court.genEmp) COURT.updateEmperorArt(S.court.genEmp, S.year);
+    }
     updateVisibility();
     emit('change');
     return S;

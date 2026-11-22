@@ -13,12 +13,12 @@ var COURT = (function () {
     { id: 'dianqian', name: '殿前都指挥使', stat: 'tong', desc: '宿卫京师：都城城防 +，权威 +' },
   ];
   const EMPERORS = [
-    { name: '赵构', title: '宋高宗', birth: 1107, start: 1127, end: 1162, lean: -35, note: '南渡未久，朝中和议之声甚盛' },
-    { name: '赵昚', title: '宋孝宗', birth: 1127, start: 1162, end: 1189, lean: 30, note: '朝野思奋，恢复之议复起' },
-    { name: '赵惇', title: '宋光宗', birth: 1147, start: 1189, end: 1194, lean: -5, note: '内廷多事，百官观望' },
-    { name: '赵扩', title: '宋宁宗', birth: 1168, start: 1194, end: 1224, lean: 10, note: '权在宰辅，朝议纷纭' },
-    { name: '赵昀', title: '宋理宗', birth: 1205, start: 1224, end: 1264, lean: 5, note: '理学大兴，清议日盛' },
-    { name: '赵禥', title: '宋度宗', birth: 1240, start: 1264, end: 1274, lean: -15, note: '承平日久，朝中多偷安之议' },
+    { name: '赵构', art: 'emperor_赵构', title: '宋高宗', birth: 1107, start: 1127, end: 1162, lean: -35, note: '南渡未久，朝中和议之声甚盛' },
+    { name: '赵昚', art: 'emperor_赵昚', title: '宋孝宗', birth: 1127, start: 1162, end: 1189, lean: 30, note: '朝野思奋，恢复之议复起' },
+    { name: '赵惇', art: 'emperor_赵惇', title: '宋光宗', birth: 1147, start: 1189, end: 1194, lean: -5, note: '内廷多事，百官观望' },
+    { name: '赵扩', art: 'emperor_赵扩', title: '宋宁宗', birth: 1168, start: 1194, end: 1224, lean: 10, note: '权在宰辅，朝议纷纭' },
+    { name: '赵昀', art: 'emperor_赵昀', title: '宋理宗', birth: 1205, start: 1224, end: 1264, lean: 5, note: '理学大兴，清议日盛' },
+    { name: '赵禥', art: 'emperor_赵禥', title: '宋度宗', birth: 1240, start: 1264, end: 1274, lean: -15, note: '承平日久，朝中多偷安之议' },
   ];
   const LATE_REIGN_NOTE = '朝局未定，百官共议边备与民生';
   const WAR = ['岳飞', '韩世忠', '刘锜', '吴璘', '岳云', '张宪', '牛皋', '杨再兴', '王贵', '李显忠', '张浚', '赵鼎', '虞允文', '辛弃疾', '陆游', '魏胜', '李宝', '毕再遇', '孟珙', '余玠', '文天祥', '王坚', '张珏', '陈亮', '胡铨', '韩侂胄', '岳雷', '吴挺', '赵葵', '李庭芝', '张世杰', '陆秀夫', '王彦', '杜杲', '彭义斌', '向士璧'];
@@ -54,7 +54,16 @@ var COURT = (function () {
     const s = S(); const c = s.court;
     if (c.emp < EMPERORS.length) return EMPERORS[c.emp];
     if (!c.genEmp) c.genEmp = { name: '赵' + GAME.pick(['昕', '昶', '昱', '昉', '晟', '暄', '曜', '曦']), title: '宋' + GAME.pick(['世宗', '显宗', '睿宗', '宪宗', '昭宗', '宣宗']), birth: s.year - 22, start: s.year, end: s.year + 25 + Math.floor(rnd() * 15), lean: Math.round(rnd() * 60 - 25), note: LATE_REIGN_NOTE };
+    updateEmperorArt(c.genEmp, s.year);
     return c.genEmp;
+  }
+  function updateEmperorArt(emp, year) {
+    const age = year - emp.birth;
+    const band = age >= 50 ? 'old' : age >= 35 ? 'middle' : 'young';
+    let hash = 0;
+    for (let i = 0; i < emp.name.length; i++) hash = Math.imul(hash, 31) + emp.name.charCodeAt(i);
+    const variant = ((hash >>> 0) % (band === 'middle' ? 4 : 3)) + 1;
+    emp.art = `generic/emperor_${band}_${variant}`;
   }
   // 旧档可能保留当时的性情说明或已经排队的即位文案。
   function reignNote(title, note) {
@@ -279,6 +288,6 @@ var COURT = (function () {
   };
   function register() { if (typeof EVENTS !== 'undefined') Object.assign(EVENTS.DEFS, DEFS); }
   register();
-  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
+  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, updateEmperorArt, reignNote, holder, assign, vacate, bonus, officeOf, vote, applyVote, turn, onWin, onLoss, reward, members };
 })();
 if (typeof module !== 'undefined') module.exports = COURT;

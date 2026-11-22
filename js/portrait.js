@@ -178,9 +178,11 @@ var PORTRAIT = (function () {
     }
   }
 
+  function classicKey(g) { return g.art ? `${g.id}:${g.art}` : g.id; }
+
   function classic(g) {
     if (!g) return null;
-    const k = g.id;
+    const k = classicKey(g);
     let c = cache.get(k);
     if (c && c._f === g.f) return c;
     const F = GAME.fac(g.f) || { color: '#555', culture: 'han' };
@@ -193,17 +195,19 @@ var PORTRAIT = (function () {
   function url(g) {
     if (!g) return '';
     const c = classic(g);
-    let u = urls.get(g.id);
-    if (!u || u._f !== g.f) { u = new String(c.toDataURL()); u._f = g.f; urls.set(g.id, u); }
+    const k = classicKey(g);
+    let u = urls.get(k);
+    if (!u || u._f !== g.f) { u = new String(c.toDataURL()); u._f = g.f; urls.set(k, u); }
     return String(u);
   }
 
   function imagePath(g) {
-    if (available.size === 0 || !g || !Number.isInteger(g.id) || g.id < 0) return '';
-    let key;
-    if (g.hist) {
+    if (!available.size || !g) return '';
+    let key = g.art;
+    if (!key && (!Number.isInteger(g.id) || g.id < 0)) return '';
+    if (!key && g.hist) {
       key = historicalKeys.get(g.name + '\n' + g.birth);
-    } else if (g.hist === false) {
+    } else if (!key && g.hist === false) {
       const culture = g.cul || GAME.fac(g.f)?.culture;
       const role = g.zheng > g.wu + 5 ? 'civil' : 'military';
       const age = (GAME.S?.year || 1140) - g.birth;
@@ -269,6 +273,10 @@ var PORTRAIT = (function () {
     const path = image.getAttribute('src');
     if (!path.startsWith('portraits/')) return;
     finish(path, null);
+    if (image.dataset.portraitFallback) {
+      image.src = image.dataset.portraitFallback;
+      return;
+    }
     const general = GAME.S?.generals?.[Number(image.dataset.portraitGeneral)];
     if (general && imagePath(general) === path) image.src = url(general);
   }
@@ -279,7 +287,8 @@ var PORTRAIT = (function () {
     if (!path || art.get(path)?.image === null) {
       return `<img class="pimg" src="${url(g)}" style="width:${size}px;height:${size}px" ${extra || ''}>`;
     }
-    return `<img class="pimg" src="${path}" loading="lazy" decoding="async" data-portrait-general="${g.id}" onload="PORTRAIT.onImageLoad(this)" onerror="PORTRAIT.onImageError(this)" style="width:${size}px;height:${size}px;border-color:${color(g)}" ${extra || ''}>`;
+    const fallback = g.art ? `data-portrait-fallback="${url(g)}"` : `data-portrait-general="${g.id}"`;
+    return `<img class="pimg" src="${path}" loading="lazy" decoding="async" ${fallback} onload="PORTRAIT.onImageLoad(this)" onerror="PORTRAIT.onImageError(this)" style="width:${size}px;height:${size}px;border-color:${color(g)}" ${extra || ''}>`;
   }
   function clear() { cache.clear(); urls.clear(); artCanvases.clear(); }
   return { get, url, img, clear, onImageLoad, onImageError };

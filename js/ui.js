@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.14.1';
+  const VERSION = '0.14.2';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -1527,7 +1527,7 @@ var UI = (function () {
   }
   function showCourt() {
     const C = S().court, emp = COURT.emperor();
-    const fake = { id: 900000 + (C.emp || 0), name: emp.name, f: P(), birth: emp.birth, tong: 40, wu: 30, zhi: 70, zheng: 75, cul: 'han' };
+    const fake = { id: 900000 + emp.birth, name: emp.name, f: P(), birth: emp.birth, art: emp.art, tong: 40, wu: 30, zhi: 70, zheng: 75, cul: 'han' };
     const mem = COURT.members().map(x => x[0]);
     const cnt = k => mem.filter(g => g.stance === k).length;
     const offices = COURT.OFFICES.map(o => {
