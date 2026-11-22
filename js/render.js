@@ -947,7 +947,7 @@ var RENDER = (function () {
       const bx = x - R * 0.85, by = y - R * 0.85;
       ctx.fillStyle = d.spent ? 'rgba(120,115,105,0.95)' : 'rgba(168,48,42,0.95)'; ctx.beginPath(); ctx.arc(bx, by, 7, 0, 7); ctx.fill();
       ctx.strokeStyle = '#f4ecd8'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = '#f8f0dc'; ctx.font = `bold 9px ${FONT}`; ctx.fillText(d.spent ? '歇' : '▶', bx, by + 0.5);
+      ctx.fillStyle = '#f8f0dc'; ctx.font = `bold 9px ${FONT}`; ctx.fillText(d.spent ? '歇' : '行', bx, by + 0.5);
     }
     if (mine && d.idle && !anim) { ctx.fillStyle = 'rgba(214,160,30,1)'; ctx.beginPath(); ctx.arc(x - R * 0.8, y - R * 0.8, 3.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#3a2a10'; ctx.lineWidth = 1; ctx.stroke(); }
     ctx.restore();

@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.14.0';
+  const VERSION = '0.14.1';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -239,7 +239,7 @@ var UI = (function () {
     $('idlehint').innerHTML =
       (idleC ? `<button type="button" data-act="nextcity" title="下一座空闲城">${idleC} 城空闲<span class="keyhint">（Q）</span></button>` : '') +
       (idle ? `<button type="button" data-act="nextidle" title="下一支待命军团">尚有 ${idle} 军待命<span class="keyhint">（Tab）</span></button>` : '') +
-      (routed ? `<button type="button" data-act="contall">▶ ${routed} 军待续·全军继续<span class="keyhint">（C）</span></button>` : '');
+      (routed ? `<button type="button" data-act="contall">${routed} 军待续 · 全军继续<span class="keyhint">（C）</span></button>` : '');
   }
 
   // ---------- 输入 ----------
@@ -1036,7 +1036,7 @@ var UI = (function () {
     const choose = `data-act="settech" data-arg="${id}"`;
     return `<article class="tech ${known ? 'known' : can ? 'avail' : 'lock'} ${cur ? 'cur' : ''}" ${can ? choose : ''}>
       <div class="tech-title">${can ? `<button type="button" class="tech-pick" ${choose}>${name}</button>` : name}
-        ${known ? '<span aria-label="已学">✓</span>' : `<span class="cost">${cost}</span>`}</div>
+        ${known ? '<span class="note">已学</span>' : `<span class="cost">${cost}</span>`}</div>
       ${phone.matches ? `<p class="tech-desc">${desc}</p>` : `<button type="button" class="tech-desc" data-act="techdesc" title="${desc}" aria-expanded="false"><span>${desc}</span></button>`}
       ${t.req && !known ? `<span class="cost tech-req">需 ${t.req.map(r => esc(TECH[r].name)).join('、')}</span>` : ''}
       ${cur ? meter(sci, cost, 'gold') : ''}</article>`;
@@ -1625,14 +1625,14 @@ var UI = (function () {
   // ---------- 新手引导 ----------
   const GUIDE = [['research', '在“科技”中选定研究方向'], ['build', '在城池“内政”页营建一座建筑'], ['recruit', '在城池“军务”页征募一营兵'], ['form', '点选守军，择将组建军团'],
     ['move', '选中军队，点目标格两次出发'], ['battle', '打赢一场战斗'], ['gov', '任命一位知州'], ['office', '在“朝堂”任命一位朝臣'], ['reward', '在“将领”中赏赐一位将领'], ['turns', '结束三个回合']];
-  function guide(k) { const s = S(); if (!s) return; s.guide = s.guide || {}; if (k === 'turns') { s.guide.nT = (s.guide.nT || 0) + 1; if (s.guide.nT < 3) return; } if (!s.guide[k]) { s.guide[k] = 1; if (!s.guide.off) toast('✓ ' + GUIDE.find(x => x[0] === k)[1]); } }
+  function guide(k) { const s = S(); if (!s) return; s.guide = s.guide || {}; if (k === 'turns') { s.guide.nT = (s.guide.nT || 0) + 1; if (s.guide.nT < 3) return; } if (!s.guide[k]) { s.guide[k] = 1; if (!s.guide.off) toast('已成：' + GUIDE.find(x => x[0] === k)[1]); } }
   function guideHTML() {
     const g = S().guide || {};
     if (g.off) return '';
     const done = GUIDE.filter(x => g[x[0]]).length;
     if (done === GUIDE.length) return '';
     return `<div class="sec">初政指引 <span class="r cost">${done}/${GUIDE.length}　<a data-act="guideoff" style="cursor:pointer">收起</a></span></div>` +
-      GUIDE.map(([k, t]) => `<div class="row" style="padding:2px 4px">${g[k] ? '<span class="pos">✓</span>' : '<span class="note">○</span>'}<span class="${g[k] ? 'note' : ''}">${t}</span></div>`).join('');
+      GUIDE.map(([k, t]) => `<div class="row" style="padding:2px 4px">${g[k] ? '<span class="pos">已</span>' : '<span class="note">未</span>'}<span class="${g[k] ? 'note' : ''}">${t}</span></div>`).join('');
   }
   function showCities() {
     const cs = GAME.citiesOf(P()).sort((a, b) => b.pop - a.pop);
