@@ -162,7 +162,7 @@ var EVENTS = (function () {
     },
     battleCaptive: {
       title: '阵前获将',
-      text: p => `敌将${p.name}已押至军前，诸将请定去留。其人或可为我用，然心志未明，须审其言。`,
+      text: p => `敌将${p.name}已押至军前。${p.loot?.length ? `缴得${GAME.itemNames(p.loot)}，已入府库。` : ''}诸将请定去留。其人或可为我用，然心志未明，须审其言。`,
       choices: [
         { t: '晓以恩义，试令来降', d: '俘将越忠于故主、越有智略，越难招降', fn: p => {
           const g = battlePrisoner(p.gen);
@@ -689,14 +689,9 @@ var EVENTS = (function () {
       text: p => `有乡人于故宅整地，得【${DATA.ITEMS[p.item].name}】，封裹而进。郡吏考其铭识，云系前朝传物，主人但愿为官府所用。可颁赏收存，赐与${GAME.gen(p.gen).name}；亦可旌其义行，还其所藏，使子孙自守。`,
       choices: [
         { t: '受其所献，赐予臣下', d: p => DATA.ITEMS[p.item].desc, fn: p => {
-          const S = G(), g = GAME.gen(p.gen), it = DATA.ITEMS[p.item];
-          if (!it || !g || g.f !== P() || !active(g) || (g.items || []).length >= 3) return;
-          const taken = S.itemsTaken || (S.itemsTaken = {});
-          if (taken[p.item]) return;
-          (g.items || (g.items = [])).push(p.item);
-          taken[p.item] = 1;
-          for (const k of ['tong', 'wu', 'zhi', 'zheng']) if (it[k]) GAME.applyLevel(g, { k: 'stat', s: k, v: it[k] });
-          GAME.log(`${g.name}获赐【${it.name}】。`, 'big');
+          const g = playerGeneral(p.gen);
+          if (!g || G().itemsTaken[p.item] || !GAME.equipItem(g, p.item)) return;
+          GAME.log(`${g.name}获赐${GAME.itemNames([p.item])}。`, 'big');
         } },
         { t: '旌表其义，宝仍归民', d: '京城民心 +4', fn: () => {
           const c = capital(P()); if (c) changeLoyalty(c, 4);
@@ -1446,7 +1441,7 @@ var EVENTS = (function () {
     }
     const captive = battlePrisoner(attacking ? rep.defGen : rep.attGen);
     if (won && captive && captive.f === enemy && cooled('battleCaptive') && r() < 0.55) {
-      queue('battleCaptive', { gen: captive.id, name: captive.name, army });
+      queue('battleCaptive', { gen: captive.id, name: captive.name, army, loot: rep.loot?.[captive.id] });
       return;
     }
     const fame = g && ledger.plans[g.id];
@@ -1611,7 +1606,7 @@ var EVENTS = (function () {
     ['tenConquests', '十国归版图', '由我方攻灭十国', f => f.conquests >= 10, 50, '外交'],
     ['twentyConquests', '列国归版图', '由我方攻灭二十国', f => f.conquests >= 20, 50, '外交'],
     ['thirtySites', '名迹三十访', '亲访三十处不同奇遇', f => f.visits >= 30, 25, '奇遇'],
-    ['fiveTreasures', '五宝在廷', '麾下将领集齐五种不同宝物', f => f.treasures >= 5, 25, '奇遇'],
+    ['fiveTreasures', '五宝在廷', '我朝将领与府库合有五种不同宝物', f => f.treasures >= 5, 25, '奇遇'],
     ['hardUnify', '逆势一统', '以严苛或地狱难度一统天下', f => f.unify && f.difficulty >= 2, 100, '挑战'],
     ['quickUnify', '百载定鼎', '百年之内一统天下', f => f.unify && f.elapsed <= 100, 100, '挑战'],
     ['noTribute', '不输一贯', '一统天下，未曾向外邦纳岁币', f => f.unify && !f.paidTribute, 100, '挑战'],
@@ -1779,7 +1774,7 @@ var EVENTS = (function () {
       india: cities.some(c => INDIA_CITIES.has(c.name)), capitals: S.victory || S.cities.every(c => !c.origCap || c.f === p),
       peaceful: S.T - progress.lastRevolt, fullCourt: typeof COURT !== 'undefined' && COURT.OFFICES.every(o => COURT.holder(o.id)),
       captureStreak: times.length === 5 && times[4] - times[0] <= 4, visits: Object.keys(progress.visits).length,
-      treasures: new Set(ranks.flatMap(g => g.items || [])).size, allies, tributes,
+      treasures: new Set(S.vault.concat(ranks.flatMap(g => g.items || []))).size, allies, tributes,
       unify: result === 'unify', capLost: S.flags.capLost, difficulty: S.difficulty, elapsed: S.T / 4 };
     for (const [id, name, , test, pts, cat] of ACHIEVEMENTS) {
       if ((cat !== '挑战' || result) && !book.honors[id] && test(facts)) {
@@ -2150,10 +2145,14 @@ var EVENTS = (function () {
     }
     const towns = cs.filter(c => !c.buildings.market);
     if (towns.length) pool.push({ ev: 'merchantProposal', city: GAME.pick(towns).id });
-    const items = Object.keys(DATA.ITEMS).filter(id => !(S.itemsTaken && S.itemsTaken[id]) &&
+    const items = Object.keys(DATA.ITEMS).filter(id => !S.itemsTaken[id] &&
       !S.pending.some(v => v.ev === 'offeredTreasure' && v.item === id));
     const gens = S.generals.filter(g => g.f === p && active(g) && (g.items || []).length < 3);
-    if (items.length && gens.length) pool.push({ ev: 'offeredTreasure', item: GAME.pick(items), gen: GAME.pick(gens).id });
+    const eligible = items.filter(id => gens.some(g => !GAME.itemEquipReason(g, id)));
+    if (eligible.length) {
+      const item = GAME.pick(eligible);
+      pool.push({ ev: 'offeredTreasure', item, gen: GAME.pick(gens.filter(g => !GAME.itemEquipReason(g, item))).id });
+    }
     return pool;
   }
 
@@ -2714,6 +2713,7 @@ var EVENTS = (function () {
     ['校印式，存本于官', { gold: -25, sci: 35 }], ['延邻老作证，免其券费', { gold: -20, happy: 5 }]);
 
   function presentable(p) {
+    if (p.ev === 'offeredTreasure') return !G().itemsTaken[p.item] && !GAME.itemEquipReason(playerGeneral(p.gen), p.item);
     if (p.ev === 'peaceoffer' || p.ev === 'longxingPeace') return alive(p.from) && GAME.atWar(P(), p.from);
     if (p.ev === 'leagueMuster') return G().flags.league?.stage === 'ally' && G().flags.league.leader === p.leader;
     if (p.ev === 'vassalAnnex') return GAME.canAnnexVassal(p.from);

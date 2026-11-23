@@ -263,8 +263,9 @@ var COURT = (function () {
       if (a) for (const o of s.cities) if (o.f !== P() && o.f !== 'rebel' && GAME.atWar(P(), o.f)) { const d = GEO.dist(o.tile, a.tile); if (d < bd) { bd = d; to = o.f; } }
       if (a && to) {
         a.f = to; a.path = []; g.f = to; g.status = 'army'; g.rank = 0;
-        GAME.log(`${g.name}积怨已久，竟率所部 ${a.units.length} 营叛投【${GAME.fac(to).name}】！`, 'war', a.tile);
-        s.pending.push({ ev: 'info', title: '将领叛逃', text: `${g.name}久怀不满，今率部众叛投【${GAME.fac(to).name}】。朝野震动。\n\n（提示：将领忠诚过低会叛逃。可在“将领”中赏赐，或在“朝堂”中任御史中丞以纠察百官。）` });
+        const carried = g.items?.length ? `并携${GAME.itemNames(g.items)}而去。` : '';
+        GAME.log(`${g.name}积怨已久，竟率所部 ${a.units.length} 营叛投【${GAME.fac(to).name}】！${carried}`, 'war', a.tile);
+        s.pending.push({ ev: 'info', title: '将领叛逃', text: `${g.name}久怀不满，今率部众叛投【${GAME.fac(to).name}】。${carried}朝野震动。\n\n（提示：将领忠诚过低会叛逃。可在“将领”中赏赐，或在“朝堂”中任御史中丞以纠察百官。）` });
         S().court.auth = Math.max(0, S().court.auth - 6);
         return;
       }

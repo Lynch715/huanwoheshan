@@ -1250,38 +1250,39 @@ var DATA = (function () {
 
 
   // ---------- 宝物 ----------
+  const ITEM_SLOTS = { weapon: '兵器', mount: '坐骑', armor: '甲胄', warbook: '兵书', classic: '经籍', token: '信物' };
   const ITEMS = {
-    liquan: { name: '沥泉枪', desc: '武 +6', wu: 6 }, zhanlu: { name: '湛卢剑', desc: '武 +4，统 +2', wu: 4, tong: 2 },
-    wumu: { name: '武穆遗书', desc: '统 +6，智 +2', tong: 6, zhi: 2 }, sunzi: { name: '孙子兵法', desc: '智 +6', zhi: 6 },
-    taigong: { name: '太公兵法', desc: '统 +4，智 +4', tong: 4, zhi: 4 }, wuzhui: { name: '乌骓马', desc: '行军 +1', mv: 1 },
-    chitu: { name: '赤兔马', desc: '行军 +1，武 +2', mv: 1, wu: 2 }, dilu: { name: '的卢马', desc: '行军 +1，智 +1', mv: 1, zhi: 1 },
-    mingguang: { name: '明光铠', desc: '全军防御 +10%', armor: 0.1 }, liannu: { name: '诸葛连弩图', desc: '弓弩 +20%', bow: 0.2 },
-    yuxi: { name: '传国玉玺', desc: '政 +6，统 +2', zheng: 6, tong: 2 }, zhenguan: { name: '贞观政要', desc: '政 +6', zheng: 6 },
-    tongjian: { name: '资治通鉴', desc: '政 +4，智 +3', zheng: 4, zhi: 3 }, mengxi: { name: '梦溪笔谈', desc: '智 +4，政 +2', zhi: 4, zheng: 2 },
-    hufu: { name: '虎符', desc: '统 +5', tong: 5 }, qinggang: { name: '青釭剑', desc: '武 +5', wu: 5 },
-    baodao: { name: '西域宝刀', desc: '武 +4', wu: 4 }, xingpan: { name: '大食星盘', desc: '智 +3，行军 +1（海上）', zhi: 3 },
-    shengqiang: { name: '朗基努斯圣枪', desc: '武 +3，统 +3', wu: 3, tong: 3 }, jinpai: { name: '御赐金牌', desc: '统 +3，士气不易溃', tong: 3, armor: 0.05 },
+    liquan: { name: '沥泉枪', desc: '武 +6', wu: 6, slot: 'weapon', owner: '岳飞', hist: '《说岳全传》载，岳飞于沥泉得枪。' }, zhanlu: { name: '湛卢剑', desc: '武 +4，统 +2', wu: 4, tong: 2, slot: 'weapon' },
+    wumu: { name: '武穆遗书', desc: '统 +6，智 +2', tong: 6, zhi: 2, slot: 'warbook', hist: '后世小说假托岳武穆所遗兵书。' }, sunzi: { name: '孙子兵法', desc: '智 +6', zhi: 6, slot: 'warbook' },
+    taigong: { name: '太公兵法', desc: '统 +4，智 +4', tong: 4, zhi: 4, slot: 'warbook' }, wuzhui: { name: '乌骓马', desc: '行军 +1', mv: 1, slot: 'mount' },
+    chitu: { name: '赤兔马', desc: '行军 +1，武 +2', mv: 1, wu: 2, slot: 'mount' }, dilu: { name: '的卢马', desc: '行军 +1，智 +1', mv: 1, zhi: 1, slot: 'mount' },
+    mingguang: { name: '明光铠', desc: '全军防御 +10%', armor: 0.1, slot: 'armor' }, liannu: { name: '诸葛连弩图', desc: '弓弩 +20%', bow: 0.2, slot: 'warbook' },
+    yuxi: { name: '传国玉玺', desc: '政 +6，统 +2', zheng: 6, tong: 2, slot: 'token' }, zhenguan: { name: '贞观政要', desc: '政 +6', zheng: 6, slot: 'classic' },
+    tongjian: { name: '资治通鉴', desc: '政 +4，智 +3', zheng: 4, zhi: 3, slot: 'classic' }, mengxi: { name: '梦溪笔谈', desc: '智 +4，政 +2', zhi: 4, zheng: 2, slot: 'classic' },
+    hufu: { name: '虎符', desc: '统 +5', tong: 5, slot: 'token' }, qinggang: { name: '青釭剑', desc: '武 +5', wu: 5, slot: 'weapon' },
+    baodao: { name: '西域宝刀', desc: '武 +4', wu: 4, slot: 'weapon' }, xingpan: { name: '大食星盘', desc: '智 +3，行军 +1（海上）', zhi: 3, slot: 'token' },
+    shengqiang: { name: '朗基努斯圣枪', desc: '武 +3，统 +3', wu: 3, tong: 3, slot: 'weapon' }, jinpai: { name: '御赐金牌', desc: '统 +3，士气不易溃', tong: 3, armor: 0.05, slot: 'token' },
     // 旧物、传本与传说名器
-    dingqin: { name: '定秦剑', desc: '武 +5，统 +2', wu: 5, tong: 2 },
-    qixing: { name: '七星宝刀', desc: '武 +5', wu: 5 },
-    wuxue: { name: '武经总要', desc: '统 +4，智 +3', tong: 4, zhi: 3 },
-    wujing: { name: '武经七书', desc: '统 +5，智 +3', tong: 5, zhi: 3 },
-    wuzijing: { name: '吴子兵法', desc: '统 +4，智 +2', tong: 4, zhi: 2 },
-    yuejueshu: { name: '越绝书', desc: '智 +4，政 +2', zhi: 4, zheng: 2 },
-    qimin: { name: '齐民要术', desc: '政 +5，智 +2', zheng: 5, zhi: 2 },
-    yingzao: { name: '营造法式', desc: '智 +4，政 +3', zhi: 4, zheng: 3 },
-    tangliudian: { name: '唐六典', desc: '政 +6，智 +1', zheng: 6, zhi: 1 },
-    datangxiyu: { name: '大唐西域记', desc: '智 +4，政 +2', zhi: 4, zheng: 2 },
-    yixian: { name: '仪象法要', desc: '智 +5，政 +2', zhi: 5, zheng: 2 },
-    yuchang: { name: '鱼肠剑', desc: '武 +6', wu: 6 },
-    longquan: { name: '龙泉剑', desc: '武 +4，统 +2', wu: 4, tong: 2 },
-    zhaoyebai: { name: '照夜白', desc: '行军 +1，统 +2', mv: 1, tong: 2 },
-    damascus: { name: '大马士革刀', desc: '武 +5，统 +1', wu: 5, tong: 1 },
-    shahnameh: { name: '列王纪', desc: '智 +4，政 +3', zhi: 4, zheng: 3 },
-    canon: { name: '医典', desc: '智 +5，政 +2', zhi: 5, zheng: 2 },
-    joyeuse: { name: '咎瓦尤斯剑', desc: '武 +3，统 +4', wu: 3, tong: 4 },
-    varangian: { name: '瓦兰吉长斧', desc: '武 +4，统 +1', wu: 4, tong: 1 },
-    mail: { name: '拂菻锁子甲', desc: '武 +2，全军防御 +8%', wu: 2, armor: 0.08 },
+    dingqin: { name: '定秦剑', desc: '武 +5，统 +2', wu: 5, tong: 2, slot: 'weapon' },
+    qixing: { name: '七星宝刀', desc: '武 +5', wu: 5, slot: 'weapon' },
+    wuxue: { name: '武经总要', desc: '统 +4，智 +3', tong: 4, zhi: 3, slot: 'warbook' },
+    wujing: { name: '武经七书', desc: '统 +5，智 +3', tong: 5, zhi: 3, slot: 'warbook' },
+    wuzijing: { name: '吴子兵法', desc: '统 +4，智 +2', tong: 4, zhi: 2, slot: 'warbook' },
+    yuejueshu: { name: '越绝书', desc: '智 +4，政 +2', zhi: 4, zheng: 2, slot: 'classic' },
+    qimin: { name: '齐民要术', desc: '政 +5，智 +2', zheng: 5, zhi: 2, slot: 'classic' },
+    yingzao: { name: '营造法式', desc: '智 +4，政 +3', zhi: 4, zheng: 3, slot: 'classic' },
+    tangliudian: { name: '唐六典', desc: '政 +6，智 +1', zheng: 6, zhi: 1, slot: 'classic' },
+    datangxiyu: { name: '大唐西域记', desc: '智 +4，政 +2', zhi: 4, zheng: 2, slot: 'classic' },
+    yixian: { name: '仪象法要', desc: '智 +5，政 +2', zhi: 5, zheng: 2, slot: 'classic' },
+    yuchang: { name: '鱼肠剑', desc: '武 +6', wu: 6, slot: 'weapon' },
+    longquan: { name: '龙泉剑', desc: '武 +4，统 +2', wu: 4, tong: 2, slot: 'weapon' },
+    zhaoyebai: { name: '照夜白', desc: '行军 +1，统 +2', mv: 1, tong: 2, slot: 'mount' },
+    damascus: { name: '大马士革刀', desc: '武 +5，统 +1', wu: 5, tong: 1, slot: 'weapon' },
+    shahnameh: { name: '列王纪', desc: '智 +4，政 +3', zhi: 4, zheng: 3, slot: 'classic' },
+    canon: { name: '医典', desc: '智 +5，政 +2', zhi: 5, zheng: 2, slot: 'classic' },
+    joyeuse: { name: '咎瓦尤斯剑', desc: '武 +3，统 +4', wu: 3, tong: 4, slot: 'weapon' },
+    varangian: { name: '瓦兰吉长斧', desc: '武 +4，统 +1', wu: 4, tong: 1, slot: 'weapon' },
+    mail: { name: '拂菻锁子甲', desc: '武 +2，全军防御 +8%', wu: 2, armor: 0.08, slot: 'armor' },
   };
   // ---------- 奇遇点 ----------
   const SITES = {
@@ -1329,7 +1330,7 @@ var DATA = (function () {
   ];
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
-  return { ITEMS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE,
+  return { ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE,
     CITIES, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

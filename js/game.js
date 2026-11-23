@@ -68,7 +68,7 @@ var GAME = (function () {
       v: 2, turn: 0, year: 1140, season: 2, doy: 189, scale: opts.scale || 7, T: 0, player: 'song', factions: {}, cities: [], armies: [], generals: [],
       tileCity: new Int32Array(N).fill(-1), explored: new Uint8Array(N), visible: new Uint8Array(N),
       rel: {}, flags: { coalition: {}, league: null, leagueWave: null, broken: [], songDefeats: [], releaseCommandOffered: false, recommendYear: null }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
-      settlement: null,
+      settlement: null, vault: [], itemsTaken: {}, itemMoved: {}, itemFirst: {},
     };
     S.flags.marriageDefeats = {};
     S.flags.marriageAskedFrom = {};
@@ -1468,7 +1468,7 @@ var GAME = (function () {
       if (!stillDef && (c.wall <= maxWall(c) * 0.4 || r > 0.65)) {
         rep.result = '城破';
         rep.captured = c.name;
-        captureCity(c, a.f, a);
+        captureCity(c, a.f, a, rep);
         a.tile = tile;
       } else if (!stillDef) rep.result = '守军尽没，城墙尚坚';
       else rep.result = rep.result || (attWin ? '攻城小胜' : '攻城不利');
@@ -1527,6 +1527,7 @@ var GAME = (function () {
   function itemSum(g, k) { let v = 0; for (const id of (g.items || [])) v += DATA.ITEMS[id][k] || 0; return v; }
   function nextLv(g) { return LV[Math.min(10, (g.lv || 1) + 1)]; }
   const STAT_NAME = { tong: '统', wu: '武', zhi: '智', zheng: '政' };
+  const ITEM_STATS = Object.keys(STAT_NAME);
   function levelOptions(g) {
     const stats = ['tong', 'wu', 'zhi', 'zheng'].sort((a, b) => (g[b] + Math.random() * 25) - (g[a] + Math.random() * 25));
     const opts = [{ k: 'stat', s: stats[0], v: 3 }, { k: 'stat', s: stats[1], v: 3 }];
@@ -1551,14 +1552,144 @@ var GAME = (function () {
       else applyLevel(g, pick(levelOptions(g)));
     }
   }
-  function giveItem(g, id) {
-    g.items = g.items || [];
-    if (g.items.length >= 3) return false;
-    g.items.push(id);
-    const it = DATA.ITEMS[id];
-    for (const k of ['tong', 'wu', 'zhi', 'zheng']) if (it[k]) g[k] = Math.min(120, g[k] + it[k]);
-    S.itemsTaken = S.itemsTaken || {}; S.itemsTaken[id] = 1;
+  function itemEquipReason(g, id) {
+    const item = DATA.ITEMS[id];
+    if (!g || !item) return '无此人或宝物。';
+    if (g.items?.includes(id)) return '已佩此物。';
+    if (g.items?.some(other => DATA.ITEMS[other].slot === item.slot)) return `已有${DATA.ITEM_SLOTS[item.slot]}。`;
+    if (g.items?.length >= 3) return '已佩三件。';
+    return '';
+  }
+  function itemStatGain(g, id, k) {
+    return Math.max(0, Math.min(DATA.ITEMS[id][k] || 0, 120 - g[k]));
+  }
+  function itemGain(g, id) {
+    return ITEM_STATS.reduce((sum, k) => sum + itemStatGain(g, id, k), 0);
+  }
+  function equipItem(g, id) {
+    if (itemEquipReason(g, id)) return false;
+    (g.items ||= []).push(id);
+    const fx = (g.itemFx ||= {})[id] = {};
+    for (const k of ITEM_STATS) {
+      if (!DATA.ITEMS[id][k]) continue;
+      fx[k] = itemStatGain(g, id, k);
+      g[k] += fx[k];
+    }
+    S.itemsTaken[id] = 1;
+    if (g.id != null) S.itemFirst[id] ??= g.id;
     return true;
+  }
+  function unequipItem(g, id) {
+    const idx = g?.items?.indexOf(id) ?? -1;
+    if (idx < 0) return false;
+    const fx = g.itemFx?.[id];
+    for (const k of ITEM_STATS) if (fx?.[k]) g[k] = Math.max(1, g[k] - fx[k]);
+    if (g.itemFx) delete g.itemFx[id];
+    g.items.splice(idx, 1);
+    if (DATA.ITEMS[id].mv && g.status === 'army') {
+      const a = army(g.loc);
+      if (a) a.mp = Math.min(a.mp, armyMP(a));
+    }
+    return true;
+  }
+  function migrateItemFx(g, originals) {
+    if (!g.items?.length) return;
+    for (const id of g.items) {
+      S.itemsTaken[id] = 1;
+      S.itemFirst[id] ??= g.id;
+    }
+    if (g.itemFx) return;
+    const original = g.hist ? originals.get(g.name) : null;
+    const available = ITEM_STATS.map((k, i) => Math.max(0, g[k] - (original?.[i + 3] ?? 30)));
+    g.itemFx = {};
+    for (const id of g.items) {
+      const fx = g.itemFx[id] = {};
+      ITEM_STATS.forEach((k, i) => {
+        if (!DATA.ITEMS[id][k]) return;
+        fx[k] = Math.min(DATA.ITEMS[id][k], available[i]);
+        available[i] -= fx[k];
+      });
+    }
+  }
+  function itemNames(ids = []) { return ids.map(id => `【${DATA.ITEMS[id].name}】`).join('、'); }
+  function itemOfficer(g) { return !!g && ['idle', 'army', 'gov', 'court'].includes(g.status); }
+  function isItemOldOwner(g, id) {
+    return (g.id != null && S.itemFirst[id] === g.id) || (g.hist && DATA.ITEMS[id].owner === g.name);
+  }
+  function itemOldOwners(id) {
+    return [...new Set([gen(S.itemFirst[id])?.name, DATA.ITEMS[id].owner].filter(Boolean))];
+  }
+  function itemMoveReason(id) {
+    const moved = S.itemMoved[id];
+    const seasonStart = S.T - (S.doy % 90) / 90;
+    return moved != null && moved >= seasonStart - 1e-8 ? '此物本季已经转手。' : '';
+  }
+  function storeItem(g, id) {
+    unequipItem(g, id);
+    S.vault.push(id);
+    S.itemMoved[id] = S.T;
+  }
+  function recoverItem(g, id) {
+    if (g?.f !== S.player || !itemOfficer(g) || !g.items?.includes(id)) return '此物不可收归府库。';
+    const reason = itemMoveReason(id);
+    if (reason) return reason;
+    const own = isItemOldOwner(g, id);
+    storeItem(g, id);
+    g.loyalty = clamp((g.loyalty ?? 75) - (own ? 15 : 6), 0, 100);
+    log(`${g.name}所佩${itemNames([id])}收归府库。` + (own ? '夺其旧物，心有怏怏。' : ''), 'info');
+    emit('change');
+    return '';
+  }
+  function grantItem(g, id) {
+    if (!S.vault.includes(id) || g?.f !== S.player || !itemOfficer(g)) return '此物不可赐予该将。';
+    const reason = itemMoveReason(id) || itemEquipReason(g, id);
+    if (reason) return reason;
+    const own = isItemOldOwner(g, id);
+    equipItem(g, id);
+    S.vault.splice(S.vault.indexOf(id), 1);
+    S.itemMoved[id] = S.T;
+    g.loyalty = clamp((g.loyalty ?? 75) + (own ? 15 : 5), 0, 100);
+    log(`${own ? '赐还' : '赐予'}${g.name}${itemNames([id])}。`, 'info');
+    emit('change');
+    return '';
+  }
+  function returnItemToPool(g, id) {
+    unequipItem(g, id);
+    delete S.itemsTaken[id];
+  }
+  function settleCaptiveItems(g, rep) {
+    const by = g.capBy;
+    if (!by || by === g.f || !g.items?.length) return false;
+    const ids = [...g.items];
+    if (by === S.player) {
+      for (const id of ids) storeItem(g, id);
+      if (rep) (rep.loot ||= {})[g.id] = ids;
+      log(`生擒敌将${g.name}，缴得${itemNames(ids)}，已入府库。`, 'war', rep?.tile);
+      return true;
+    }
+    if (g.f !== S.player) return false;
+    for (const id of ids) {
+      const recipient = pick(S.generals.filter(other => other.f === by && itemOfficer(other) && !itemEquipReason(other, id)));
+      if (recipient) {
+        unequipItem(g, id);
+        equipItem(recipient, id);
+        S.itemMoved[id] = S.T;
+      } else returnItemToPool(g, id);
+    }
+    return true;
+  }
+  function sweepItemTransfers() {
+    for (const g of S.generals) {
+      if (!g.items?.length) continue;
+      if (g.status === 'captive') settleCaptiveItems(g);
+      else if (g.status === 'dead' || g.status === 'gone') {
+        const ids = [...g.items];
+        if (g.f === S.player) {
+          for (const id of ids) storeItem(g, id);
+          log(`${g.name}遗物${itemNames(ids)}收归府库。`, 'info');
+        } else for (const id of ids) returnItemToPool(g, id);
+      }
+    }
   }
 
   // ---------- 奇遇点 ----------
@@ -1626,10 +1757,9 @@ var GAME = (function () {
       }
       case 'ruins': {
         st.used = true; big = true;
-        S.itemsTaken = S.itemsTaken || {};
-        const left = Object.keys(DATA.ITEMS).filter(k => !S.itemsTaken[k]);
+        const left = g ? Object.keys(DATA.ITEMS).filter(k => !S.itemsTaken[k] && !itemEquipReason(g, k)) : [];
         const id = left.length && Math.random() < 0.75 ? pick(left) : null;
-        if (id && g && giveItem(g, id)) { msg = `于${st.name}掘得宝物【${DATA.ITEMS[id].name}】（${DATA.ITEMS[id].desc}），归${g.name}所有。`; short = '得' + DATA.ITEMS[id].name; }
+        if (id && equipItem(g, id)) { msg = `于${st.name}掘得宝物【${DATA.ITEMS[id].name}】（${DATA.ITEMS[id].desc}），归${g.name}所有。`; short = '得' + DATA.ITEMS[id].name; }
         else { const v = ri(150, 300); F.gold += v; msg = `于${st.name}掘得金银 ${v} 贯。`; short = '钱+' + v; }
         break;
       }
@@ -1669,9 +1799,9 @@ var GAME = (function () {
       const roll = Math.random();
       const famous = g.hist && g.tong >= 90;
       if (roll < 0.35 && byF && byF !== 'rebel') {
-        takeCaptive(g, byF, rep?.tile ?? a.tile);
+        const seized = takeCaptive(g, byF, rep?.tile ?? a.tile, rep);
         if (rep) rep.captured = (rep.captured ? rep.captured + '，' : '') + '俘获' + g.name;
-        if (byF === S.player) log(`生擒敌将${g.name}！`, 'war');
+        if (byF === S.player && !seized) log(`生擒敌将${g.name}！`, 'war');
         else if (g.f === S.player) log(`${g.name}兵败，为【${fac(byF).name}】所俘！`, 'war');
       }
       else if (roll < 0.45 && !famous) { killGeneral(g, '阵亡'); if (rep) rep.result += `，${g.name}阵亡`; }
@@ -1689,7 +1819,7 @@ var GAME = (function () {
     g.status = 'dead'; g.loc = null;
     if (g.f === S.player) log(`${g.name}${why}。`, why === '阵亡' ? 'war' : 'info');
   }
-  function captureCity(c, f, byArmy) {
+  function captureCity(c, f, byArmy, rep) {
     const old = c.f, F_old = fac(old), F_new = fac(f);
     const hostileCapital = f === S.player && old !== 'rebel' && old !== f && c.cap;
     const wasCap = c.cap;
@@ -1700,7 +1830,7 @@ var GAME = (function () {
     const g = gen(c.governor);
     if (g) {
       g.status = 'idle'; g.loc = null;
-      if (Math.random() < 0.4 && f !== 'rebel') takeCaptive(g, f, c.tile);
+      if (Math.random() < 0.4 && f !== 'rebel') takeCaptive(g, f, c.tile, rep);
     }
     c.governor = null;
     for (const a of S.armies.filter(x => x.tile === c.tile && x.f === old)) destroyArmy(a, f);
@@ -1713,7 +1843,12 @@ var GAME = (function () {
       if (prisoner.f === f) {
         returnCaptive(prisoner);
         if (f === S.player) log(`王师克复${c.name}，救出${prisoner.name}。`, 'war', c.tile);
-      } else prisoner.capBy = f;
+      } else {
+        // 解交前先清点原看押国所缴之物。
+        settleCaptiveItems(prisoner);
+        prisoner.capBy = f;
+        if (f === S.player) settleCaptiveItems(prisoner, rep);
+      }
     }
     c.siegeStart = c.siegeLast = null;
     c.recentCapture = { from: old, t: S.T };
@@ -1758,11 +1893,11 @@ var GAME = (function () {
       log(`王师克【${F_old.name}】都城，旧姻遂绝，他邦多有离心。`, 'dip', c.tile);
     }
     if (hostileCapital && S.flags.league?.leader === old) dissolveLeague(c);
-    if (citiesOf(old).length === 0 && old !== 'rebel') factionDies(old, f);
+    if (citiesOf(old).length === 0 && old !== 'rebel') factionDies(old, f, false, rep);
     else if (hostileCapital) conquestOpinion();
     if (old === S.player || f === S.player) checkVictory();
   }
-  function factionDies(f, by, annexed = false) {
+  function factionDies(f, by, annexed = false, rep) {
     const F = fac(f);
     if (F.alive && f !== S.player && f !== 'rebel' && by === S.player) {
       S.flags.achievementProgress.conquests++;
@@ -1777,7 +1912,7 @@ var GAME = (function () {
     }
     for (const a of S.armies.filter(a => a.f === f)) destroyArmy(a, by);
     for (const g of S.generals) if (g.f === f && (g.status === 'idle' || g.status === 'future')) {
-      if (g.status === 'idle' && by && by !== 'rebel' && Math.random() < 0.5) takeCaptive(g, by, city(F.capital)?.tile);
+      if (g.status === 'idle' && by && by !== 'rebel' && Math.random() < 0.5) takeCaptive(g, by, city(F.capital)?.tile, rep);
       else if (g.status === 'idle') g.status = 'gone';
       else g.f = by === 'rebel' ? f : g.f; // 未出仕者
     }
@@ -1932,12 +2067,16 @@ var GAME = (function () {
     }
     return best?.id ?? null;
   }
-  function takeCaptive(g, f, tile) {
+  function takeCaptive(g, f, tile, rep) {
     g.status = 'captive'; g.capBy = f; g.loc = null;
     g.jail = nearestJail(f, tile); g.capT = S.T;
     delete g.capRansomT;
+    // 我朝战利品须随当场战报呈上，余者待回合末统一清点。
+    return f === S.player && settleCaptiveItems(g, rep);
   }
   function clearCaptivity(g) {
+    // 同一回合内脱身、释放或转投，先清点尚未结算的俘获。
+    settleCaptiveItems(g);
     delete g.capBy; delete g.jail; delete g.capT; delete g.capRansomT;
     g.loc = null;
   }
@@ -1962,8 +2101,8 @@ var GAME = (function () {
   }
   function joinCaptor(g, f) {
     if (f === S.player) S.flags.achievementProgress.recruits++;
-    g.f = f; g.status = 'idle'; g.loyalty = 55; g.rank = 0;
     clearCaptivity(g);
+    g.f = f; g.status = 'idle'; g.loyalty = 55; g.rank = 0;
   }
   function recruitCaptive(gid, f) {
     const g = gen(gid);
@@ -2680,6 +2819,7 @@ var GAME = (function () {
     marriageTurn();
     EVENTS.turn();
     if (typeof COURT !== 'undefined') COURT.turn();
+    sweepItemTransfers();
     updateVisibility();
     const reps = [];
     checkVictory();
@@ -2723,9 +2863,12 @@ var GAME = (function () {
     for (const k in S) if (k[0] !== '_') o[k] = S[k];
     o.tileCity = encodeTA(new Int16Array(S.tileCity)); o.tileCityFmt = 16; o.explored = encodeTA(S.explored); o.visible = undefined;
     // 已故/离去的非史实人物只留名
-    o.generals = S.generals.map(g => (!g.hist && (g.status === 'dead' || g.status === 'gone')) ? { id: g.id, name: g.name, f: g.f, status: g.status, birth: g.birth, tong: 0, wu: 0, zhi: 0, zheng: 0 } : g);
-    return JSON.stringify(o, (k, v) => {
+    o.generals = S.generals.map(g => (!g.hist && !g.items?.length && (g.status === 'dead' || g.status === 'gone')) ? { id: g.id, name: g.name, f: g.f, status: g.status, birth: g.birth, tong: 0, wu: 0, zhi: 0, zheng: 0 } : g);
+    const timeShift = Math.round(S.T * 100) / 100 - S.T;
+    return JSON.stringify(o, function (k, v) {
       if (k === '_fx' || k === '_bfx') return undefined;
+      // 保持移交至今的时差，避免 T 入档舍入后越过季界。
+      if (this === S.itemMoved) return v + timeShift;
       return typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v;
     });
   }
@@ -2739,6 +2882,11 @@ var GAME = (function () {
     if (!o.scale) { o.scale = 90; o.doy = o.season * 90 + 1; o.T = o.turn; }
     S = o;
     S.settlement ??= null;
+    S.vault ??= [];
+    S.itemsTaken ??= {};
+    S.itemMoved ??= {};
+    S.itemFirst ??= {};
+    for (const id of S.vault) S.itemsTaken[id] = 1;
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     S.difficulty = DATA.DIFFICULTY[S.difficulty] ? +S.difficulty : 1;
     S.flags.coalition ??= {};
@@ -2775,13 +2923,15 @@ var GAME = (function () {
       r.marriage ??= null;
     }
     for (const a of S.armies) { a.fortT ??= null; a.expeditionWarned ??= false; }
+    const originals = new Map(DATA.GEN.map(row => [row[0], row]));
     for (const g of S.generals) {
       g.rank ??= 0;
       g.powerGuard ??= 0;
       g.powerIgnored ??= 0;
       if (!g.cul) g.cul = fac(g.f)?.culture || 'han';
-      if (g.status === 'captive') repairCaptivity(g);
+      migrateItemFx(g, originals);
     }
+    for (const g of S.generals) if (g.status === 'captive') repairCaptivity(g);
     // 旧档的封爵奏议与「边将自专」曾共用编号，只有前者在发出时记过 powerLast。
     for (const p of S.pending) {
       if (p.ev === 'overmighty' && gen(p.gen)?.powerLast === S.T) p.ev = 'court_overmighty';
@@ -2804,6 +2954,7 @@ var GAME = (function () {
 
   return {
     terrainPower, terrainDefense, battleTerrainRows, tileTerrainRows, expeditionRate,
+    equipItem, unequipItem, itemNames, itemOfficer, isItemOldOwner, itemOldOwners, itemMoveReason, itemEquipReason, itemGain, recoverItem, grantItem, sweepItemTransfers,
     get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum,
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,

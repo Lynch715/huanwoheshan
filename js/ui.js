@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.16.0';
+  const VERSION = '0.17.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -985,6 +985,7 @@ var UI = (function () {
       }
       case 'techdesc': el.setAttribute('aria-expanded', el.getAttribute('aria-expanded') !== 'true'); break;
       case 'gens': showGenerals(); break;
+      case 'genspage': if (arg === 'vault') showVault(); else showGenerals(); break;
       case 'genfilter': genFilter = arg; showGenerals(); break;
       case 'genview': showGeneral(+arg); break;
       case 'dip': showDiplomacy(); break;
@@ -1289,6 +1290,7 @@ var UI = (function () {
         `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${statusText(g)}</td><td>${captiveTenure(g)}</td>
           <td>${generalStatChips(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
     openModal(`<h1>文武百官</h1>
+      ${generalTabs('roster')}
       <p class="note governor-count ${vacancies ? 'neg' : ''}">州郡 ${seats.length} 座，知州 ${filled} 员，缺 ${vacancies} 员</p>
       ${filterTabs('genfilter', '职守筛选', filters, genFilter)}
       ${phone.matches ? `<div class="sort-chips" role="group" aria-label="将领排序">${GEN_SORT.map(([key, title]) => sortControl(key, title)).join('')}</div>` : ''}
@@ -1309,6 +1311,62 @@ var UI = (function () {
       if (row) showGeneral(+row.dataset.general);
     };
   }
+  function generalTabs(page) {
+    return filterTabs('genspage', '百官与府库', [['roster', '百官'], ['vault', '府库']], page);
+  }
+  function showVault() {
+    const officers = S().generals.filter(g => g.f === P() && GAME.itemOfficer(g));
+    const groups = Object.entries(DATA.ITEM_SLOTS).map(([slot, title]) => {
+      const items = S().vault.filter(id => DATA.ITEMS[id].slot === slot);
+      if (!items.length) return '';
+      return `<section><h2 class="sec">${title}</h2>${items.map(id => {
+        const it = DATA.ITEMS[id], locked = GAME.itemMoveReason(id);
+        const choices = officers.map(g => ({ g, gain: GAME.itemGain(g, id), reason: GAME.itemEquipReason(g, id) }))
+          .sort((a, b) => b.gain - a.gain || a.g.id - b.g.id);
+        const options = choices.map(({g, gain, reason}) => {
+          const owner = GAME.isItemOldOwner(g, id) ? ' · 旧主' : '';
+          return `<option value="${g.id}" ${reason ? 'disabled' : ''}>${esc(g.name)}${owner} · 四维 +${gain}${reason ? ' · ' + esc(reason) : ''}</option>`;
+        }).join('');
+        const available = choices.some(c => !c.reason);
+        return `<article class="vault-item"><p class="general-term"><b>${esc(it.name)}</b> ${esc(it.desc)}</p>
+          ${it.hist ? `<p class="note">${esc(it.hist)}</p>` : ''}<p class="note">旧主 ${esc(GAME.itemOldOwners(id).join('、') || '未详')}</p>
+          <form class="vault-grant" data-vault-grant="${id}">
+            <select aria-label="择将受赐${esc(it.name)}" ${locked || !available ? 'disabled' : ''}>
+              <option value="">择将受赐</option>${options}</select>
+            <button type="submit" class="btn sm" disabled>赐予</button>
+          </form>${locked || !available ? `<p class="note">${esc(locked || '暂无合宜人选。')}</p>` : ''}</article>`;
+      }).join('')}</section>`;
+    }).join('');
+    openModal(`<h1>文武百官</h1>${generalTabs('vault')}
+      <div class="scroll" data-treasure-vault style="max-height:68vh">${groups || '<p class="note">府库暂无宝物。</p>'}</div>`, { width: '640px' });
+    const panel = $('modal').querySelector('[data-treasure-vault]');
+    for (const form of panel.querySelectorAll('[data-vault-grant]')) {
+      const select = form.querySelector('select'), button = form.querySelector('button');
+      select.onchange = () => { button.disabled = !select.value; };
+      form.onsubmit = e => {
+        e.preventDefault();
+        if (!select.value) return;
+        const reason = GAME.grantItem(GAME.gen(+select.value), form.dataset.vaultGrant);
+        if (reason) { toast(reason, 'war'); return; }
+        const top = panel.scrollTop;
+        refreshSide(); showVault();
+        $('modal').querySelector('[data-treasure-vault]').scrollTop = top;
+      };
+    }
+  }
+  function generalItems(g, readOnly) {
+    const canRecover = !readOnly && g.f === P() && GAME.itemOfficer(g);
+    return Object.entries(DATA.ITEM_SLOTS).map(([slot, title]) => {
+      const items = (g.items || []).filter(id => DATA.ITEMS[id].slot === slot);
+      const rows = items.map(id => {
+        const it = DATA.ITEMS[id], locked = GAME.itemMoveReason(id);
+        return `<div class="equipped-item"><span>${esc(it.name)} <small class="note">${esc(it.desc)}</small></span>
+          ${canRecover ? `<button type="button" class="btn sm" data-recover-item="${id}" ${locked ? 'disabled' : ''}>收归府库</button>` : ''}</div>
+          ${canRecover && locked ? `<small class="note">${esc(locked)}</small>` : ''}`;
+      }).join('');
+      return `<div class="general-term" data-item-slot="${slot}"><b>${title}</b>${rows || ' · 无'}</div>`;
+    }).join('');
+  }
   function showGeneral(id, { back = showGenerals, readOnly = false } = {}) {
     const g = GAME.gen(id);
     if (!g) return;
@@ -1318,7 +1376,6 @@ var UI = (function () {
     const statBar = (label, val, max, css = '', suffix = '') => `<div class="row"><b>${label}</b><div class="grow">${meter(val, max, css)}</div><span>${val}${suffix}</span></div>`;
     const names = (pairs, empty) => pairs.length ? pairs.map(([name, desc]) => `<p class="general-term"><b>${esc(name)}</b> ${esc(desc)}</p>`).join('') : `<p class="note">${empty}</p>`;
     const skills = GAME.skillList(g).map(k => [k, DATA.SKILLS[k] || '']);
-    const items = (g.items || []).map(i => DATA.ITEMS[i]).filter(Boolean).map(i => [i.name, i.desc]);
     const buttons = generalButtons(g, true, readOnly);
     const rank = readOnly ? null : COURT.rankTerms(g);
     const next = GAME.nextLv(g);
@@ -1331,7 +1388,7 @@ var UI = (function () {
         ${statBar('等级 ' + (g.lv || 1), Math.round(g.exp || 0), next, 'gold', ' / ' + next)}</div>
       <div class="general-detail-grid">
         <section><div class="sec">特技</div>${names(skills, '暂无特技。')}</section>
-        <section><div class="sec">宝物</div>${names(items, '未佩宝物。')}</section>
+        <section><div class="sec">宝物</div>${generalItems(g, readOnly)}</section>
       </div>
       <div class="sec">心志</div><div class="chips">
         <span class="chip">立场 ${COURT.STANCE_NAME[g.stance] || '未详'}</span>
@@ -1346,6 +1403,15 @@ var UI = (function () {
       <div class="record-actions"><button class="btn" type="button" data-general-back>返回</button>${buttons}</div></div>`, { width: '640px' });
     $('modal').onclick = e => {
       if (e.target.closest('[data-general-back]')) { back(); return; }
+      const recover = e.target.closest('[data-recover-item]');
+      if (recover && !readOnly) {
+        const reason = GAME.recoverItem(g, recover.dataset.recoverItem);
+        if (reason) { toast(reason, 'war'); return; }
+        const top = $('modal').querySelector('.general-detail').scrollTop;
+        refreshSide(); showGeneral(id, { back, readOnly });
+        $('modal').querySelector('.general-detail').scrollTop = top;
+        return;
+      }
       const button = e.target.closest('[data-g]');
       if (!button) return;
       const k = button.dataset.g;
@@ -1918,7 +1984,9 @@ var UI = (function () {
       <li>可选“自动决战”，也可于六角战场亲自调度。两种战法皆按军议所列地形调整各营战力。临阵每营每回合可移动后攻击一次，弓弩、火器、砲车可远射，砲车尤善破墙，包夹敌营可增伤。十回合内击溃敌军（兵力不足三成或士气崩溃）即胜。</li>
       <li><b>敌军来犯</b>：敌方回合结束后，凡敌军攻我城池或军团，逐一请示方略：可施守策（劫营、火攻、坚壁、疑兵），再选“亲自守城/迎战”或“交由守将”。亲自守御时敌军先攻，守满十回合即算守住。可在“设置”中改为仅守城时过问或全部交由守将。</li></ul>
       <h3>奇遇与将领成长</h3><ul><li>地图上的菱形标记为奇遇点：古战场（经验）、名山古刹（士气兵员）、隐士草庐（特技）、遗迹（宝物）、义军营寨（兵员）、牧马场、商队、屯粮所、藏书楼。带兵经过即可触发。</li>
-      <li>将领作战与奇遇可得经验，升级时三选一：提升能力或习得新特技（至多三项）。宝物每人至多三件，直接提升能力或行军。</li></ul>
+      <li>将领作战与奇遇可得经验，升级时三选一：提升能力或习得新特技（至多三项）。</li>
+      <li>宝物每人至多三件，同类只可佩一件，兵书与经籍可各佩一部。可在将领详情收归府库，再由「文武百官」的「府库」赐给他人，每件每季只可转手一次。俘获敌将可缴其宝物。</li>
+      <li>本局首佩之将为旧主。收其旧物，忠诚减十五，赐还则增十五。其余将领收归减六、受赐增五。沥泉枪依说岳典故，岳飞亦视为旧主。</li></ul>
       <h3>朝堂</h3><ul><li>“朝堂”中可任命宰相、枢密使、三司使、翰林学士、御史中丞、殿前都指挥使，各按其能力提供全国加成。</li>
       <li>群臣分主战、主和、中立。宣战与议和须经<b>廷议</b>：附议者多，可依议施行；否则可乾纲独断，但损权威、失人心。</li>
       <li>皇帝权威影响民心与忠诚；将领忠诚过低会挂冠而去，甚至率部叛逃。可赏赐、任以要职，或设御史中丞纠察百官。历代宋帝依次继位，各朝时议随之而变。</li></ul>
@@ -2307,7 +2375,12 @@ var UI = (function () {
   function battleRow(r) {
     const mine = r.att === P();
     const win = mine ? r.win : !r.win;
-    return `<tr><td>${facSeal(r.att)} ${esc(r.attName)}</td><td>${fmt(r.before.a)} → ${fmt(r.after.a)}</td><td>攻</td><td>${facSeal(r.def)} ${esc(r.defName)}${r.city ? '（' + r.city + '）' : ''}</td><td>${fmt(r.before.d)} → ${fmt(r.after.d)}</td><td class="${win ? 'pos' : 'neg'}"><b>${esc(myResult(r))}</b>${r.captured ? '<br>' + esc(r.captured) : ''}</td></tr>`;
+    const loot = battleLoot(r);
+    return `<tr><td>${facSeal(r.att)} ${esc(r.attName)}</td><td>${fmt(r.before.a)} → ${fmt(r.after.a)}</td><td>攻</td><td>${facSeal(r.def)} ${esc(r.defName)}${r.city ? '（' + r.city + '）' : ''}</td><td>${fmt(r.before.d)} → ${fmt(r.after.d)}</td><td class="${win ? 'pos' : 'neg'}"><b>${esc(myResult(r))}</b>${r.captured ? '<br>' + esc(r.captured) : ''}${loot ? '<br>' + esc(loot) : ''}</td></tr>`;
+  }
+  function battleLoot(r) {
+    const items = Object.values(r.loot || {}).flat();
+    return items.length ? `缴得${GAME.itemNames(items)}，已入府库。` : '';
   }
   function flushBattles(chain) {
     if (!battleQueue.length) { if (chain) processPending(); return; }
@@ -2320,7 +2393,7 @@ var UI = (function () {
         <div class="side">${ga ? PORTRAIT.img(ga, 72) : facSeal(r.att, '')}<h3>${esc(r.attName)}</h3>${ga ? ga.name + '　统' + ga.tong + ' 武' + ga.wu : '无主将'}<br>兵 ${fmt(r.before.a)} → <b>${fmt(r.after.a)}</b></div>
         <div class="vs">战</div>
         <div class="side">${gd ? PORTRAIT.img(gd, 72) : facSeal(r.def, '')}<h3>${esc(r.defName)}</h3>${gd ? gd.name + '　统' + gd.tong + ' 智' + gd.zhi : '无主将'}<br>兵 ${fmt(r.before.d)} → <b>${fmt(r.after.d)}</b>${r.city ? `<br>城防 ${Math.round(r.before.wall)} → ${Math.round(r.after.wall)}` : ''}</div></div>
-        <div class="bres ${win ? 'win' : 'lose'}">${win ? '捷' : '挫'}　${esc(myResult(r))}</div>${r.plan ? `<p class="note" style="text-align:center">${esc(r.plan)}</p>` : ''}${r.captured ? `<p style="text-align:center">${esc(r.captured)}</p>` : ''}
+        <div class="bres ${win ? 'win' : 'lose'}">${win ? '捷' : '挫'}　${esc(myResult(r))}</div>${r.plan ? `<p class="note" style="text-align:center">${esc(r.plan)}</p>` : ''}${r.captured ? `<p style="text-align:center">${esc(r.captured)}</p>` : ''}${r.loot ? `<p style="text-align:center">${esc(battleLoot(r))}</p>` : ''}
         <div class="choices"><button class="choice" data-act="mclose" style="text-align:center">知道了</button></div>`, { width: '640px', onClose: () => { RENDER.buildPolitical(); refreshSide(); setTimeout(processPending, 10); } });
       RENDER.flash(r.tile);
       return;
@@ -2367,7 +2440,12 @@ var UI = (function () {
       let d, a = null;
       while (!a && (d = q.shift())) a = GAME.defenseValid(d);
       if (!a) {
-        if (n) { RENDER.buildPolitical(); RENDER.buildFog(); if (sel && sel.type === 'army' && !GAME.army(sel.id)) select(null); refreshSide(); refreshTop(); }
+        if (n) {
+          GAME.sweepItemTransfers(); // 亲自守御在回合演武后才结算。
+          RENDER.buildPolitical(); RENDER.buildFog();
+          if (sel && sel.type === 'army' && !GAME.army(sel.id)) select(null);
+          refreshSide(); refreshTop();
+        }
         cb(); return;
       }
       n++;
