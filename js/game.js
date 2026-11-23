@@ -74,6 +74,7 @@ var GAME = (function () {
     S.flags.marriageAskedFrom = {};
     S.flags.lastCityLoss = S.flags.autoRankSeason = S.flags.autoVassalT = null;
     S.flags.marriageAsked = S.flags.marriageReprisal = null;
+    S.flags.regenManWarned = false;
     if (typeof EVENTS !== 'undefined') { EVENTS.initAchievements(S); EVENTS.initSchedule(S); }
     for (const d of DATA.FACTIONS) {
       S.factions[d.id] = {
@@ -99,7 +100,7 @@ var GAME = (function () {
       const cc = {
         id, name: c.name, f: c.f, origF: c.f, tile: t, pop: c.pop, store: 0, loyalty: 70, unrest: 0,
         buildings: {}, queue: [], garrison: [], wall: 0, governor: null, cap: c.cap, origCap: c.cap, trade: [], recentCapture: null, lastSiege: null,
-        port: GEO.coastal(t), seas: [...GEO.seaBodiesOf(t)], culture: fac(c.f).culture,
+        port: GEO.coastal(t), seas: [...GEO.seaBodiesOf(t)], culture: fac(c.f).culture, battleTurn: null,
       };
       S.cities.push(cc);
       if (c.cap) fac(c.f).capital = id;
@@ -184,7 +185,7 @@ var GAME = (function () {
     }
     c.loyalty = 65 + (c.cap ? 10 : 0);
   }
-  function mkUnit(t, s) { return { t, s: s || 100 }; }
+  function mkUnit(t, s) { return { t, s: s || 100, refT: null }; }
 
   function addGeneral(o) {
     const g = Object.assign({ id: S.generals.length, loc: null, loyalty: 80, exp: 0, wins: 0, rank: 0, powerGuard: 0, powerIgnored: 0 }, o);
@@ -1005,7 +1006,8 @@ var GAME = (function () {
   }
   function clearSentry(a) { a.sentry = false; a.fortT = null; }
   function createArmyRaw(f, tile, units, genId, name) {
-    const a = { id: S.nextArmy++, f, tile, units, gen: genId, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null, expeditionWarned: false };
+    const a = { id: S.nextArmy++, f, tile, units, gen: genId, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null,
+      expeditionWarned: false, battleTurn: null };
     S.armies.push(a);
     if (genId != null) { const g = gen(genId); g.status = 'army'; g.loc = a.id; }
     a.mp = armyMP(a);
@@ -1405,8 +1407,9 @@ var GAME = (function () {
     const B = battleSides(a, tile, M);
     const { defArmy, c, tt, defF, D, A } = B;
     meet(a.f, defF);
-    if (a.f === S.player) (S._armyBattles ||= new Set()).add(a.id);
-    if (defArmy?.f === S.player) (S._armyBattles ||= new Set()).add(defArmy.id);
+    a.battleTurn = S.turn;
+    if (defArmy) defArmy.battleTurn = S.turn;
+    if (c?.f === defF) c.battleTurn = S.turn;
     if (a.f !== 'rebel' && defF !== 'rebel' && defF !== a.f) (getRel(a.f, defF).struckBy ||= {})[a.f] = S.T;
     const before = opts.manual ? opts.manual.before : { a: sumStr(A.units), d: sumStr(D.units), wall: c ? c.wall : 0 };
     const fullWall = a.f === S.player && c?.f === defF && before.wall >= maxWall(c) - 0.01;
@@ -2016,16 +2019,105 @@ var GAME = (function () {
       return a && atWar(f, a.f);
     });
   }
+  function checkedUnits(owner, automated) {
+    if (!owner || (!automated && owner.f !== S.player) || !fac(owner.f)?.alive) return null;
+    if (owner.units) return army(owner.id) === owner ? owner.units : null;
+    return city(owner.id) === owner ? owner.garrison : null;
+  }
+  function unitIndices(units, indices) {
+    return [...new Set(indices)].filter(i => Number.isInteger(i) && i >= 0 && i < units.length);
+  }
+  function recordUnits(owner) {
+    const units = owner.units || owner.garrison;
+    rec({ k: 'gain', id: owner.units ? owner.id : null, city: owner.units ? null : owner.id,
+      tile: owner.tile, f: owner.f, n: units.length, str: sumStr(units), quiet: true });
+  }
+  const refillResources = { gold: '钱', man: '丁口', horse: '马', iron: '铁' };
+  const refillReady = u => u.refT == null || coalitionDue(u.refT + 1);
+
+  function reinforcementInfo(owner, indices = null, automated = false) {
+    const units = checkedUnits(owner, automated);
+    if (!units) return { ok: false, msg: '此军不可补员' };
+    if (owner.units && cityAt(owner.tile)?.f !== owner.f) return { ok: false, msg: '须入本国城池方可补员' };
+    if (owner.battleTurn === S.turn || enemyAdjacent(owner.tile, owner.f)) return { ok: false, msg: '临敌不及补员' };
+    const selected = indices == null ? units.map((u, i) => i) : unitIndices(units, indices);
+    const wounded = selected.filter(i => units[i].s < 100);
+    if (!wounded.length) return { ok: false, msg: '兵员已足' };
+    const available = wounded.filter(i => refillReady(units[i]));
+    if (!available.length || (indices != null && available.length !== wounded.length)) {
+      return { ok: false, msg: '近一季已补员，须满九十日' };
+    }
+    const F = fac(owner.f), cost = { gold: 0, man: 0, horse: 0, iron: 0 };
+    const goldFactor = automated && owner.f !== S.player ? difficultyRules().refillGold : 1;
+    for (const i of available) {
+      const u = units[i], base = U[u.t], missing = (100 - u.s) / 100;
+      cost.gold += base.gold * missing * 1.3 * goldFactor;
+      cost.man += base.man * missing * 1.3;
+      cost.horse += (base.horse || 0) * missing;
+      cost.iron += (base.iron || 0) * missing;
+    }
+    const missing = Object.keys(cost).filter(k => cost[k] > 0 && F[k] + 1e-9 < cost[k]);
+    if (missing.length) return { ok: false, cost, msg: missing.map(k => refillResources[k]).join('、') + '不足' };
+    return { ok: true, cost, indices: available };
+  }
+  function reinforceUnits(owner, indices = null, automated = false) {
+    const result = reinforcementInfo(owner, indices, automated);
+    if (!result.ok) return result;
+    const F = fac(owner.f), units = owner.units || owner.garrison;
+    for (const [key, amount] of Object.entries(result.cost)) if (amount) F[key] = Math.max(0, F[key] - amount);
+    for (const i of result.indices) { units[i].s = 100; units[i].refT = S.T; }
+    recordUnits(owner);
+    return result;
+  }
+
+  function consolidationInfo(owner, indices, automated = false) {
+    const units = checkedUnits(owner, automated);
+    if (!units) return { ok: false, msg: '此军不可合营' };
+    if (owner.battleTurn === S.turn) return { ok: false, msg: '此回合已交战，未可合营' };
+    const selected = unitIndices(units, indices).sort((a, b) => a - b);
+    if (selected.length < 2) return { ok: false, msg: '须选两营或以上' };
+    const type = units[selected[0]].t;
+    if (selected.some(i => units[i].t !== type)) return { ok: false, msg: '兵种不同，不可合营' };
+    if (selected.some(i => units[i].s >= 100)) return { ok: false, msg: '须选未满编之营' };
+    const strength = selected.reduce((sum, i) => sum + units[i].s, 0);
+    const retained = Math.ceil((strength - 1e-9) / 100);
+    if (owner.units && type === 'navy' && retained < selected.length && GEO.isWater(owner.tile)) {
+      const navy = units.filter(u => u.t === 'navy').length;
+      if ((navy - selected.length + retained) * 3 < units.length - navy) return { ok: false, msg: '合营后舟载不足，须先登岸' };
+    }
+    return { ok: true, indices: selected, strength, retained };
+  }
+  function consolidateUnits(owner, indices, automated = false) {
+    const result = consolidationInfo(owner, indices, automated);
+    if (!result.ok) return result;
+    const units = owner.units || owner.garrison;
+    const { indices: selected, retained } = result;
+    let left = result.strength;
+    const lastRefill = selected.reduce((latest, i) => Math.max(latest, units[i].refT ?? -Infinity), -Infinity);
+    for (const i of selected.slice(0, retained)) {
+      units[i].s = Math.min(100, left);
+      units[i].refT = Number.isFinite(lastRefill) ? lastRefill : null;
+      left -= units[i].s;
+    }
+    for (const i of selected.slice(retained).reverse()) units.splice(i, 1);
+    if (owner.units) {
+      clearSentry(owner);
+      owner.mp = Math.min(owner.mp, armyMP(owner));
+    }
+    recordUnits(owner);
+    return result;
+  }
+
   function dismissalReason(owner) {
     if (!owner || owner.f !== S.player || (owner.units ? army(owner.id) !== owner : city(owner.id) !== owner)) return '此军不可遣散';
-    if (owner.units && (S._armyBattles?.has(owner.id) || enemyAdjacent(owner.tile, owner.f))) return '临敌不可散军';
+    if (owner.units && (owner.battleTurn === S.turn || enemyAdjacent(owner.tile, owner.f))) return '临敌不可散军';
     return '';
   }
   function dismissalInfo(owner, idxs) {
     const reason = dismissalReason(owner);
     if (reason) return { ok: false, msg: reason };
     const units = owner.units || owner.garrison;
-    const indices = [...new Set(idxs)].filter(i => Number.isInteger(i) && i >= 0 && i < units.length);
+    const indices = unitIndices(units, idxs);
     if (!indices.length) return { ok: false, msg: '未选兵营' };
     const selected = indices.map(i => units[i]);
     const home = tileOwner(owner.tile) === S.player ? city(S.tileCity[owner.tile]) : null;
@@ -2041,7 +2133,7 @@ var GAME = (function () {
     if (owner.units) {
       if (units.length) {
         owner.mp = Math.min(owner.mp, armyMP(owner));
-        rec({ k: 'gain', id: owner.id, f: owner.f, tile: owner.tile, n: units.length, str: sumStr(units), quiet: true });
+        recordUnits(owner);
       } else disband(owner.id);
     }
     return result;
@@ -2560,6 +2652,28 @@ var GAME = (function () {
     emit('log', e);
   }
 
+  function recoverUnits(F, units, amount) {
+    const multiplier = F.id === 'rebel' ? 0 : F.id === S.player ? 1 : difficultyRules().regenMan;
+    let cost = 0;
+    if (multiplier) for (const u of units) {
+      if (u.s < 100) cost += Math.min(100 - u.s, amount) * U[u.t].man * multiplier / 100;
+    }
+    const available = Math.max(0, F.man);
+    const ratio = cost > 0 ? Math.min(1, available / cost) : 1;
+    if (ratio < 1 && F.id === S.player && !S.flags.regenManWarned) {
+      S.flags.regenManWarned = true;
+      log('丁口匮乏，诸营不得补员', 'regen', null, true);
+    }
+    if (cost > 0) F.man = Math.max(0, available - cost * ratio);
+    if (ratio <= 0) return false;
+    let changed = false;
+    for (const u of units) if (u.s < 100) {
+      u.s += Math.min(100 - u.s, amount) * ratio;
+      changed = true;
+    }
+    return changed;
+  }
+
   function processFaction(f) {
     const F = fac(f);
     if (!F.alive) return;
@@ -2610,7 +2724,7 @@ var GAME = (function () {
       const besieged = GEO.NBR[c.tile].some(n => { const a = armyAt(n); return a && atWar(a.f, f); });
       if (!besieged) c.wall = Math.min(mw, c.wall + Math.max(3, mw * 0.1) * e);
       // 守军休整
-      if (!besieged) for (const u of c.garrison) u.s = Math.min(100, u.s + 15 * e);
+      if (!besieged && recoverUnits(F, c.garrison, DATA.UNIT_RECOVERY.garrison * e)) recordUnits(c);
       // 民变
       const revolt = (c.loyalty < 25 ? 0.12 : 0) + (c.loyalty < 45 ? rules.occupation.revolt * occupationPressure(c) : 0);
       if (revolt > 0 && f !== 'rebel' && Math.random() < revolt * e) rebellion(c);
@@ -2707,24 +2821,39 @@ var GAME = (function () {
     const debt = difficultyRules().debt;
     for (const a of S.armies) {
       const F = fac(a.f);
-      const own = tileOwner(a.tile) === a.f;
-      const inCity = cityAt(a.tile) && cityAt(a.tile).f === a.f;
-      let heal = inCity ? 20 : own ? 8 : (allied(a.f, tileOwner(a.tile)) ? 4 : 0);
+      const territory = tileOwner(a.tile), own = territory === a.f;
+      const inCity = cityAt(a.tile)?.f === a.f;
+      const rates = DATA.UNIT_RECOVERY;
+      const recovery = inCity ? rates.city : own ? rates.home : allied(a.f, territory) ? rates.ally : 0;
+      let penalty = 0;
       if (!own && !inCity) {
         let nd = 99;
         for (const c of S.cities) if (c.f === a.f) nd = Math.min(nd, GEO.dist(c.tile, a.tile));
-        if (nd > 8) heal -= 4;
-        if (!TC.expedition.enabled && GEO.terrain[a.tile] === T.DESERT) heal -= 3;
+        if (nd > 8) penalty += 4;
+        if (!TC.expedition.enabled && GEO.terrain[a.tile] === T.DESERT) penalty += 3;
       }
-      if (F.food < 0) heal -= 10;
-      if (F.gold < 0) { heal -= 3; a.morale -= (a.f === S.player ? debt.morale : 5) * e; }
-      const hk = heal > 0 ? Math.min(1, e * 2) : e;
+      if (F.food < 0) penalty += 10;
+      if (F.gold < 0) { penalty += 3; a.morale -= (a.f === S.player ? debt.morale : 5) * e; }
+      // 周制原先加倍正回复，负回复照旧。换算到每季后保留这条损耗界线。
+      const heal = Math.max(0, recovery - 2 * penalty) - Math.max(0, penalty - recovery / 2);
+      const hk = e;
       const rate = expeditionRate(a);
       if (a.f === S.player) warnExpedition(a, rate);
       const retained = rate ? Math.pow(1 - rate, expeditionTime(GEO.terrain[a.tile])) : 1;
-      for (const u of a.units) u.s = clamp(u.s * retained + heal * hk, 1, 100);
+      let changed = !!rate;
+      if (heal > 0) {
+        if (retained !== 1) for (const u of a.units) u.s *= retained;
+        changed = recoverUnits(F, a.units, heal * hk) || changed;
+      } else {
+        for (const u of a.units) {
+          const strength = clamp(u.s * retained + heal * hk, 1, 100);
+          if (strength !== u.s) changed = true;
+          u.s = strength;
+        }
+      }
+      const oldCount = a.units.length;
       a.units = a.units.filter(u => u.s >= 8);
-      if (rate) rec({ k: 'gain', id: a.id, f: a.f, tile: a.tile, n: a.units.length, str: sumStr(a.units), quiet: true });
+      if (changed || a.units.length !== oldCount) recordUnits(a);
       if (a.f === S.player && F.gold <= -100 && a.units.length && Math.random() < debt.desertion * e) {
         const weakest = a.units.reduce((index, u, i) => u.s < a.units[index].s ? i : index, 0);
         a.units.splice(weakest, 1);
@@ -2803,7 +2932,6 @@ var GAME = (function () {
     diplomacyTurn();
     // 时间推进
     S.turn++;
-    S._armyBattles?.clear();
     S.T += E();
     const oldSeason = S.season, oldYear = S.year;
     S.doy += S.scale;
@@ -2868,7 +2996,7 @@ var GAME = (function () {
     return JSON.stringify(o, function (k, v) {
       if (k === '_fx' || k === '_bfx') return undefined;
       // 保持移交至今的时差，避免 T 入档舍入后越过季界。
-      if (this === S.itemMoved) return v + timeShift;
+      if (this === S.itemMoved || (k === 'refT' && typeof v === 'number')) return v + timeShift;
       return typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v;
     });
   }
@@ -2896,6 +3024,7 @@ var GAME = (function () {
     S.flags.broken ??= [];
     S.flags.songDefeats ??= [];
     S.flags.releaseCommandOffered ??= false;
+    S.flags.regenManWarned ??= false;
     S.flags.marriageAsked ??= null;
     S.flags.marriageReprisal ??= null;
     S.flags.marriageDefeats ??= {};
@@ -2911,6 +3040,8 @@ var GAME = (function () {
       delete c._bfx;
       c.recentCapture ??= null;
       c.lastSiege ??= null;
+      c.battleTurn ??= null;
+      for (const u of c.garrison) u.refT ??= null;
     }
     for (const F of Object.values(S.factions)) {
       delete F._fx;
@@ -2922,7 +3053,10 @@ var GAME = (function () {
       r.vassal ??= null;
       r.marriage ??= null;
     }
-    for (const a of S.armies) { a.fortT ??= null; a.expeditionWarned ??= false; }
+    for (const a of S.armies) {
+      a.fortT ??= null; a.expeditionWarned ??= false; a.battleTurn ??= null;
+      for (const u of a.units) u.refT ??= null;
+    }
     const originals = new Map(DATA.GEN.map(row => [row[0], row]));
     for (const g of S.generals) {
       g.rank ??= 0;
@@ -2959,6 +3093,7 @@ var GAME = (function () {
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,
     createArmyRaw, formArmy, transferToArmy, transferToCity, disband, dismissUnits, dismissalReason, dismissalInfo, enemyAdjacent, armyUpkeep, factionUpkeep, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
+    reinforcementInfo, reinforceUnits, consolidationInfo, consolidateUnits,
     assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
     ransomCost, ransomInfo, ransomCaptive, exchangeOptions, exchangeCaptive, peaceCaptives, defectCaptive,
     getRel, atWar, allied, warScore, casusBelli, declareWar, peaceTruce, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,

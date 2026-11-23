@@ -18,10 +18,47 @@ var AI = (function () {
     if (f === 'rebel' && !cities.length) { rebelArmies(); return; }
     research(f);
     const enemies = enemiesOf(f);
+    maintainUnits(F);
     if (f === S().player) dismissForDebt(F, cities, enemies);
     economy(f, cities, enemies);
     const declared = f !== 'rebel' && diplomacy(f, enemies);
     military(f, cities, declared ? enemiesOf(f) : enemies);
+  }
+
+  function maintainUnits(F) {
+    const s = S(), acted = s._unitMaintenance ||= {};
+    if (acted[F.id] === s.turn) return;
+    const reserve = Math.max(100, 2 * (F.income.upkeep || 0));
+    let refill = null, regroup = null;
+    for (const a of s.armies) {
+      if (a.f !== F.id || a.battleTurn === s.turn) continue;
+      const groups = {};
+      a.units.forEach((u, i) => {
+        if (u.s >= 100) return;
+        const group = groups[u.t] ||= { indices: [], strength: 0 };
+        group.indices.push(i);
+        group.strength += u.s;
+      });
+      for (const { indices, strength } of Object.values(groups)) {
+        if (indices.length < 2) continue;
+        if (strength > (indices.length - 1) * 100 + 1e-9) {
+          regroup ??= { a, indices };
+          continue;
+        }
+        if (GAME.consolidateUnits(a, indices, true).ok) {
+          acted[F.id] = s.turn;
+          return;
+        }
+      }
+      if (refill || F.gold <= reserve || GAME.cityAt(a.tile)?.f !== F.id) continue;
+      for (let i = 0; i < a.units.length; i++) {
+        if (a.units[i].s >= 75) continue;
+        const info = GAME.reinforcementInfo(a, [i], true);
+        if (info.ok && F.gold - info.cost.gold >= reserve) { refill = { a, i }; break; }
+      }
+    }
+    if (regroup && GAME.consolidateUnits(regroup.a, regroup.indices, true).ok) acted[F.id] = s.turn;
+    else if (refill && GAME.reinforceUnits(refill.a, [refill.i], true).ok) acted[F.id] = s.turn;
   }
 
   function dismissForDebt(F, cities, enemies) {

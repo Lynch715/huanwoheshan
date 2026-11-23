@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.17.0';
+  const VERSION = '0.18.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -11,10 +11,11 @@ var UI = (function () {
   let pendingTarget = -1;
   let moveMode = false;
   let battleQueue = [], inTurn = false;
-  let garrisonPick = new Set();
+  const unitPick = new Set();
   const SAVE_PREFIX = 'hwhs_save_';
   const HALL_KEY = 'hwhs_hall';
   const DIFFICULTY_NAMES = DATA.DIFFICULTY.map(d => d.name);
+  const REINFORCEMENT_DIFFICULTY_NOTE = '严苛、地狱之下丁口常不敷补员，宜善用合营与急募。';
   let difficulty = 1, timeScale = 7;
   let animSpeed = +(localStorage.getItem('hwhs_anim') || 1);
   const phone = matchMedia('(max-width: 600px), (max-height: 500px)');
@@ -679,7 +680,7 @@ var UI = (function () {
     else select(null);
   }
   function select(s) {
-    sel = s; garrisonPick.clear(); setPendingTarget(-1);
+    sel = s; unitPick.clear(); setPendingTarget(-1);
     moveMode = false;
     $('map').style.cursor = 'default';
     RENDER.state.sel = s ? { tile: s.tile, army: s.type === 'army' ? s.id : null } : null;
@@ -757,7 +758,9 @@ var UI = (function () {
   // 回合结束提示：我朝战报优先，天下大事最多两条，合计不超过五条
   function flushDeferred() {
     const L = deferredToasts; deferredToasts = [];
-    const own = L.filter(e => e.type !== 'world').slice(-4);
+    const shortage = L.find(e => e.type === 'regen');
+    const own = L.filter(e => e.type !== 'world' && e !== shortage).slice(shortage ? -3 : -4);
+    if (shortage) own.push(shortage);
     const world = L.filter(e => e.type === 'world').slice(-Math.min(2, 5 - own.length));
     for (const e of [...world, ...own]) toast(e.text, e.type);
   }
@@ -843,6 +846,47 @@ var UI = (function () {
       <p class="note">城垣尚存，今无所隶。</p>`;
   }
 
+  function selectedUnits(owner) {
+    return (owner.units || owner.garrison).flatMap((u, i) => unitPick.has(u) ? [i] : []);
+  }
+  function recoveryText() {
+    const rates = DATA.UNIT_RECOVERY;
+    return `军团每季休整，本国城内 +${rates.city}、本国境内 +${rates.home}、盟境近援 +${rates.ally}，皆耗丁口。粮尽或欠饷则少补，甚则减员。`;
+  }
+  function refillCostText(cost) {
+    return Object.entries({ gold: '钱', man: '丁口', horse: '马', iron: '铁' })
+      .filter(([key]) => cost[key] > 0).map(([key, name]) => `${name} ${fmtAmount(cost[key])}`).join('、');
+  }
+  function unitButton(act, label, info, attrs = '') {
+    const title = info.ok ? (info.cost ? refillCostText(info.cost) : '') : info.msg;
+    return `<button type="button" class="btn sm" data-act="${act}" ${attrs}${info.ok ? '' : ' disabled'}${title ? ' title="' + esc(title) + '"' : ''}>${label}</button>`;
+  }
+  function unitPanel(owner, extra = '', dismissalLock = '') {
+    const army = !!owner.units, units = owner.units || owner.garrison;
+    if (!units.length) return '<div class="note">城中无兵。</div>';
+    const canRefill = !army || GAME.cityAt(owner.tile)?.f === owner.f;
+    const batch = canRefill ? GAME.reinforcementInfo(owner) : null;
+    const picked = selectedUnits(owner);
+    const join = picked.length >= 2 ? GAME.consolidationInfo(owner, picked) : null;
+    const refill = batch ? unitButton('reinforce-all', army ? '全军补员' : '守军补员', batch) : '';
+    const combine = join ? unitButton('consolidate-units', '合营', join) : '';
+    const fee = batch?.ok ? `全补需${refillCostText(batch.cost)}。` : batch?.msg !== '兵员已足' ? batch?.msg : '';
+    const notes = [join?.msg, fee].filter(Boolean).map(text => `<p class="note unit-order-note">${esc(text)}</p>`).join('');
+    const rows = units.map((u, i) => {
+      const selected = unitPick.has(u);
+      const single = canRefill ? GAME.reinforcementInfo(owner, [i]) : null;
+      const refillBtn = single ? unitButton('reinforce-unit', '补', single, `data-arg="${i}" aria-label="补员第 ${i + 1} 营"`) : '';
+      const leave = army && canRefill ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : '';
+      const dismiss = army ? `<button class="btn sm" data-act="dismiss-unit" data-arg="${i}" aria-label="遣散第 ${i + 1} 营" ${dismissalLock}>散</button>` : '';
+      const cost = single?.ok ? refillCostText(single.cost) : u.s < 100 && single?.msg !== batch?.msg ? single?.msg : '';
+      return `<div class="row unit-row${selected ? ' sel' : ''}"><button type="button" class="unit-select" data-act="${army ? 'apick' : 'gpick'}" data-arg="${i}" aria-pressed="${selected}">
+        ${UNITART.img(owner.f, u.t, 34)}<span class="grow"><span class="unit-name">${esc(unitName(owner.f, u.t))}</span><span class="cost">约 ${fmt(u.s * 5)} 人</span><span class="meter"><i style="width:${u.s}%"></i></span></span>
+        </button><div class="unit-actions">${refillBtn}${leave}${dismiss}</div>${cost ? `<span class="note unit-order-note">${esc(cost)}</span>` : ''}</div>`;
+    }).join('');
+    const orders = extra + refill + combine;
+    return (orders ? `<div class="btns garrison-actions">${orders}</div>` : '') + notes + rows;
+  }
+
   function cityHTML(c) {
     const y = GAME.cityYield(c), tg = GAME.loyaltyTarget(c), g = GAME.gen(c.governor);
     const tabs = [['gov', '内政'], ['mil', '军务'], ['trade', '海贸']];
@@ -877,9 +921,10 @@ var UI = (function () {
       const cap = c.garrison.length;
       const gcap = GAME.garrisonCap(c);
       h += `<div class="sec">守军（${cap}/${gcap} 营）${cap > gcap ? '<span class="neg">超编，可遣散</span>' : ''}</div>`;
-      if (cap) h += `<div class="btns garrison-actions"><button class="btn sm red" data-act="form">组建军团${garrisonPick.size ? '（' + garrisonPick.size + '）' : ''}</button><button class="btn sm" data-act="dismiss-garrison" ${garrisonPick.size ? '' : 'disabled'}>遣散所选</button></div>`;
-      h += c.garrison.map((u, i) => `<div class="row click ${garrisonPick.has(i) ? 'sel' : ''}" data-act="gpick" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span></div>`).join('') || '<div class="note">城中无兵。</div>';
-      if (c.garrison.length) h += `<div class="note">点选守军营后组建军团（不选则全选）。军团规模受主将统率所限。</div>`;
+      const picked = selectedUnits(c).length;
+      const actions = `<button class="btn sm red" data-act="form">组建军团${picked ? '（' + picked + '）' : ''}</button><button class="btn sm" data-act="dismiss-garrison" ${picked ? '' : 'disabled'}>遣散所选</button>`;
+      h += unitPanel(c, actions);
+      if (cap) h += `<div class="note">点选守军营后组建军团（不选则全选）。围城时守军停补，平时每季休整 +${DATA.UNIT_RECOVERY.garrison}，耗用丁口。</div>`;
       const a = GAME.armyAt(c.tile);
       if (a && a.f === P()) h += `<div class="row click" data-act="selarmy" data-arg="${a.id}"><span class="grow">城中驻有：<b>${esc(GAME.armyName(a))}</b>（${a.units.length} 营）</span><span class="cost">选取 ›</span></div>`;
       h += `<div class="sec">征兵</div>`;
@@ -936,13 +981,13 @@ var UI = (function () {
     if (GAME.canSail(a)) h += `<p class="note">舟师足以载军，可横渡江海。</p>`;
     h += `<div class="sec">各营</div><div class="note army-upkeep">每季军饷 ${upkeepText(GAME.armyUpkeep(a))}</div>`;
     if (dismissal) h += `<div class="note neg">${esc(dismissal)}</div>`;
-    h += a.units.map((u, i) => `<div class="row">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}<br>${meter(u.s, 100)}</span><span class="cost">${fmt(u.s * 5)} 人</span>${inOwn ? `<button class="btn sm" data-act="toCity" data-arg="${i}">留驻</button>` : ''}<button class="btn sm" data-act="dismiss-unit" data-arg="${i}" aria-label="遣散第 ${i + 1} 营" ${locked}>散</button></div>`).join('');
+    h += unitPanel(a, '', locked);
     if (inOwn && c.garrison.length && a.units.length < GAME.armyCap(a)) {
       h += `<div class="sec">城中守军可补入</div>`;
       h += c.garrison.map((u, i) => `<div class="row click" data-act="toArmy" data-arg="${i}">${UNITART.img(P(), u.t, 34)}<span class="grow">${unitName(P(), u.t)}　${fmt(u.s * 5)} 人</span><span class="cost">补入 ›</span></div>`).join('');
     }
     if (near.length) h += `<div class="sec">相邻友军</div>` + near.map(o => `<div class="row"><span class="grow">${esc(GAME.armyName(o))}（${o.units.length} 营）</span><button class="btn sm" data-act="merge" data-arg="${o.id}">并入本军</button></div>`).join('');
-    h += `<p class="note">${TOUCH.matches ? '轻点目标格看路线，再点一次（或点「出发」）即行军' : '选中后右键目标格行军，或左键点两次'}；目标为交战之敌则进攻。城外每季休整 +8，入城 +20；粮尽则减员。</p>`;
+    h += `<p class="note">${TOUCH.matches ? '轻点目标格看路线，再点一次（或点「出发」）即行军' : '选中后右键目标格行军，或左键点两次'}；目标为交战之敌则进攻。</p><p class="note">${recoveryText()}</p>`;
     return h;
   }
   function foreignArmyHTML(a) {
@@ -957,7 +1002,7 @@ var UI = (function () {
   function dismissSelected(owner, indices) {
     const result = GAME.dismissUnits(owner, indices);
     if (!result.ok) { toast(result.msg); return; }
-    garrisonPick.clear();
+    unitPick.clear();
     if (owner.units && !GAME.army(owner.id)) {
       const c = GAME.cityAt(owner.tile);
       select(c?.f === P() ? { type: 'city', id: c.id, tile: c.tile } : null);
@@ -974,6 +1019,15 @@ var UI = (function () {
     if (!info.ok) { toast(info.msg); return; }
     const detail = info.abroad ? '客军散于异域，无可收还。' : `可收还丁口 ${fmtAmount(info.man)}。`;
     confirmBox(`遣散全军 ${indices.length} 营，每季可省${upkeepText(info.upkeep)}。${detail}可准此议？`, () => dismissSelected(a, indices));
+  }
+  function finishUnitOrder(result, text) {
+    if (!result.ok) { toast(result.msg); return; }
+    unitPick.clear();
+    showSavedPath();
+    refreshSide();
+    refreshTop();
+    RENDER.markDirty();
+    toast(text(result));
   }
 
   // ---------- 动作 ----------
@@ -1002,11 +1056,27 @@ var UI = (function () {
       case 'donate': { const d = GAME.donateInfo(P()); const n = arg === 'all' ? d.left : Math.ceil(d.cap / 4); const got = GAME.donate(P(), n); if (!got) toast('本季已捐满或国库不足'); showTech(); refreshTop(); break; }
       case 'govpick': pickGeneral('任命知州', g => true, g => g.zheng, gid => { GAME.assignGovernor(gid, c.id); guide('gov'); refreshSide(); }); break;
       case 'govoff': GAME.unassign(c.governor); refreshSide(); break;
-      case 'gpick': { const i = +arg; garrisonPick.has(i) ? garrisonPick.delete(i) : garrisonPick.add(i); refreshSide(); break; }
-      case 'dismiss-garrison': dismissSelected(c, [...garrisonPick]); break;
+      case 'gpick':
+      case 'apick': {
+        const u = (a?.units || c?.garrison)?.[+arg];
+        if (u) { unitPick.has(u) ? unitPick.delete(u) : unitPick.add(u); refreshSide(); }
+        break;
+      }
+      case 'reinforce-unit':
+      case 'reinforce-all': {
+        const result = GAME.reinforceUnits(a || c, k === 'reinforce-all' ? null : [+arg]);
+        finishUnitOrder(result, r => `已补足 ${r.indices.length} 营，费${refillCostText(r.cost)}。`);
+        break;
+      }
+      case 'consolidate-units': {
+        const owner = a || c;
+        finishUnitOrder(GAME.consolidateUnits(owner, selectedUnits(owner)), r => `已合 ${r.indices.length} 营为 ${r.retained} 营。`);
+        break;
+      }
+      case 'dismiss-garrison': dismissSelected(c, selectedUnits(c)); break;
       case 'form': {
         if (GAME.armyAt(c.tile)) { toast('城中已驻一军，请先令其出城或将守军补入该军'); break; }
-        const idx = garrisonPick.size ? [...garrisonPick] : c.garrison.map((u, i) => i);
+        const picked = selectedUnits(c), idx = picked.length ? picked : c.garrison.map((u, i) => i);
         pickGeneral('择将统军', g => true, g => g.tong, gid => {
           const cap = GAME.capFor(gid);
           if (idx.length > cap) toast(`主将统率所限，仅领 ${cap} 营`);
@@ -2006,7 +2076,8 @@ var UI = (function () {
       (debt.governance ? `四十城外每多一城，治理支出按基础支出的 ${Math.round(debt.governance * 1000) / 10}% 加计。` : '') +
       `欠饷每季士气减 ${debt.morale}，欠粮者民心下降${debt.famine ? '，久则户口减少' : ''}。` +
       (d.eraRecruit ? `他国迈入新时代可募 ${d.eraRecruit} 营。` : '') +
-      (d.startReserve < 1 ? '大宋初始钱粮减半。' : d.startReserve > 1 ? `大宋初始钱粮增加 ${Math.round((d.startReserve - 1) * 100)}%。` : '');
+      (d.startReserve < 1 ? '大宋初始钱粮减半。' : d.startReserve > 1 ? `大宋初始钱粮增加 ${Math.round((d.startReserve - 1) * 100)}%。` : '') +
+      (d.name === '严苛' || d.name === '地狱' ? REINFORCEMENT_DIFFICULTY_NOTE : '');
   }
   function terrainGuideHTML() {
     const { byTerrain, highGround, crossing, landing, water, expedition } = DATA.TERRAIN_COMBAT;
@@ -2045,6 +2116,10 @@ var UI = (function () {
       <li>民心低于 25 易生民变。寺观、常平仓、知州、奢侈物产（茶丝瓷香料）可安民；战事日久则厌战。</li>
       <li>委任<b>政</b>高之臣为知州，可大增一城产出。</li></ul>
       <h3>军事</h3><ul><li>在城中“军务”页征兵，募成后为守军；点选守军并择将即可<b>组建军团</b>。主将<b>统</b>越高，可统营数越多（最多十营）。</li>
+      <li>满营五百人。${recoveryText()}城中守军未受围时，每季回复 ${DATA.UNIT_RECOVERY.garrison} 点兵力，亦耗丁口。</li>
+      <li>军团入本国城池后，可逐营补员或全军补员。城守可在“军务”补员。按缺额急募，钱与丁口加三成，马铁照缺额支用。每营补员后须满九十日方可再募，临敌或本回合交战后不可急募。</li>
+      <li>在同一军团或同一城守军点选两营以上同兵种残营，可免费合营。余兵尽留，空营除籍，可省军饷。野外亦可合，本回合交战后不可。</li>
+      <li>${REINFORCEMENT_DIFFICULTY_NOTE}</li>
       <li>遣散兵营可省军饷，在本国境内按现有兵力收还半数征募丁口。“解散入城”则将诸营并入守军。</li>
       <li>兵种相克：步卒克骑，弓弩克步，骑兵克弓与砲车。甲骑、背嵬军、火器营为强兵。攻城宜带砲车，城防降至三成以下且守军尽没方可破城。</li>
       <li>战力取决于兵力、相克、主将统武智、特技、地形与士气。</li>
