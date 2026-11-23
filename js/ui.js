@@ -26,7 +26,8 @@ var UI = (function () {
     const zoom = phone.matches ? '' : SET.ui;
     for (const id of ['side', 'endturn', 'modal', 'tip', 'toasts']) $(id).style.zoom = zoom;
     $('top').style.zoom = phone.matches ? '' : Math.min(1, SET.ui);
-    $('side').style.maxHeight = phone.matches ? '' : `calc((100vh - 215px) / ${SET.ui})`;
+    document.documentElement.style.setProperty('--panel-zoom', zoom || 1);
+    document.documentElement.style.setProperty('--hud-zoom', phone.matches ? 1 : Math.min(1, SET.ui));
     document.documentElement.style.setProperty('--phone-font-scale', SET.ui);
   }
   function applySettings() {
@@ -56,6 +57,74 @@ var UI = (function () {
     return GAME.fac(f)?.alive ? f : null;
   }
   function meter(v, max, cls) { return `<div class="meter ${cls || ''}"><i style="width:${Math.max(0, Math.min(100, v / max * 100))}%"></i></div>`; }
+
+  const prose = 'p, li, .note, .story, .choice small, .ob-msg, .court-log > div > span:last-child, .loglist > div, .toast, .tresult > div, .tside > div, .battle .side, .cand';
+  let layoutRoster, layoutRosterSize, layoutNames;
+  function namePattern() {
+    const roster = S()?.generals;
+    if (layoutNames && layoutRoster === roster && layoutRosterSize === roster?.length) return layoutNames;
+    layoutRoster = roster;
+    layoutRosterSize = roster?.length;
+    const people = roster ? roster.map(g => g.name) : DATA.GEN.map(row => row[0]);
+    const terms = [...new Set(people.concat(COURT.OFFICES.map(office => office.name)))].filter(name => name.length >= 2);
+    const escaped = terms.sort((a, b) => b.length - a.length).map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    layoutNames = new RegExp('[（【《「『]?(?:' + escaped.join('|') + ')[，。；：！？、）】》」』]*', 'gu');
+    return layoutNames;
+  }
+  // 只处理已呈现的文字。旧浏览器也能把姓名、数值与单位、段尾作为整体排布。
+  function layoutText(root) {
+    const keep = (text, cls = 'keep') => {
+      const span = document.createElement('span');
+      span.className = cls;
+      span.textContent = text;
+      return span;
+    };
+    for (const button of root.querySelectorAll('.choice, .record-link')) {
+      const cls = button.matches('.choice') ? 'choice-label' : 'record-label';
+      for (const node of [...button.childNodes]) if (node.nodeType === Node.TEXT_NODE && node.data.trim()) {
+        const span = keep(node.data, cls);
+        if (!button.title) span.title = node.data.trim();
+        node.replaceWith(span);
+      }
+    }
+    const metric = /[（【《「『]?(?:(?:岁入|岁出|兵源|行军力|忠诚|威胁度|好感|权威|士气|民心|城防|折损|胜算|成功率|射程|战力|效果|主战|主和|中立|工事|嫁妆|文教|仓储|户口|等级|钱|粮|兵|工|文|马|铁|统|武|智|政|攻|守|行|岁|第|余)[ \t　]*)?[+−-]?\d[\d,.]*(?:[/:／—–-]\d[\d,.]*)?(?: *[%％]| *(?:万人|贯\/季|万|人|贯|石|营|州|座|员|程|日|年|岁|季|月|旬|周|分|级|票|条|项|KB))?(?:\/[日季月年])?[，。；：！？、）】》」』”’]*/gu;
+    const names = namePattern();
+    const blocks = [...root.querySelectorAll(prose)];
+    if (root.matches(prose)) blocks.unshift(root);
+    for (const block of blocks) {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+        acceptNode: n => n.data.trim() && n.parentElement.closest(prose) === block &&
+          !n.parentElement.closest('.keep, .choice-label, .record-label, button:not(.choice, .plan), .chip, .skill, select')
+          ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
+      });
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const text = node.data;
+        const ranges = [...text.matchAll(metric), ...text.matchAll(names)].map(m => [m.index, m.index + m[0].length]);
+        if (node === nodes.at(-1)) {
+          const tail = text.match(/[（【《「『“‘]*\p{Script=Han}{2}(?:[ \t]+[+−])?[，。；：！？、）】》」』”’]*\s*$/u);
+          if (tail) ranges.push([tail.index, tail.index + tail[0].trimEnd().length]);
+        }
+        if (!ranges.length) continue;
+        ranges.sort((a, b) => a[0] - b[0]);
+        const merged = [];
+        for (const range of ranges) {
+          const last = merged.at(-1);
+          if (last && range[0] < last[1]) last[1] = Math.max(last[1], range[1]);
+          else merged.push(range);
+        }
+        const fragment = document.createDocumentFragment();
+        let end = 0;
+        for (const [start, stop] of merged) {
+          fragment.append(text.slice(end, start), keep(text.slice(start, stop)));
+          end = stop;
+        }
+        fragment.append(text.slice(end));
+        node.replaceWith(fragment);
+      }
+    }
+  }
 
   // ---------- 启动 ----------
   function boot() {
@@ -291,6 +360,7 @@ var UI = (function () {
         <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}">行军</button><button class="btn" data-act="drawertoggle">详情</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
     }
     bar.innerHTML = head + body;
+    layoutText(bar);
     bar.classList.remove('hidden');
     requestAnimationFrame(revealSelection);
   }
@@ -728,16 +798,17 @@ var UI = (function () {
   function refreshSide() {
     const el = $('side');
     if (!S()) return;
-    if (!sel) { el.innerHTML = overviewHTML(); return; }
+    if (!sel) { el.innerHTML = overviewHTML(); layoutText(el); return; }
     if (sel.type === 'city') {
       const c = GAME.city(sel.id);
       el.innerHTML = !GAME.fac(c.f)?.alive ? ruinHTML(c) : c.f === P() ? cityHTML(c) : foreignCityHTML(c);
     }
-    else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
+    else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); layoutText(el); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
     if (sel.type !== 'tile') {
       el.querySelector('.ph').insertAdjacentHTML('afterend', `<button class="record-link terrain-link" data-act="terrain" data-arg="${sel.tile}">察看地势 · ${tileTerrainName(sel.tile)}</button>`);
     }
+    layoutText(el);
     renderOrderBar();
   }
   function overviewHTML() {
@@ -1012,6 +1083,7 @@ var UI = (function () {
     const modal = $('modal');
     modal.onclick = null;
     modal.innerHTML = (opts.lock ? '' : '<button class="mclose" data-act="mclose" aria-label="关闭">×</button>') + '<div class="modal-content">' + html + '</div>';
+    layoutText(modal);
     for (const table of modal.querySelectorAll('table.t')) {
       const scroll = document.createElement('div');
       scroll.className = 'table-scroll';
@@ -1021,6 +1093,7 @@ var UI = (function () {
     modal.style.width = opts.width || '';
     $('modal-bg').classList.remove('hidden');
   }
+  const modalScroller = panel => phone.matches ? panel.closest('.modal-content') : panel;
   function closeModal() {
     $('modal-bg').classList.add('hidden'); $('modal').innerHTML = '';
     const f = modalOnClose; modalOnClose = null; modalLocked = false;
@@ -1073,7 +1146,7 @@ var UI = (function () {
       <div class="tech-title">${can ? `<button type="button" class="tech-pick" ${choose}>${name}</button>` : name}
         ${known ? '<span class="note">已学</span>' : `<span class="cost">${cost}</span>`}</div>
       ${phone.matches ? `<p class="tech-desc">${desc}</p>` : `<button type="button" class="tech-desc" data-act="techdesc" title="${desc}" aria-expanded="false"><span>${desc}</span></button>`}
-      ${t.req && !known ? `<span class="cost tech-req">需 ${t.req.map(r => esc(TECH[r].name)).join('、')}</span>` : ''}
+      ${t.req && !known ? `<span class="cost tech-req">需 ${t.req.map((r, i) => `<span class="keep">${esc(TECH[r].name)}${i + 1 < t.req.length ? '、' : ''}</span>`).join('')}</span>` : ''}
       ${cur ? meter(sci, cost, 'gold') : ''}</article>`;
   }
   function showTech() {
@@ -1348,9 +1421,9 @@ var UI = (function () {
         if (!select.value) return;
         const reason = GAME.grantItem(GAME.gen(+select.value), form.dataset.vaultGrant);
         if (reason) { toast(reason, 'war'); return; }
-        const top = panel.scrollTop;
+        const top = modalScroller(panel).scrollTop;
         refreshSide(); showVault();
-        $('modal').querySelector('[data-treasure-vault]').scrollTop = top;
+        modalScroller($('modal').querySelector('[data-treasure-vault]')).scrollTop = top;
       };
     }
   }
@@ -1407,9 +1480,9 @@ var UI = (function () {
       if (recover && !readOnly) {
         const reason = GAME.recoverItem(g, recover.dataset.recoverItem);
         if (reason) { toast(reason, 'war'); return; }
-        const top = $('modal').querySelector('.general-detail').scrollTop;
+        const top = modalScroller($('modal').querySelector('.general-detail')).scrollTop;
         refreshSide(); showGeneral(id, { back, readOnly });
-        $('modal').querySelector('.general-detail').scrollTop = top;
+        modalScroller($('modal').querySelector('.general-detail')).scrollTop = top;
         return;
       }
       const button = e.target.closest('[data-g]');
@@ -1702,10 +1775,10 @@ var UI = (function () {
       const actions = `<button type="button" class="btn sm red" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? `<button type="button" class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}`;
       if (phone.matches) {
         return recordCard(title + `<span class="court-effect">效果 +${pct}%</span>`,
-          `<p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}${g ? `<span class="note">（看${score}：${g[o.stat]}）</span>
+          `<p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${g[o.stat]}</span>
           <span class="chip">${stanceTag(g)}</span><span class="chip">忠诚 ${Math.round(g.loyalty)}</span>` : ''}</div>`, actions);
       }
-      return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td>${holder}${g ? `（${score}${g[o.stat]}）` : ''}</td>
+      return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${g[o.stat]}</span>` : ''}</div></td>
         <td>${g ? stanceTag(g) : ''}</td><td>${g ? Math.round(g.loyalty) : ''}</td><td>${g ? '+' + pct + '%' : ''}</td>
         <td class="record-actions-cell">${actions}</td></tr>`;
     }).join('');
@@ -2466,11 +2539,12 @@ var UI = (function () {
     const el = document.createElement('div');
     el.className = 'toast ' + (type || '');
     el.textContent = text;
+    layoutText(el);
     $('toasts').appendChild(el);
     while ($('toasts').children.length > 5) $('toasts').firstChild.remove();
     setTimeout(() => { el.style.transition = 'opacity .5s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 500); }, type === 'big' ? 2200 : 3800);
   }
 
-  return { boot, select, toast, processPending, engage, showSettlement };
+  return { boot, select, toast, processPending, engage, showSettlement, layoutText };
 })();
 window.addEventListener('load', () => UI.boot());

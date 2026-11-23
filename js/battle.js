@@ -17,6 +17,7 @@ var TACTIC = (function () {
     root.innerHTML = `<div id="tac" class="${wide ? 'wide' : ''}">${html}</div>`;
     root.classList.remove('hidden');
     const panel = root.firstElementChild;
+    UI.layoutText(panel);
     if (scrollTop && !wide) {
       const region = isPhone() ? panel.querySelector('.tac-body') : panel;
       if (region) region.scrollTop = scrollTop;
@@ -98,7 +99,7 @@ var TACTIC = (function () {
   let showAllPlans = false;
   function planGrid(list, pick) {
     const ok = list.filter(x => x.ok), no = list.filter(x => !x.ok);
-    const btn = x => `<button class="plan ${pick === x.id ? 'on' : ''}" data-p="${x.id}" ${x.ok ? (x.hist ? 'title="' + esc(x.hist) + '"' : '') : 'disabled title="' + esc(x.hist || '') + '"'}><b>${x.name}</b> <span class="cost">${x.ok ? Math.round(x.chance * 100) + '%' : x.why}</span><br><span class="note">${x.desc}</span></button>`;
+    const btn = x => `<button class="plan ${pick === x.id ? 'on' : ''}" data-p="${x.id}" ${x.ok ? (x.hist ? 'title="' + esc(x.hist) + '"' : '') : 'disabled title="' + esc(x.hist || '') + '"'}><span class="plan-head"><b>${x.name}</b><span class="cost ${x.ok ? '' : 'plan-condition note'}">${x.ok ? Math.round(x.chance * 100) + '%' : x.why}</span></span><span class="note">${x.desc}</span></button>`;
     return `<div class="plans">${ok.length ? ok.map(btn).join('') : '<span class="note">眼下形势，无计可施。</span>'}</div>` +
       (no.length ? `<button type="button" class="note plan-more" data-more="1" aria-expanded="${showAllPlans}">${showAllPlans ? '▾ 收起' : '▸'} 不合形势之策 ${no.length} 条</button>` + (showAllPlans ? `<div class="plans">${no.map(btn).join('')}</div>` : '') : '');
   }
@@ -468,9 +469,13 @@ var TACTIC = (function () {
       if (!st.over && document.body.contains(cv)) requestAnimationFrame(draw);
     }
     function info(x) {
-      if (!x) { el.querySelector('#tinfo').innerHTML = '点选我军各营：绿色为可移动范围，红圈为可攻击之敌。每营每回合可移动后攻击一次。弓弩、火器、砲车可远射。'; return; }
-      const t = grid[x.r][x.c];
-      el.querySelector('#tinfo').innerHTML = `${UNITART.img(st.facs[x.side], x.t, 56, 'tinfo-art' + (x.side === 1 ? ' flip' : ''))}<b>${unitName(st.facs[x.side], x.t)}</b>　兵 ${Math.round(x.hp * 5)}　士气 ${Math.round(st.morale[x.side])}　攻 ${U[x.t].atk} 守 ${U[x.t].def} 行 ${MV[x.t] || 2}${RNG[x.t] ? ' 射程 ' + RNG[x.t] : ''}　地形：${TNAME[t]}　${U[x.t].desc}`;
+      const panel = el.querySelector('#tinfo');
+      if (!x) panel.textContent = '点选我军各营：绿色为可移动范围，红圈为可攻击之敌。每营每回合可移动后攻击一次。弓弩、火器、砲车可远射。';
+      else {
+        const t = grid[x.r][x.c];
+        panel.innerHTML = `${UNITART.img(st.facs[x.side], x.t, 56, 'tinfo-art' + (x.side === 1 ? ' flip' : ''))}<b>${unitName(st.facs[x.side], x.t)}</b>　兵 ${Math.round(x.hp * 5)}　士气 ${Math.round(st.morale[x.side])}　攻 ${U[x.t].atk} 守 ${U[x.t].def} 行 ${MV[x.t] || 2}${RNG[x.t] ? ' 射程 ' + RNG[x.t] : ''}　地形：${TNAME[t]}　${U[x.t].desc}`;
+      }
+      UI.layoutText(panel);
     }
     function selectUnit(x) {
       st.sel = x; reachSet = []; tgtSet = [];
@@ -615,6 +620,7 @@ var TACTIC = (function () {
     const box = document.createElement('div');
     box.className = 'tresult ' + (winner === 'win' ? 'win' : 'lose');
     box.innerHTML = `<div class="stamp">${winner === 'win' ? '捷' : winner === 'lose' ? '败' : '和'}</div><div>${esc(text)}</div><button class="btn red">收兵回营</button>`;
+    UI.layoutText(box);
     document.getElementById('tac').appendChild(box);
     box.querySelector('button').onclick = cb;
   }
