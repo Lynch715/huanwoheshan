@@ -497,9 +497,13 @@ var RENDER = (function () {
   }
 
   // ---------- 迷雾（1/4 分辨率） ----------
-  let fogNoise = null;
+  let fogNoise = null, fogTiles = null;
+  let fogExplored = null, fogVisible = null;
   function buildFog() {
     const S = GAME.S, SC = 4 / layerScale, mw = Math.ceil(BW / SC), mh = Math.ceil(BH / SC);
+    // 回放收尾、读档和事件都可能再次请求绘制同一份迷雾。
+    if (fogExplored && S.explored.every((v, i) => v === fogExplored[i]) &&
+        S.visible.every((v, i) => v === fogVisible[i])) return;
     if (!fog) fog = mkCanvas(mw, mh);
     if (!fogNoise) {
       fogNoise = new Float32Array(mw * mh);
@@ -508,12 +512,16 @@ var RENDER = (function () {
       for (let i = 0; i < fullSize; i++) { const n = Math.random(); if (i < fogNoise.length) fogNoise[i] = n; }
       boxBlur(fogNoise, mw, mh, 3, 1);
     }
+    if (!fogTiles) {
+      fogTiles = new Int16Array(mw * mh);
+      for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+        fogTiles[y * mw + x] = pixToHex((x + 0.5) * SC, (y + 0.5) * SC);
+      }
+    }
     const u = new Float32Array(mw * mh), dm = new Float32Array(mw * mh);
-    for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
-      const i = pixToHex((x + 0.5) * SC, (y + 0.5) * SC);
-      const k = y * mw + x;
-      if (i < 0) { u[k] = 1; continue; }
-      if (!S.explored[i]) u[k] = 1;
+    for (let k = 0; k < fogTiles.length; k++) {
+      const i = fogTiles[k];
+      if (i < 0 || !S.explored[i]) u[k] = 1;
       else if (!S.visible[i]) dm[k] = 1;
     }
     boxBlur(u, mw, mh, 3, 1); boxBlur(dm, mw, mh, 2, 1);
@@ -529,6 +537,8 @@ var RENDER = (function () {
       d[k * 4 + 3] = Math.min(255, al * 255 * (a > 0.5 ? (0.93 + n * 0.07) : 1));
     }
     fc.putImageData(img, 0, 0);
+    fogExplored = S.explored.slice();
+    fogVisible = S.visible.slice();
     miniDirty = true; markDirty();
   }
 
@@ -845,9 +855,13 @@ var RENDER = (function () {
     const placed = [];
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const L of labels) {
+      const h = parseInt(L.font.match(/(\d+)px/)[1]) + 2;
+      const top = L.y - h / 2, bottom = L.y + h / 2;
+      // 中心已落入另一标签的横向范围时，有纵向交集便必然碰撞。
+      if (L.pri < 100 && placed.some(q => L.x >= q[0] && L.x <= q[2] && top < q[3] && bottom > q[1])) continue;
       ctx.font = L.font;
-      const w = ctx.measureText(L.text).width + 4, h = parseInt(L.font.match(/(\d+)px/)[1]) + 2;
-      const r = [L.x - w / 2, L.y - h / 2, L.x + w / 2, L.y + h / 2];
+      const w = ctx.measureText(L.text).width + 4;
+      const r = [L.x - w / 2, top, L.x + w / 2, bottom];
       let hit = false;
       for (const q of placed) if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { hit = true; break; }
       if (hit && L.pri < 100) continue;

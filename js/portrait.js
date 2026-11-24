@@ -227,6 +227,13 @@ var PORTRAIT = (function () {
   function finish(path, image) {
     const old = art.get(path);
     if (old?.ready) return;
+    if (image?.parentNode) {
+      // 弹窗中的图片会连着父节点，只缓存地图圆章所需的像素。
+      const source = document.createElement('canvas');
+      source.width = source.height = 64;
+      source.getContext('2d').drawImage(image, 0, 0, 64, 64);
+      image = source;
+    }
     art.set(path, { ready: true, image });
     if (!image) return;
     if (typeof RENDER !== 'undefined') RENDER.markDirty();

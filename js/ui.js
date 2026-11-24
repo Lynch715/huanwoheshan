@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.19.0';
+  const VERSION = '0.19.1';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -1236,7 +1236,7 @@ var UI = (function () {
       case 'techdesc': el.setAttribute('aria-expanded', el.getAttribute('aria-expanded') !== 'true'); break;
       case 'gens': showGenerals(); break;
       case 'genspage': if (arg === 'vault') showVault(); else showGenerals(); break;
-      case 'genfilter': genFilter = arg; showGenerals(); break;
+      case 'genfilter': genFilter = arg; genPage = 0; showGenerals(); break;
       case 'genview': showGeneral(+arg); break;
       case 'dip': showDiplomacy(); break;
       case 'dipfilter': dipFilter = arg; showDiplomacy(); break;
@@ -1382,7 +1382,8 @@ var UI = (function () {
     ['lv', '级', g => g.lv || 1], ['loyalty', '忠诚', g => g.loyalty ?? 0], ['wins', '战绩', g => g.wins || 0],
     ['age', '年龄', g => S().year - g.birth],
   ];
-  let genFilter = 'all', genSort = 'total', genDir = -1;
+  const GEN_PAGE_SIZE = 48;
+  let genFilter = 'all', genSort = 'total', genDir = -1, genPage = 0;
   function recordCard(head, detail, buttons, attrs = '') {
     return `<article class="record-card ${attrs ? 'card-link' : ''}" ${attrs}><div class="record-head">${head}</div>
       ${detail}${buttons ? `<div class="record-actions">${buttons}</div>` : ''}</article>`;
@@ -1525,6 +1526,14 @@ var UI = (function () {
     const value = GEN_SORT.find(([id]) => id === genSort)[2];
     const roster = mine.filter(g => genFilter === 'all' || g.status === genFilter)
       .sort((a, b) => genDir * (value(a) - value(b)) || a.id - b.id);
+    const pages = phone.matches && innerHeight >= innerWidth ? Math.max(1, Math.ceil(roster.length / GEN_PAGE_SIZE)) : 1;
+    genPage = Math.min(genPage, pages - 1);
+    const cards = pages > 1 ? roster.slice(genPage * GEN_PAGE_SIZE, (genPage + 1) * GEN_PAGE_SIZE) : roster;
+    const pager = pages > 1 ? `<nav class="btns" aria-label="百官分页">
+      <button type="button" class="btn sm" data-g-page="${genPage - 1}" ${genPage === 0 ? 'disabled' : ''}>上一页</button>
+      <span class="note">${genPage + 1} / ${pages}</span>
+      <button type="button" class="btn sm" data-g-page="${genPage + 1}" ${genPage === pages - 1 ? 'disabled' : ''}>下一页</button>
+    </nav>` : '';
     const filters = [['all', '全部 ' + mine.length], ...GEN_STATUSES.map(([id, title]) => [id, title + ' ' + mine.filter(g => g.status === id).length])];
     const sortHead = (key, label) => `<th aria-sort="${genSort === key ? (genDir < 0 ? 'descending' : 'ascending') : 'none'}">${sortControl(key, label)}</th>`;
     const desktopName = g => `${PORTRAIT.img(g, 30, 'alt=""')} <button type="button" class="record-link">${generalName(g)}</button>`;
@@ -1533,7 +1542,7 @@ var UI = (function () {
        <span class="note">${g.status === 'captive' ? g.f === P() ? statusText(g) + ' · ' + captiveTenure(g) : esc(facName(g.f)) + ' · 被俘' : statusText(g)}</span></div><span class="chip">Lv ${g.lv || 1}</span>`,
       `<div class="chips">${generalStatChips(g)}</div>${generalTags(g) ? `<div class="record-tags">${generalTags(g)}</div>` : ''}`,
       generalButtons(g), `data-general="${g.id}"`);
-    const list = phone.matches ? `<div class="record-list">${roster.map(card).join('')}</div>` :
+    const list = phone.matches ? `${pager}<div class="record-list">${cards.map(card).join('')}</div>${pager}` :
       `<table class="t general-table"><tr><th>姓名</th>${sortHead('total', '综合')}${sortHead('age', '年')}${sortHead('lv', '级')}
         ${Object.entries(GAME.STAT_NAME).map(([k, n]) => sortHead(k, n)).join('')}<th>特技 / 宝物</th><th>立场</th>${sortHead('loyalty', '忠诚')}<th>职守</th>${sortHead('wins', '战绩')}<th></th></tr>
       ${roster.map(g => `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${GEN_SORT[0][2](g)}</td>
@@ -1559,10 +1568,12 @@ var UI = (function () {
       const sort = e.target.closest('[data-g-sort]');
       if (sort) {
         const key = sort.dataset.gSort;
-        genDir = genSort === key ? -genDir : -1; genSort = key;
+        genDir = genSort === key ? -genDir : -1; genSort = key; genPage = 0;
         showGenerals();
         return;
       }
+      const page = e.target.closest('[data-g-page]');
+      if (page && !page.disabled) { genPage = +page.dataset.gPage; showGenerals(); return; }
       const button = e.target.closest('[data-g]');
       if (button) { handleGeneralAction(button.dataset.g, +button.dataset.id, showGenerals); return; }
       const row = e.target.closest('[data-general]');

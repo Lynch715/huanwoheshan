@@ -189,7 +189,22 @@ var GEO = (function () {
     }
     return inside;
   }
-  function inAny(x, y, list) { for (const p of list) if (pip(x, y, p)) return true; return false; }
+  // 先排除包围盒之外的点，框内沿用原来的多边形判定。
+  const regions = Object.fromEntries(Object.entries({ ...R, seas: SEAS, isles: ISLES }).map(([name, list]) =>
+    [name, list.map(poly => {
+      let west = Infinity, east = -Infinity, south = Infinity, north = -Infinity;
+      for (const [lon, lat] of poly) {
+        west = Math.min(west, lon); east = Math.max(east, lon);
+        south = Math.min(south, lat); north = Math.max(north, lat);
+      }
+      return { poly, west, east, south, north };
+    })]));
+  function inAny(x, y, list) {
+    for (const { poly, west, east, south, north } of list) {
+      if (x >= west && x <= east && y >= south && y <= north && pip(x, y, poly)) return true;
+    }
+    return false;
+  }
 
   // 可复现随机
   function hash(a, b, s) {
@@ -270,7 +285,7 @@ var GEO = (function () {
     for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
       const [lon, lat] = lonlatOf(c, r);
       const i = idx(c, r);
-      let land = !inAny(lon, lat, SEAS) || inAny(lon, lat, ISLES);
+      let land = !inAny(lon, lat, regions.seas) || inAny(lon, lat, regions.isles);
       if (!land) { terrain[i] = T.SEA; continue; }
       let t = T.PLAIN;
       const n = fbm(c * 0.25, r * 0.25, 3);
@@ -286,12 +301,12 @@ var GEO = (function () {
       if (lat < 10 && lon > 79 && lon < 82.5) t = T.JUNGLE;
       if (t === T.PLAIN && n2 > 0.9) t = T.HILL;
       if (t === T.PLAIN && n2 < 0.06 && lat > 22) t = T.FOREST;
-      if (inAny(lon, lat, R.hill)) t = (n2 > 0.85 ? T.FOREST : T.HILL);
-      if (inAny(lon, lat, R.steppe)) t = T.STEPPE;
-      if (inAny(lon, lat, R.desert)) t = T.DESERT;
-      if (inAny(lon, lat, R.plateau)) t = T.PLATEAU;
-      if (inAny(lon, lat, R.mtn)) t = T.MTN;
-      if (inAny(lon, lat, R.plain)) t = T.PLAIN;
+      if (inAny(lon, lat, regions.hill)) t = (n2 > 0.85 ? T.FOREST : T.HILL);
+      if (inAny(lon, lat, regions.steppe)) t = T.STEPPE;
+      if (inAny(lon, lat, regions.desert)) t = T.DESERT;
+      if (inAny(lon, lat, regions.plateau)) t = T.PLATEAU;
+      if (inAny(lon, lat, regions.mtn)) t = T.MTN;
+      if (inAny(lon, lat, regions.plain)) t = T.PLAIN;
       terrain[i] = t;
     }
     // 湖泊标记（与外海不连通的小水体）→ 水域分区
