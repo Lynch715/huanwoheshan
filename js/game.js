@@ -1,6 +1,8 @@
 // 核心规则：状态、经济、军事、外交、回合
 var GAME = (function () {
   const T = GEO.T, TERR = GEO.TERRAIN, U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
+  const TIERS = DATA.CITY_TIERS, ROLES = DATA.CITY_ROLES, ROLE_CHANGE = DATA.CITY_ROLE_CHANGE;
+  const NO_CITY_ROLE = Object.freeze({});
   let S = null;
   const listeners = { log: [], battle: [], event: [], change: [] };
   const hooks = { engage: false, defend: null };
@@ -175,7 +177,9 @@ var GAME = (function () {
       if (c.port && c.pop >= 8 && f.techs.zhinanzhen) c.buildings.shibosi = 1;
     }
     if (c.cap) c.buildings.temple = 1;
+    initCityTier(c);
     c.wall = maxWall(c);
+    // 开局戍军按史局配置，编制上限另由 garrisonCap 计算。
     const n = 1 + Math.floor(c.pop / 4) + (c.cap ? 2 : 0) + (c.f === 'song' ? 1 : 0) +
       (northStart(c.f) ? difficultyRules().northGarrison : 0);
     const nomad = DATA.NOMAD[f.culture];
@@ -647,9 +651,9 @@ var GAME = (function () {
   function tileOwner(t) { const c = S.tileCity[t]; return c >= 0 ? S.cities[c].f : null; }
   function cityAt(t) { const c = S.tileCity[t]; if (c >= 0 && S.cities[c].tile === t) return S.cities[c]; return null; }
   function armyAt(t) { return S.armies.find(a => a.tile === t); }
-  let ctCache = new Map(), ctVer = -1;
+  let ctCache = new Map(), ctState, ctVer = -1;
   function cityTiles(c) {
-    if (ctVer !== S._terrVer) { ctCache = new Map(); ctVer = S._terrVer; }
+    if (ctState !== S || ctVer !== S._terrVer) { ctCache = new Map(); ctState = S; ctVer = S._terrVer; }
     let out = ctCache.get(c.id);
     if (out) return out;
     out = [];
@@ -718,13 +722,90 @@ var GAME = (function () {
     c._bfx = { k: key, v };
     return v;
   }
-  function cityYield(c) {
-    const f = c.f;
-    const tiles = cityTiles(c).filter(t => t !== c.tile);
+  function cityTier(c) { return TIERS[c.tier]; }
+  function buildingCount(c) {
+    let count = 0;
+    for (const id in c.buildings) if (c.buildings[id] && Object.hasOwn(c.buildings, id)) count++;
+    return count;
+  }
+  function buildingFull(c) {
+    const limit = cityTier(c).buildings;
+    if (!Number.isFinite(limit)) return false;
+    let count = buildingCount(c);
+    if (count >= limit) return true;
+    for (const q of c.queue) if (q.kind === 'b' && ++count >= limit) return true;
+    return false;
+  }
+  function initCityTier(c) {
+    if (c.cap) c.tier = 3;
+    else if (!Number.isInteger(c.tier) || c.tier < 0 || c.tier > 2) {
+      const buildings = buildingCount(c);
+      const reserved = buildings + c.queue.filter(q => q.kind === 'b').length;
+      c.tier = 0;
+      // 已达到升等门槛、或旧城规模已抵下一级可容纳的上限，径授较高一等。
+      for (let i = 1; i <= 2; i++) {
+        const prev = TIERS[i - 1], next = TIERS[i].upgrade;
+        if ((c.pop >= next.pop && buildings >= next.buildings) ||
+            c.pop >= prev.pop || reserved >= prev.buildings) c.tier = i;
+      }
+    }
+    c.role = c.tier > 0 && Object.hasOwn(ROLES, c.role) ? c.role : null;
+    c.roleT = c.role && Number.isFinite(c.roleT) ? c.roleT : null;
+  }
+  function setCapital(c) {
+    const F = fac(c.f), previous = city(F.capital);
+    if (previous && previous !== c && previous.cap && previous.f === c.f) {
+      previous.cap = false;
+      previous.tier = 2;
+      previous.wall = Math.min(previous.wall, maxWall(previous));
+    }
+    F.capital = c.id;
+    c.cap = true;
+    c.tier = 3;
+    c.queue = c.queue.filter(q => q.kind !== 'tier');
+  }
+  function loseCityTier(c) {
+    c.cap = false;
+    c.tier = Math.max(0, c.tier - 1);
+    c.role = c.roleT = null;
+  }
+  function roleTime(c, seasons) {
+    return c.roleT == null ? 0 : Math.max(0, Math.round((c.roleT + seasons - S.T) * 90)) / 90;
+  }
+  function cityRoleFx(c) {
+    if (!c.role || c.tier === 0 || (c.roleT != null && roleTime(c, ROLE_CHANGE.delay))) return NO_CITY_ROLE;
+    return ROLES[c.role] || NO_CITY_ROLE;
+  }
+  function setCityRole(cid, id) {
+    const c = city(cid);
+    if (!c || c.tier === 0 || !Object.hasOwn(ROLES, id) || id === c.role) return false;
+    if (c.role) {
+      const F = fac(c.f);
+      if (roleTime(c, ROLE_CHANGE.cooldown) || F.gold < ROLE_CHANGE.gold) return false;
+      F.gold -= ROLE_CHANGE.gold;
+      c.roleT = S.T;
+    }
+    c.role = id;
+    c.wall = Math.min(c.wall, maxWall(c));
+    return true;
+  }
+  // 属地列表在划界或换档时重建，旧缓存随列表释放。
+  const workTileCache = new WeakMap();
+  function workTileYields(c) {
+    const owned = cityTiles(c);
+    const cached = workTileCache.get(owned);
+    if (cached && cached.port === c.port) return cached;
+    const tiles = owned.filter(t => t !== c.tile);
     if (c.port) for (const n of GEO.ring(c.tile, 1)) if (GEO.isWater(n)) tiles.push(n);
     const ys = tiles.map(t => tileYield(t)).sort((a, b) => (b.food * 1.3 + b.prod + b.gold * 0.9) - (a.food * 1.3 + a.prod + a.gold * 0.9));
+    const result = { port: c.port, center: tileYield(c.tile), yields: ys };
+    workTileCache.set(owned, result);
+    return result;
+  }
+  function cityYield(c) {
+    const f = c.f, { center: cy, yields: ys } = workTileYields(c);
     let food = 3, prod = 2, gold = 2, sci = 1 + c.pop * 0.25;
-    const cy = tileYield(c.tile); food += cy.food; prod += cy.prod; gold += cy.gold;
+    food += cy.food; prod += cy.prod; gold += cy.gold;
     const n = Math.min(ys.length, c.pop + 1);
     for (let i = 0; i < n; i++) { food += ys[i].food; prod += ys[i].prod; gold += ys[i].gold; }
     gold += c.pop * 0.6;
@@ -745,9 +826,15 @@ var GAME = (function () {
       sci += g.zhi / 40;
     }
     const lm = clamp(0.45 + c.loyalty / 110, 0.5, 1.15);
+    const tier = cityTier(c), role = cityRoleFx(c);
+    const tierMul = (1 + tier.yieldPct) * (g ? 1 : 1 + (tier.vacantPct || 0));
     const trade = tradeIncome(c);
     const res = {
-      food: Math.round(food * fm), prod: Math.round(prod * pm * lm), gold: Math.round(gold * gm * lm + trade), sci: Math.round(sci * sm * lm * 10) / 10, trade,
+      food: Math.round(food * fm * tierMul * (1 + (role.foodPct || 0))),
+      prod: Math.round(prod * pm * lm * tierMul * (1 + (role.prodPct || 0))),
+      gold: Math.round(gold * gm * lm * tierMul * (1 + (role.goldPct || 0)) + trade),
+      sci: Math.round(sci * sm * lm * tierMul * (1 + (role.sciPct || 0)) * 10) / 10,
+      trade,
     };
     if (f !== S.player && f !== 'rebel') {
       const k = difficultyRules().aiYield;
@@ -768,6 +855,7 @@ var GAME = (function () {
     const F = fac(c.f);
     let t = 58;
     t += (bldFx(c).happy || 0) + (techFx(c.f).happy || 0);
+    t += cityRoleFx(c).happy || 0;
     const g = gen(c.governor);
     if (g) { t += (g.zheng - 50) / 8; if (hasSkill(g, '教化')) t += 10; }
     t += Math.min(10, luxuryCount(c.f) * 2);
@@ -807,8 +895,10 @@ var GAME = (function () {
     if (f === 'song') horse += 2; // 茶马互市
     return { horse: Math.round(horse * 10) / 10, iron: Math.round(iron * 10) / 10 };
   }
-  function growthTh(c) { return (10 + c.pop * 5) * (1 - Math.min(0.5, techFx(c.f).growth || 0)); }
-  function garrisonCap(c) { return 4 + Math.floor(c.pop / 4) + (c.cap ? 2 : 0); }
+  function growthTh(c) {
+    return (10 + c.pop * 5) * (1 - Math.min(0.5, techFx(c.f).growth || 0)) * (1 - (cityRoleFx(c).growth || 0));
+  }
+  function garrisonCap(c) { return 4 + Math.floor(c.pop / 4) + cityTier(c).garrison + (cityRoleFx(c).garrison || 0); }
   function supplyMultiplier(f) { return 1 - Math.min(0.6, techFx(f).supply || 0); }
   function armyUpkeep(a, units = a.units, foodMul = supplyMultiplier(a.f), total = { gold: 0, food: 0 }) {
     const fm = foodMul * (hasSkill(gen(a.gen), '运筹') ? 0.5 : 1);
@@ -822,7 +912,7 @@ var GAME = (function () {
     let w = 10 + c.pop * 2;
     w += bldFx(c).wall || 0;
     if (c.f) w *= 1 + (techFx(c.f).wallPct || 0);
-    if (c.cap) w += 15;
+    w += cityTier(c).wall + (cityRoleFx(c).wall || 0);
     if (c.cap && c.f === S.player && S.court && typeof COURT !== 'undefined') w *= 1 + COURT.bonus('dianqian') * 1.5;
     return Math.round(w);
   }
@@ -837,6 +927,7 @@ var GAME = (function () {
     let v = 3 + d / 5 + b.pop / 2 + a.pop / 4;
     v *= 1 + (bldFx(a).tradePct || 0);
     v *= 1 + (techFx(a.f).tradePct || 0);
+    v *= 1 + (cityRoleFx(a).tradePct || 0);
     return Math.round(v);
   }
   function tradeIncome(c) {
@@ -877,6 +968,7 @@ var GAME = (function () {
 
   // ---------- 生产 ----------
   function buildOptions(c) {
+    if (buildingFull(c)) return [];
     const out = [];
     for (const id in B) {
       const b = B[id];
@@ -909,7 +1001,7 @@ var GAME = (function () {
   function unitCost(c, id) {
     const u = U[id];
     let prod = u.prod;
-    { const rc = Math.min(0.6, bldFx(c).recruitCost || 0); if (rc) prod = Math.round(prod * (1 - rc)); }
+    { const rc = Math.min(0.6, (bldFx(c).recruitCost || 0) + (cityRoleFx(c).recruitCost || 0)); if (rc) prod = Math.round(prod * (1 - rc)); }
     if (c.f === S.player && typeof COURT !== 'undefined' && S.court) prod = Math.round(prod * (1 - COURT.bonus('shumi')));
     return { prod, gold: u.gold, man: u.man, horse: u.horse || 0, iron: u.iron || 0 };
   }
@@ -928,7 +1020,55 @@ var GAME = (function () {
   function queueBuilding(cid, id) {
     const c = city(cid);
     if (!buildOptions(c).includes(id)) return false;
-    c.queue.push({ kind: 'b', id, prog: 0, cost: B[id].prod });
+    c.queue.push({ kind: 'b', id, prog: 0, cost: buildingCost(c, id) });
+    return true;
+  }
+  function buildingCost(c, id) { return Math.round(B[id].prod * (1 - (cityRoleFx(c).buildCost || 0))); }
+  function demolishBuilding(cid, id) {
+    const c = city(cid);
+    if (!c?.buildings[id] || !Object.hasOwn(B, id)) return false;
+    delete c.buildings[id];
+    c.wall = Math.min(c.wall, maxWall(c));
+    const slots = tradeSlots(c);
+    if (c.trade.length > slots) {
+      c.trade.length = slots;
+      computeInbound();
+    }
+    if (c.f === S.player) log(`${c.name}拆去${B[id].name}，以腾营建之地。`, 'eco', c.tile);
+    return true;
+  }
+  function tierGovernor(c, u) { const g = gen(c.governor); return !!g && g.zheng >= (u.governor || 0); }
+  const TIER_CHECKS = [
+    (c, u) => c.pop >= u.pop,
+    (c, u) => buildingCount(c) >= u.buildings,
+    tierGovernor,
+    (c, u) => !u.need || !!c.buildings[u.need],
+    (c, u) => !u.anyOf || u.anyOf.some(b => c.buildings[b]),
+  ];
+  const hasTierOrder = c => c.queue.some(q => q.kind === 'tier');
+  function canUpgradeCity(c) {
+    const u = TIERS[c.tier + 1]?.upgrade;
+    return !!u && !c.cap && TIER_CHECKS[0](c, u) && tierGovernor(c, u) &&
+      TIER_CHECKS[1](c, u) && TIER_CHECKS[3](c, u) && TIER_CHECKS[4](c, u) && !hasTierOrder(c);
+  }
+  function tierUpgrade(c) {
+    const id = c.tier + 1, next = TIERS[id], u = next?.upgrade;
+    if (!u || c.cap) return null;
+    const needs = [
+      [TIER_CHECKS[0](c, u), `户口至少 ${u.pop} 万`],
+      [TIER_CHECKS[1](c, u), `已建至少 ${u.buildings} 处`],
+      [TIER_CHECKS[2](c, u), u.governor ? `知州政务至少 ${u.governor}` : '已任知州'],
+    ];
+    if (u.need) needs.push([TIER_CHECKS[3](c, u), `已建${B[u.need].name}`]);
+    if (u.anyOf) needs.push([TIER_CHECKS[4](c, u), `已建${u.anyOf.map(b => B[b].name).join('、')}之一`]);
+    const queued = hasTierOrder(c);
+    return { id, name: next.name, needs, queued, cost: u.prod, ok: !queued && needs.every(([met]) => met) };
+  }
+  function queueTier(cid) {
+    const c = city(cid);
+    if (!c || !canUpgradeCity(c)) return false;
+    const id = c.tier + 1;
+    c.queue.push({ kind: 'tier', id, prog: 0, cost: TIERS[id].upgrade.prod });
     return true;
   }
   function dequeue(cid, k) {
@@ -977,7 +1117,7 @@ var GAME = (function () {
     return true;
   }
   function migrateCost(c) { return 120 + c.pop * 30; }
-  function migrateOk(c) { return c.pop < 12 && !c.cap && !(c.migT != null && S.T - c.migT < 8); }
+  function migrateOk(c) { return c.pop < Math.min(12, cityTier(c).pop) && !c.cap && !(c.migT != null && S.T - c.migT < 8); }
   function migrate(cid) {
     const c = city(cid), F = fac(c.f), k = migrateCost(c);
     if (!migrateOk(c) || F.gold < k) return false;
@@ -1498,6 +1638,7 @@ var GAME = (function () {
       dStr: defArmy && S.armies.includes(defArmy) ? sumStr(defArmy.units) : 0, dN: defArmy ? defArmy.units.length : 0,
       retreat: defArmy && S.armies.includes(defArmy) && defArmy.tile !== defTile0 ? defArmy.tile : null,
       capture: rep.captured && S.armies.includes(a) && a.tile === tile, player: a.f === S.player || defF === S.player,
+      manual: !!opts.manual,
     });
     if (typeof COURT !== 'undefined' && S.court) {
       if (a.f === S.player) attWin ? COURT.onWin(!!rep.captured) : COURT.onLoss(false);
@@ -1841,6 +1982,7 @@ var GAME = (function () {
     const loot = c.pop * 12;
     F_new.gold += loot;
     c.f = f; c.loyalty = 30; c.unrest = 30; c.pop = Math.max(1, c.pop - 1);
+    if (old !== f) loseCityTier(c);
     for (const prisoner of S.generals) {
       if (prisoner.status !== 'captive' || prisoner.jail !== c.id) continue;
       if (prisoner.f === f) {
@@ -1864,10 +2006,9 @@ var GAME = (function () {
     for (const o of S.cities) o.trade = o.trade.filter(t => !(t === c.id && atWar(o.f, f)));
     c.wall = Math.round(maxWall(c) * 0.3);
     addWarScore(f, old, 8);
-    if (c.cap) {
-      c.cap = false;
+    if (wasCap && old !== f) {
       const rest = citiesOf(old).sort((a, b) => b.pop - a.pop);
-      if (rest.length) { rest[0].cap = true; F_old.capital = rest[0].id; }
+      if (rest.length) setCapital(rest[0]);
       if (old === S.player && rest.length) log(`都城陷落！朝廷移跸${rest[0].name}。`, 'war');
     }
     if (f === S.player) {
@@ -2422,7 +2563,10 @@ var GAME = (function () {
     for (const c of seats) {
       if (c.governor != null) unassign(c.governor);
       rec({ k: 'cap', city: c.id, from: f, to: p });
-      c.f = p; c.cap = false;
+      c.f = p;
+      loseCityTier(c);
+      c.queue = c.queue.filter(q => q.kind !== 'tier');
+      c.wall = Math.min(c.wall, maxWall(c));
       c.recentCapture = c.siegeStart = c.siegeLast = null;
       c.lastSiege = null;
     }
@@ -2436,6 +2580,7 @@ var GAME = (function () {
   }
   function payVassalTributes() {
     const e = E(), lord = fac(S.player);
+    let received = false;
     for (const F of Object.values(S.factions)) {
       if (!F.alive || !vassalLord(F.id)) continue;
       const amt = Math.min(Math.max(0, F.gold), (F.income.gold || 0) * DATA.VASSAL.tribute * e);
@@ -2443,7 +2588,9 @@ var GAME = (function () {
       lord.gold += amt;
       F.income.trib -= amt / e;
       lord.income.trib += amt / e;
+      if (amt > 0) received = true;
     }
+    if (received) rec({ k: 'sound', cue: 'coin' });
   }
   function vassalTurn() {
     const p = S.player, rules = DATA.VASSAL, league = S.flags.league;
@@ -2690,7 +2837,7 @@ var GAME = (function () {
       c.store += surplus * e;
       foodIn += Math.round(c.pop * 0.5 + Math.max(0, surplus) * 0.3);
       const th = growthTh(c);
-      if (c.store >= th && c.pop < 30) { c.pop++; c.store = 0; }
+      if (c.store >= th && c.pop < cityTier(c).pop) { c.pop++; c.store = 0; }
       else if (c.store < -10) {
         if (bldFx(c).noFamine) c.store = 0;
         else { c.pop = Math.max(1, c.pop - 1); c.store = 0; if (f === S.player) log(`${c.name}乏粮，民有饥色，户口减少。`, 'eco'); }
@@ -2706,7 +2853,15 @@ var GAME = (function () {
         if (q.prog >= q.cost) {
           c.queue.shift();
           if (q.kind === 'b') { c.buildings[q.id] = 1; if (q.id === 'walls') c.wall = maxWall(c); if (f === S.player) log(`${c.name}建成${B[q.id].name}。`, 'eco'); }
-          else {
+          else if (q.kind === 'tier' && q.id === c.tier + 1 && !c.cap) {
+            const before = cityTier(c).name;
+            c.tier = q.id;
+            if (player) {
+              log(`${c.name}${before}升为${c.name}${cityTier(c).name}。`, 'eco', c.tile);
+              S.pending.push({ ev: 'cityPromotion', city: c.id, before, tier: c.tier });
+            }
+          }
+          else if (q.kind === 'u') {
             const u = mkUnit(q.id, 100);
             c.garrison.push(u);
             c.pop = Math.max(1, c.pop - (U[q.id].man >= 5 ? 0 : 0));
@@ -2732,7 +2887,7 @@ var GAME = (function () {
     // 军费
     const { gold: upGold, food: upFood, governance } = factionUpkeep(f, cs);
     // 岁币
-    let trib = 0;
+    let trib = 0, received = false;
     for (const k in S.rel) {
       const r = S.rel[k];
       if (!r.trib) continue;
@@ -2740,8 +2895,12 @@ var GAME = (function () {
         trib -= r.trib.amt;
         if (f === S.player && r.trib.amt > 0) S.flags.achievementProgress.paidTribute = true;
       }
-      if (r.trib.to === f) trib += r.trib.amt;
+      if (r.trib.to === f) {
+        trib += r.trib.amt;
+        if (player && r.trib.amt > 0) received = true;
+      }
     }
+    if (received) rec({ k: 'sound', cue: 'coin' });
     const st = strategicIncome(f);
     F.income = { gold: Math.round(goldIn), upkeep: Math.round(upGold + governance), governance: Math.round(governance), trib, food: foodIn, foodUp: Math.round(upFood), sci: Math.round(sciIn * 10) / 10, horse: st.horse, iron: st.iron, man: Math.round(popTot * 0.12 * 10) / 10, prod: prodTot };
     F.gold += (goldIn - upGold - governance + trib) * e;
@@ -3038,6 +3197,7 @@ var GAME = (function () {
     // 旧档可能保存了汇总值，按当前版本的建筑与科技数据重算。
     for (const c of S.cities) {
       delete c._bfx;
+      initCityTier(c);
       c.recentCapture ??= null;
       c.lastSiege ??= null;
       c.battleTurn ??= null;
@@ -3091,6 +3251,7 @@ var GAME = (function () {
     equipItem, unequipItem, itemNames, itemOfficer, isItemOldOwner, itemOldOwners, itemMoveReason, itemEquipReason, itemGain, recoverItem, grantItem, sweepItemTransfers,
     get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum,
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
+    cityTier, cityRoleFx, setCapital, buildingCount, buildingFull, buildingCost, demolishBuilding, tierUpgrade, canUpgradeCity, queueTier, roleTime, setCityRole,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,
     createArmyRaw, formArmy, transferToArmy, transferToCity, disband, dismissUnits, dismissalReason, dismissalInfo, enemyAdjacent, armyUpkeep, factionUpkeep, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
     reinforcementInfo, reinforceUnits, consolidationInfo, consolidateUnits,

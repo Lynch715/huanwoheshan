@@ -133,6 +133,10 @@ var AI = (function () {
 
   function eventAnswer(p) {
     if (p.ev === 'marriageRequest') return marriageAnswer(p);
+    if (p.ev === 'cityPromotion') {
+      const c = GAME.city(p.city);
+      return c.role ? 0 : Object.keys(DATA.CITY_ROLES).indexOf(preferredRole(c, isBorder(c, enemiesOf(c.f))));
+    }
     if (p.ev === 'vassalAnnex') {
       const owned = S().cities.filter(c => c.f).length;
       const extraShare = GAME.citiesOf(p.from).length * (1 - DATA.VASSAL.share) / owned;
@@ -191,15 +195,15 @@ var AI = (function () {
     return opts[0];
   }
 
-  let borderCache = { key: '', set: null };
+  let borderCache = { state: null, key: '', set: null };
   function isBorder(c, enemies) {
     const key = c.f + '|' + GAME.S.turn + '|' + enemies.length;
-    if (borderCache.key !== key) {
+    if (borderCache.state !== S() || borderCache.key !== key) {
       const es = new Set(enemies); es.add('rebel');
       const foes = S().cities.filter(o => o.f !== c.f && es.has(o.f));
       const set = new Set();
       for (const m of GAME.citiesOf(c.f)) for (const o of foes) if (GEO.dist(o.tile, m.tile) <= 7) { set.add(m.id); break; }
-      borderCache = { key, set };
+      borderCache = { state: S(), key, set };
     }
     return borderCache.set.has(c.id);
   }
@@ -209,6 +213,26 @@ var AI = (function () {
     const inc = F.income || {};
     const reserve = Math.max(400, (inc.upkeep || 0) * 8);
     return Math.max(0, Math.min(1, (F.gold - reserve) / (reserve * 3)));
+  }
+
+  function preferredRole(c, border) {
+    if (c.port && c.buildings.shibosi) return 'commerce';
+    if (border) return 'military';
+    const capital = GAME.city(GAME.fac(c.f).capital);
+    if (capital && GEO.dist(c.tile, capital.tile) <= 4) return 'learning';
+    const y = GAME.cityYield(c);
+    return [['grain', y.food], ['industry', y.prod], ['commerce', y.gold], ['learning', y.sci]]
+      .reduce((best, entry) => entry[1] > best[1] ? entry : best)[0];
+  }
+
+  function governCities(f, cities) {
+    const vacancies = cities.filter(c => c.governor == null);
+    if (!vacancies.length) return;
+    const civil = S().generals.filter(g => g.f === f && g.status === 'idle' && g.zheng >= g.tong)
+      .sort((a, b) => b.zheng - a.zheng);
+    if (!civil.length) return;
+    vacancies.sort((a, b) => b.pop - a.pop);
+    for (let i = 0; i < Math.min(vacancies.length, civil.length); i++) GAME.assignGovernor(civil[i].id, vacancies[i].id);
   }
 
   function economy(f, cities, enemies) {
@@ -225,10 +249,14 @@ var AI = (function () {
       // 粮尽：裁撤超额守军
       for (const c of cities) while (c.garrison.length > Math.max(1, GAME.garrisonCap(c) - 2)) c.garrison.pop();
     }
+    governCities(f, cities);
     for (const c of cities) {
+      if (c.tier > 0 && !c.role) GAME.setCityRole(c.id, preferredRole(c, isBorder(c, enemies)));
       if (c.queue.length) continue;
-      const full = c.garrison.length >= GAME.garrisonCap(c);
+      const ready = GAME.canUpgradeCity(c);
+      if (ready && c.pop >= GAME.cityTier(c).pop - 2 && GAME.queueTier(c.id)) continue;
       const border = isBorder(c, enemies);
+      const full = c.garrison.length >= GAME.garrisonCap(c);
       const wantG = 1 + (border ? 2 : 0) + (c.cap ? 1 : 0);
       let did = false;
       if (!full && (c.garrison.length < wantG || (!broke && units < targetUnits && rand() < 0.6)) && F.gold > 40) {
@@ -244,9 +272,11 @@ var AI = (function () {
           if (wi >= 0 && U[better].atk + U[better].def > U[c.garrison[wi].t].atk + U[c.garrison[wi].t].def) { c.garrison.splice(wi, 1); if (GAME.queueUnit(c.id, better)) did = true; }
         }
       }
+      if (!did && ready) did = GAME.queueTier(c.id);
       if (!did) {
         const opts = GAME.buildOptions(c);
-        const pri = [border && 'walls', 'farm', 'market', 'temple', 'granary', 'academy', 'barracks', 'smithy', 'shibosi', DATA.NOMAD[F.culture] && 'stable', 'walls', 'workshop', c.port && rand() < 0.3 && 'dock'].filter(Boolean);
+        const needWalls = c.tier === 1 && GAME.buildingCount(c) >= GAME.cityTier(c).buildings - 2;
+        const pri = [(border || needWalls) && 'walls', 'farm', 'market', 'temple', 'granary', 'academy', 'barracks', 'smithy', 'shibosi', DATA.NOMAD[F.culture] && 'stable', 'walls', 'workshop', c.port && rand() < 0.3 && 'dock'].filter(Boolean);
         let b = pri.find(p => opts.includes(p));
         // 清单以外的新建筑：按效果粗估价值，择优而建
         if (!b && opts.length) {
@@ -273,14 +303,6 @@ var AI = (function () {
         const t = GAME.routeTargets(c)[0];
         if (!t || !GAME.openRoute(c.id, t.id)) break;
       }
-    }
-    // 知州
-    const idle = S().generals.filter(g => g.f === f && g.status === 'idle');
-    const civil = idle.filter(g => g.zheng >= g.tong).sort((a, b) => b.zheng - a.zheng);
-    for (const g of civil) {
-      const c = cities.filter(c => c.governor == null).sort((a, b) => b.pop - a.pop)[0];
-      if (!c) break;
-      GAME.assignGovernor(g.id, c.id);
     }
   }
 

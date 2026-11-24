@@ -101,7 +101,7 @@ var DATA = (function () {
       command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.50 },
       occupation: { seasons: 6, production: 0.32, loyalty: 22, unrest: 42, revolt: 0.11 },
       debt: { governance: 0.023, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
-    { name: '地狱', aiYield: 1.22, aiBattle: 1.22, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6, ransom: 1.3, requestProtection: 4, regenMan: 1, refillGold: 0.8,
+    { name: '地狱', aiYield: 1.22, aiBattle: 1.269, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6, ransom: 1.3, requestProtection: 4, regenMan: 1, refillGold: 0.8,
       coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0,
         speedW: 1.6, brokenW: 0.04, leagueGap: 0.06, ratioSlope: 3.5, ratioFloor: 0.2, waveMax: 5, waveCool: 8, giftMult: 1.3 },
       command: { armies: 3, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.98, retreat: 54, morale: 38, reconquest: 8, northPush: 3, siegeInterval: 0.30 },
@@ -387,6 +387,24 @@ var DATA = (function () {
       elite: '首领近卫', siege: '攻寨砲', fire: '火铳队', navy: '巴朗盖舟' },
   };
   const NOMAD = { mongol: 1, cuman: 1, khitan: 1, tangut: 1, jurchen: 1, turkic: 1 };
+
+  // ---------- 城池等级与定位 ----------
+  const CITY_TIERS = [
+    { name: '县', pop: 8, buildings: 4, garrison: 0, wall: 0, yieldPct: 0 },
+    { name: '州', pop: 14, buildings: 7, garrison: 1, wall: 10, yieldPct: 0.05,
+      upgrade: { pop: 6, buildings: 3, prod: 50 } },
+    { name: '府', pop: 22, buildings: 11, garrison: 2, wall: 20, yieldPct: 0.10, vacantPct: -0.10,
+      upgrade: { pop: 12, buildings: 6, prod: 110, governor: 50, need: 'walls', anyOf: ['market', 'academy', 'shibosi', 'barracks'] } },
+    { name: '京', pop: 30, buildings: Infinity, garrison: 3, wall: 30, yieldPct: 0.15 },
+  ];
+  const CITY_ROLES = {
+    grain: { name: '粮仓', desc: '粮 +20%，增户所需存粮 −15%', foodPct: 0.20, growth: 0.15 },
+    industry: { name: '工坊', desc: '工 +20%，营建工料 −10%', prodPct: 0.20, buildCost: 0.10 },
+    commerce: { name: '商埠', desc: '钱 +20%，海贸收益 +10%', goldPct: 0.20, tradePct: 0.10 },
+    military: { name: '军镇', desc: '守军编制 +2，征兵工料 −15%，城防 +15，民心目标 −3', garrison: 2, recruitCost: 0.15, wall: 15, happy: -3 },
+    learning: { name: '文枢', desc: '文 +25%，本城士子更易登第', sciPct: 0.25, keju: 1 },
+  };
+  const CITY_ROLE_CHANGE = { gold: 80, cooldown: 8, delay: 2 };
 
   // ---------- 建筑 ----------
   const BUILDINGS = {
@@ -1332,6 +1350,6 @@ var DATA = (function () {
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
   return { ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
-    CITIES, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
+    CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

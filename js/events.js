@@ -319,8 +319,10 @@ var EVENTS = (function () {
       text: () => '汴京克复！宗庙社稷、艮岳宫阙，虽经兵燹，犹见旧观。群臣议：是否还都汴京，以示恢复中原之志？',
       choices: [
         { t: '还都汴京', d: '都城迁至汴京，全国民心长期 +4', fn: () => {
-          const ol = GAME.city(fac(P()).capital), nw = byName('汴京');
-          if (ol) ol.cap = false; nw.cap = true; fac(P()).capital = nw.id; G().flags.morale = (G().flags.morale || 0) + 4;
+          const next = ownedName('汴京', P());
+          if (!next) return;
+          GAME.setCapital(next);
+          G().flags.morale = (G().flags.morale || 0) + 4;
           GAME.log('车驾北还，告祭太庙于汴京。', 'big');
         } },
         { t: '仍驻临安', d: '江南富庶，暂不迁都', fn: () => {} },
@@ -505,6 +507,13 @@ var EVENTS = (function () {
     endingDefeat: { ...ENDINGS.endingDefeat, choices: [{ t: '展卷论功', fn: () => {} }] },
     info: {
       title: p => p.title, text: p => p.text, choices: [{ t: '知道了', d: '', fn: () => {} }],
+    },
+    cityPromotion: {
+      title: p => `${GAME.city(p.city).name}${p.before}升为${GAME.city(p.city).name}${DATA.CITY_TIERS[p.tier].name}`,
+      text: p => GAME.city(p.city).role ? '营造既毕，州府版籍已定。' : '营造既毕，请择一业，使民有所专。',
+      choices: p => GAME.city(p.city).role ? [{ t: '知道了', fn: () => {} }] : Object.entries(DATA.CITY_ROLES).map(([id, role]) => ({
+        t: role.name, d: role.desc, fn: () => GAME.setCityRole(p.city, id),
+      })),
     },
     levelup: {
       title: '积功晋升',
@@ -704,14 +713,18 @@ var EVENTS = (function () {
   DEFS.longxingPeace = DEFS.peaceoffer;
 
   function civilQuality(academies) { return 42 + Math.min(18, academies * 1.5) + (GAME.hasTech(P(), 'lixue') ? 5 : 0); }
-  function kejuCandidates(max, academies) {
+  function kejuCandidates(max, academies, cities) {
     const S = G(), n = Math.max(max + 2, Math.min(7, 3 + Math.floor(academies / 3)));
     const q = civilQuality(academies);
     const out = [];
+    let total = 0;
+    const homes = cities.map(c => [c.id, total += c.pop * (1 + (GAME.cityRoleFx(c).keju || 0))]);
     for (const g of S.generals) if (g.f === P() && g.status === 'future' && S.year >= g.avail && g.zheng > g.wu + 5) { g.status = 'cand'; out.push(g.id); }
     while (out.length < n) {
-      const mil = r() < 0.4;
+      const roll = r(), mil = roll < 0.4;
       const g = GAME.randomGeneral(P(), mil ? 'mil' : 'civil', q);
+      const draw = total * (mil ? roll / 0.4 : (roll - 0.4) / 0.6);
+      g.kejuCity = homes.find(([, ceiling]) => draw < ceiling)?.[0];
       g.status = 'cand'; g.mil = mil;
       out.push(g.id);
     }
@@ -829,7 +842,7 @@ var EVENTS = (function () {
         if (onan && onan.f === P()) { if (tm && tm.status !== 'dead') S.pending.push({ ev: 'temujinSong' }); return; }
         if (!onan || onan.f === 'rebel' || !tm || tm.status === 'dead') return;
         const F = fac('mongol'); F.alive = true;
-        GAME.captureCity(onan, 'mongol'); onan.cap = true; F.capital = onan.id;
+        GAME.captureCity(onan, 'mongol'); GAME.setCapital(onan);
       }
       renameFaction('mongol', '大蒙古国', '蒙');
       const F = fac('mongol'); F.aggr = 1; F.techs.jiaqi = 1; F.gold += 600; F.horse += 200; F.man += 200;
@@ -863,7 +876,7 @@ var EVENTS = (function () {
     { y: 1153, s: 0, fn: () => {
       const old = ownedName('会宁', 'jin'), next = ownedName('燕京', 'jin');
       if (!old || !next || fac('jin').capital !== old.id) return;
-      old.cap = false; next.cap = true; fac('jin').capital = next.id;
+      GAME.setCapital(next);
       next.buildings.walls = 1; next.wall = GAME.maxWall(next);
       worldLog('金主自会宁移都燕京，号为中都，百司随驾南迁。', ['jin'], 'jinCapital');
     } },
@@ -2032,7 +2045,7 @@ var EVENTS = (function () {
       const cities = GAME.citiesOf(p), academies = cities.filter(c => c.buildings.academy).length;
       if (S.year % 3 === 2) {
         const max = Math.min(6, 3 + (GAME.hasTech(p, 'kejugaige') ? 1 : 0) + Math.floor(cities.length / 15));
-        S.pending.push({ ev: 'keju', options: kejuCandidates(max, academies), max });
+        S.pending.push({ ev: 'keju', options: kejuCandidates(max, academies, cities), max });
       }
       if (S.flags.recommendYear !== S.year) {
         S.flags.recommendYear = S.year;
@@ -2158,7 +2171,7 @@ var EVENTS = (function () {
 
   // 冷却以季计；年度从玩家开局之日算起，换刻度不重开年度。
   const categoryWait = { local: 0.4, situation: 0.45, person: 1, court: 2, diplomacy: 1, battle: 0.5, 农事: 1.5, 灾异: 2, 风俗: 1.5, 工役: 1.5, 释道: 2, 市易: 1.5, 学术: 1.5, 乡政: 1.5, 宾客: 2 };
-  const systemEvents = new Set(['levelup', 'info', 'leagueMuster', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
+  const systemEvents = new Set(['levelup', 'info', 'cityPromotion', 'leagueMuster', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
   const registry = [];
   const elapsedDays = () => (G().year - 1140) * 360 + G().doy - 189;
   const isDecision = id => !systemEvents.has(id);
@@ -2713,6 +2726,8 @@ var EVENTS = (function () {
     ['校印式，存本于官', { gold: -25, sci: 35 }], ['延邻老作证，免其券费', { gold: -20, happy: 5 }]);
 
   function presentable(p) {
+    if (p.ev === 'cityPromotion') return owned(p.city, P())?.tier === p.tier;
+    if (p.ev === 'hdjd') return !!ownedName('汴京', P());
     if (p.ev === 'offeredTreasure') return !G().itemsTaken[p.item] && !GAME.itemEquipReason(playerGeneral(p.gen), p.item);
     if (p.ev === 'peaceoffer' || p.ev === 'longxingPeace') return alive(p.from) && GAME.atWar(P(), p.from);
     if (p.ev === 'leagueMuster') return G().flags.league?.stage === 'ally' && G().flags.league.leader === p.leader;

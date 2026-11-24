@@ -12,6 +12,7 @@ var TACTIC = (function () {
   function overlay(html, wide) {
     if (!root) { root = document.createElement('div'); root.id = 'tac-bg'; document.body.appendChild(root); }
     const previous = root.firstElementChild;
+    if (!previous) AUDIO.play('paper');
     const scroll = previous?.querySelector('.tac-body');
     const scrollTop = isPhone() ? scroll?.scrollTop : previous?.scrollTop;
     root.innerHTML = `<div id="tac" class="${wide ? 'wide' : ''}">${html}</div>`;
@@ -27,7 +28,9 @@ var TACTIC = (function () {
   function close() {
     boardResize?.disconnect();
     boardResize = null;
-    if (root) { root.classList.add('hidden'); root.innerHTML = ''; }
+    if (root && !root.classList.contains('hidden')) {
+      AUDIO.play('paper'); root.classList.add('hidden'); root.innerHTML = '';
+    }
   }
   function unitName(f, t) { const c = GAME.fac(f).culture; return (DATA.CULTURE_UNIT_NAME[c] && DATA.CULTURE_UNIT_NAME[c][t]) || U[t].name; }
   function seal(f) { const F = GAME.fac(f); return `<span class="seal sm" style="background:${F.color}">${F.seal}</span>`; }
@@ -184,6 +187,7 @@ var TACTIC = (function () {
   function hdist(a, b) { const A = cube(a[0], a[1]), B = cube(b[0], b[1]); return Math.max(Math.abs(A[0] - B[0]), Math.abs(A[1] - B[1]), Math.abs(A[2] - B[2])); }
 
   function field(a, tile, mods, planText, done, me) {
+    AUDIO.play('battle');
     me = me || 0; const ai = 1 - me;
     const B = GAME.battleSides(a, tile);
     const city = B.c && B.c.f === B.defF ? B.c : null;
@@ -272,6 +276,7 @@ var TACTIC = (function () {
       return Math.max(1, d);
     }
     function hit(att, def, ranged) {
+      AUDIO.play('clash');
       const d = Math.min(def.hp, damage(att, def, ranged));
       def.hp -= d;
       push(def, -Math.round(d * 5), '#b3322a');
@@ -617,6 +622,7 @@ var TACTIC = (function () {
     render();
   }
   function overlayEnd(text, winner, cb) {
+    if (winner !== 'draw') AUDIO.play(winner === 'win' ? 'win' : 'lose');
     const box = document.createElement('div');
     box.className = 'tresult ' + (winner === 'win' ? 'win' : 'lose');
     box.innerHTML = `<div class="stamp">${winner === 'win' ? '捷' : winner === 'lose' ? '败' : '和'}</div><div>${esc(text)}</div><button class="btn red">收兵回营</button>`;

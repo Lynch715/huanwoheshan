@@ -765,9 +765,14 @@ var RENDER = (function () {
       if (!onScreen(x, y, 60)) continue;
       const f = anim?.cityF.has(c.id) ? anim.cityF.get(c.id) : c.f;
       const F = cityFaction(f), capital = !!F && c.cap, color = F?.color || RUIN_INK;
-      const big = capital || c.pop >= 10;
+      const big = c.tier >= 2;
       if (z < 0.42 && !big) { ctx.fillStyle = color; ctx.fillRect(x - 2.5, y - 2.5, 5, 5); continue; }
       const s = capital ? sz * 1.25 : sz;
+      if (F && z >= 0.55) {
+        const box = INKART.BOX, scale = Math.min(z, 1.65);
+        const img = INKART.cityArt(c.tier, c.pop);
+        ctx.drawImage(img, x - box.ax * scale, y - box.ay * scale - s * 0.43, box.w * scale, box.h * scale);
+      }
       // 印章
       ctx.save();
       ctx.translate(x, y);
@@ -782,7 +787,7 @@ var RENDER = (function () {
       if (z >= 0.5 || big) {
         const fs = Math.max(11, Math.min(18, 9 + 5 * z));
         ctx.font = `${capital ? 'bold ' : ''}${fs}px ${FONT}`;
-        const label = c.name + (z > 0.9 ? ' ' + c.pop : '');
+        const label = (F ? GAME.cityTier(c).name + ' ' : '') + c.name + (z > 0.9 ? ' ' + c.pop : '');
         pushLabel(label, x, y + s / 2 + fs * 0.7, ctx.font, F ? 'rgba(25,22,20,0.95)' : RUIN_INK, (capital ? 90 : big ? 60 : 40) + (F?.id === S.player ? 5 : 0), 3.5);
       }
       // 城防残损
@@ -979,6 +984,11 @@ var RENDER = (function () {
       } else { flush(); steps.push({ k: ev.k, ev }); }
     }
     flush();
+    if (!speed && follow == null && steps.some(st => st.k === 'march' && st.f === S.player)) AUDIO.play('march');
+    if (!speed) {
+      const change = steps.findLast(st => st.k === 'cap' && (st.ev.from === S.player || st.ev.to === S.player));
+      if (change) AUDIO.play(change.ev.to === S.player ? 'capture' : 'lost', true);
+    }
     anim = { disp: snap.disp, cityF: snap.cityF, vis: snap.vis, steps, i: 0, cur: null, speed: speed || 0, onDone, total: 0, follow: !!follow, label: '' };
     const vis = t => t >= 0 && (anim.vis[t] || S.visible[t]);
     const onscr = t => { const [x, y] = w2s(tx(t), ty(t)); return onScreen(x, y, 80); };
@@ -1039,6 +1049,12 @@ var RENDER = (function () {
           st0.t0 = now + pd;
         }
         beginStep(anim.cur, now);
+        if (st0.k === 'sound') AUDIO.play(st0.ev.cue);
+        if (st0.k === 'cap' && anim.speed) {
+          const player = GAME.S.player;
+          if (st0.ev.to === player) AUDIO.play('capture', true);
+          else if (st0.ev.from === player) AUDIO.play('lost', true);
+        }
       }
       const st = anim.cur;
       if (st.pan && now < st.t0) {
@@ -1063,6 +1079,7 @@ var RENDER = (function () {
   }
   function runStep(st, p, now) {
     if (st.k === 'march') {
+      if (!st.fired.sound) { st.fired.sound = true; AUDIO.play('march'); }
       for (const [id, path] of st.paths) {
         const d = anim.disp.get(id); if (!d) continue;
         const [x, y, t] = posOnPath(path, Math.min(1, p));
@@ -1070,6 +1087,7 @@ var RENDER = (function () {
       }
     } else if (st.k === 'bt') {
       const e = st.ev, A = anim.disp.get(e.aid), D = e.did != null ? anim.disp.get(e.did) : null;
+      if (!st.fired.sound) { st.fired.sound = true; if (!e.manual) AUDIO.play('battle', true); }
       const fx0 = tx(e.from), fy0 = ty(e.from), tx1 = tx(e.tile), ty1 = ty(e.tile);
       let k;
       if (p < 0.28) k = 0.5 * (p / 0.28);
@@ -1080,6 +1098,7 @@ var RENDER = (function () {
       const mx = lerp(fx0, tx1, 0.72), my = lerp(fy0, ty1, 0.72);
       if (p >= 0.28 && !st.fired.clash) {
         st.fired.clash = 1;
+        if (!e.manual) AUDIO.play('clash', true);
         fx.bursts.push({ x: mx, y: my, t0: now, dur: Math.max(400, st.dur * 0.45) });
         const fd = Math.max(900, st.dur * 1.1);
         if (e.lossA > 0) fx.floats.push({ x: lerp(fx0, tx1, 0.35), y: lerp(fy0, ty1, 0.35) - 10, text: '-' + fmtNum(e.lossA), color: e.af === GAME.S.player ? '#a8302a' : '#5a1810', t0: now, dur: fd });
@@ -1092,6 +1111,7 @@ var RENDER = (function () {
         if (e.af === P) { ch = e.capture ? '克' : e.win ? '捷' : '挫'; good = e.win; }
         else if (e.df === P) { ch = e.capture ? '陷' : e.win ? '败' : '守'; good = !e.win; }
         else if (e.capture) ch = '破';
+        if (good !== null && !e.manual) AUDIO.play(good ? 'win' : 'lose', true);
         fx.stamps.push({ x: tx1, y: ty1 - 4, ch, good, t0: now, dur: Math.max(900, st.dur * 0.9) });
       }
     } else if (st.k === 'die') { /* 淡出 */ }

@@ -249,12 +249,54 @@ var INKART = (function () {
   }
 
   // ---------- 取图 ----------
+  function cityscape(kind) {
+    const [c, g] = mk();
+    const r = rng(7409 + kind);
+    const width = [18, 29, 36, 45, 54][kind];
+    wash(g, 0, 6, width * 0.6, 9, '90,72,52', 0.23);
+    function pavilion(x, y, w, h) {
+      g.fillStyle = 'rgba(186,163,128,0.82)';
+      g.fillRect(x - w * 0.36, y - h * 0.52, w * 0.72, h * 0.52);
+      g.fillStyle = 'rgba(52,59,54,0.88)';
+      g.beginPath();
+      g.moveTo(x - w / 2, y - h * 0.45);
+      g.quadraticCurveTo(x - w * 0.24, y - h * 0.52, x - w * 0.13, y - h);
+      g.lineTo(x + w * 0.13, y - h);
+      g.quadraticCurveTo(x + w * 0.24, y - h * 0.52, x + w / 2, y - h * 0.45);
+      g.closePath(); g.fill();
+      brush(g, [[x - w / 2, y - h * 0.45], [x + w / 2, y - h * 0.45]], 0.55, 0.8, ink(0.76));
+      g.fillRect(x - 0.8, y - h * 0.33, 1.6, h * 0.33);
+    }
+    if (kind >= 3) {
+      pavilion(0, -9, kind === 4 ? 20 : 12, kind === 4 ? 19 : 10);
+      if (kind === 4) pavilion(0, -19, 14, 16);
+    }
+    const houses = [2, 3, 4, 5, 5][kind];
+    for (let i = 0; i < houses; i++) {
+      const x = ((i + 0.5) / houses - 0.5) * width;
+      pavilion(x, 3 - (i % 2) * 4, width / houses + 3, 6 + kind + r() * 3);
+    }
+    if (kind) {
+      const l = -width / 2, right = width / 2, h = 4 + kind;
+      g.fillStyle = 'rgba(117,109,91,0.83)';
+      g.fillRect(l, 7 - h, width, h);
+      for (let x = l; x < right - 1; x += 3.8) g.fillRect(x, 5 - h, 2.0, 2);
+      brush(g, [[l, 7], [right, 7]], 0.8, 0.65, ink(0.66));
+      pavilion(0, 7, 7 + kind * 1.5, 7 + kind);
+    }
+    return c;
+  }
   const KINDS = {
     mtn: [6, s => mountain(s, 'mtn')], snow: [4, s => mountain(s, 'snow')], plateau: [4, s => mountain(s, 'plateau')],
     hill: [6, hills], forest: [5, s => forest(s, 'mixed')], pine: [4, s => forest(s, 'pine')], jungle: [5, s => forest(s, 'jungle')],
     steppe: [5, steppe], desert: [5, desert], tundra: [4, tundra],
     paddy: [4, s => plainDeco(s, 'paddy')], village: [4, s => plainDeco(s, 'village')], grove: [4, s => plainDeco(s, 'grove')],
   };
+  const cityCache = [];
+  function cityArt(tier, pop) {
+    const kind = tier === 0 && pop <= 2 ? 0 : tier + 1;
+    return cityCache[kind] ||= cityscape(kind);
+  }
   function get(kind, v) {
     const K = KINDS[kind]; if (!K) return null;
     const list = cache[kind] || (cache[kind] = []);
@@ -264,5 +306,5 @@ var INKART = (function () {
   }
   function count(kind) { return KINDS[kind] ? KINDS[kind][0] : 0; }
   function warm() { for (const k in KINDS) for (let i = 0; i < KINDS[k][0]; i++) get(k, i); }
-  return { get, count, warm, BOX, SR, brush, wash, rng };
+  return { get, count, warm, cityArt, BOX, SR, brush, wash, rng };
 })();
