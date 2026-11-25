@@ -32,7 +32,7 @@ var TACTIC = (function () {
       AUDIO.play('paper'); root.classList.add('hidden'); root.innerHTML = '';
     }
   }
-  function unitName(f, t) { const c = GAME.fac(f).culture; return (DATA.CULTURE_UNIT_NAME[c] && DATA.CULTURE_UNIT_NAME[c][t]) || U[t].name; }
+  function unitName(f, t) { return DATA.CULTURE_UNIT_NAME[GAME.fac(f).culture]?.[t] || U[t].name; }
   function seal(f) { const F = GAME.fac(f); return `<span class="seal sm" style="background:${F.color}">${F.seal}</span>`; }
   function winProb(r) { return GAME.winChance(r); }
 
@@ -64,7 +64,7 @@ var TACTIC = (function () {
     const tkey = Object.keys(T).find(k => T[k] === GEO.terrain[tile]);
     const season = S().season, river = !!GEO.river[tile];
     const city = !!(B.c && B.c.f === B.defF);
-    const cav = myUnits.filter(u => ['cav', 'hbow', 'hcav', 'elite'].includes(u.t)).length / Math.max(1, myUnits.length);
+    const cav = myUnits.filter(u => DATA.TERRAIN_COMBAT.groups[u.t] === 'cav').length / Math.max(1, myUnits.length);
     const test = n => {
       if (!n) return true;
       if (n.anyOf && !n.anyOf.some(test)) return false;
@@ -76,7 +76,7 @@ var TACTIC = (function () {
       if (n.season && !n.season.includes(season)) return false;
       if (n.foeZhiMax != null && eg && eg.zhi > n.foeZhiMax) return false;
       if (n.cavMin != null && cav < n.cavMin) return false;
-      if (n.unitAny && !myUnits.some(u => n.unitAny.includes(u.t))) return false;
+      if (n.unitAny && !myUnits.some(u => n.unitAny.includes(DATA.unitBase(u.t)))) return false;
       if (n.skill && !(g && GAME.hasSkill(g, n.skill))) return false;
       return true;
     };
@@ -178,6 +178,11 @@ var TACTIC = (function () {
   const TNAME = ['平地', '丘陵', '林地', '河道', '城墙', '乱石'];
   const MV = { inf: 2, bow: 2, siege: 1, fire: 2, navy: 1, cav: 4, hbow: 4, hcav: 3, elite: 3 };
   const RNG = { bow: 3, hbow: 2, fire: 2, siege: 3 };
+  for (const [id, unit] of Object.entries(U)) {
+    if (!unit.base) continue;
+    MV[id] = unit.tacticalMove ?? MV[unit.base];
+    RNG[id] = unit.tacticalRange ?? RNG[unit.base];
+  }
   const hx = (c, r) => OX + R * SQ * (c + 0.5 * (r & 1)), hy = r => OY + R * 1.5 * r;
   function nbrs(c, r) {
     const d = (r & 1) ? [[1, 0], [-1, 0], [1, -1], [0, -1], [1, 1], [0, 1]] : [[1, 0], [-1, 0], [0, -1], [-1, -1], [0, 1], [-1, 1]];
@@ -254,9 +259,9 @@ var TACTIC = (function () {
         const skillCtx = { ...B.ctx, city: ter === TER.WALL || (city && role === 'att' && x.side === 0) };
         m *= GAME.skillMult(g, x, skillCtx, role, armyRole);
         if (role === 'def') m *= 1 + GAME.itemSum(g, 'armor');
-        if (x.t === 'bow') m *= 1 + GAME.itemSum(g, 'bow');
+        if (DATA.unitBase(x.t) === 'bow') m *= 1 + GAME.itemSum(g, 'bow');
       } else m *= 0.9;
-      { const tu = GAME.techFx(f).unit; m *= (1 + (tu[x.t] || 0)) * (1 + (tu.all || 0)); }
+      { const tu = GAME.techFx(f).unit; m *= (1 + (tu[DATA.unitBase(x.t)] || 0)) * (1 + (tu.all || 0)); }
       if (f !== S().player && f !== 'rebel') m *= GAME.difficultyRules().aiBattle;
       m *= 0.6 + 0.4 * st.morale[x.side] / 100;
       if (x.side === 1) m *= st.dMult; else m *= st.aMult;

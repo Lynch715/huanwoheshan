@@ -295,10 +295,13 @@ var UNITART = (function () {
     // 以髋为原点
     const ac = armorCol(st, o.elite) || shade(color, -0.2);
     if (k === 'inf') {
-      // 长枪（身后斜持）
       line(x, [[-12, 24], [22, -48]], 1.5, '#5a4632');
-      poly(x, [[22, -48], [21.6, -55], [25.5, -50.6]], '#8a8984', INK, 0.5);
-      ell(x, 21, -46.5, 1.8, 1.4, 0, '#b8352a');
+      if (o.axe) {
+        poly(x, [[19, -46], [22, -51], [34, -53], [33, -43], [28, -37], [24, -45]], '#98938a', INK, 0.7);
+      } else {
+        poly(x, [[22, -48], [21.6, -55], [25.5, -50.6]], '#8a8984', INK, 0.5);
+        ell(x, 21, -46.5, 1.8, 1.4, 0, '#b8352a');
+      }
       legs(x, st, color, 'wide');
       torso(x, st, color, sk, o);
       head(x, 1, -28.5, st, sk, color, o);
@@ -308,7 +311,7 @@ var UNITART = (function () {
       else arm(x, [5, -17], [8, -12], [8.6, -8], ac, sk);
     } else if (k === 'bow') {
       legs(x, st, color, 'wide');
-      if (CROSSBOW[cul]) {
+      if (CROSSBOW[cul] || o.crossbow) {
         torso(x, st, color, sk, o);
         head(x, 1, -28.5, st, sk, color, o);
         // 神臂弩平端
@@ -324,8 +327,9 @@ var UNITART = (function () {
         torso(x, st, color, sk, o);
         head(x, 1, -28.5, st, sk, color, o);
         // 张弓满月
-        x.beginPath(); x.moveTo(17, -44); x.bezierCurveTo(26, -36, 26, -10, 17, -2); x.lineWidth = 1.9; x.strokeStyle = INK; x.stroke();
-        line(x, [[17, -44], [3, -24], [17, -2]], 0.5, 'rgba(34,30,25,0.85)');
+        const top = o.longbow ? -54 : -44, tip = o.longbow ? 8 : -2;
+        x.beginPath(); x.moveTo(17, top); x.bezierCurveTo(26, top + 8, 26, tip - 8, 17, tip); x.lineWidth = 1.9; x.strokeStyle = INK; x.stroke();
+        line(x, [[17, top], [3, -24], [17, tip]], 0.5, 'rgba(34,30,25,0.85)');
         line(x, [[3, -24], [28, -23.5]], 0.8, '#5a4632');
         poly(x, [[28, -23.5], [25.5, -25], [25.5, -22]], INK);
         arm(x, [5, -17], [13, -21], [23.2, -23.4], ac, sk);
@@ -521,7 +525,7 @@ var UNITART = (function () {
   }
 
   // ---------- 舟师 ----------
-  function navy(x, st, cul, color, sk) {
+  function navy(x, st, cul, color, sk, galley) {
     // 水波
     x.save();
     const g = x.createLinearGradient(0, 70, 0, 100); g.addColorStop(0, 'rgba(70,100,115,0.35)'); g.addColorStop(1, 'rgba(70,100,115,0.6)');
@@ -532,7 +536,7 @@ var UNITART = (function () {
       x.strokeStyle = 'rgba(34,40,45,0.5)'; x.lineWidth = 0.7; x.stroke();
     }
     const junk = st === 'han' || st === 'steppe' || st === 'wa' || st === 'tibet';
-    const lateen = st === 'islam' || st === 'south';
+    const lateen = galley || st === 'islam' || st === 'south';
     const longship = NORSE_SAIL[cul];
     // 船身
     x.beginPath();
@@ -540,6 +544,7 @@ var UNITART = (function () {
     else { x.moveTo(6, 60); x.lineTo(20, 62); x.lineTo(80, 62); x.lineTo(94, 54); x.quadraticCurveTo(90, 72, 76, 77); x.lineTo(24, 77); x.quadraticCurveTo(10, 72, 6, 60); x.closePath(); }
     x.fillStyle = '#4a3726'; x.fill(); x.strokeStyle = INK; x.lineWidth = 1; x.stroke();
     x.save(); x.clip(); for (let y = 64; y < 78; y += 3.4) line(x, [[0, y], [100, y]], 0.5, 'rgba(230,210,170,0.35)'); x.restore();
+    if (galley) for (let i = 0; i < 7; i++) line(x, [[25 + 8 * i, 68], [19 + 8 * i, 84]], 1.1, '#7f6041');
     if (longship) { for (let i = 0; i < 6; i++) ell(x, 24 + i * 9, 66, 3, 3, 0, i & 1 ? color : '#d9cba8', INK, 0.5); line(x, [[93, 60], [96, 52]], 1.6, '#4a3726'); }
     if (!longship) {
       // 艉楼
@@ -583,6 +588,25 @@ var UNITART = (function () {
     }
   }
 
+  function elephant(x, st, cul, color, sk) {
+    const hide = '#777267', dark = '#49453d', gold = '#c9a23a';
+    line(x, [[30, 65], [27, 82], [31, 88]], 7, dark);
+    line(x, [[65, 66], [64, 86], [68, 88]], 7, dark);
+    curve(x, [21, 55], [11, 60], [14, 76], 1.8, dark);
+    ell(x, 47, 59, 29, 20, 0.04, hide, INK, 0.9);
+    line(x, [[27, 65], [24, 87], [28, 88]], 8, hide);
+    line(x, [[66, 67], [69, 88], [73, 88]], 8, hide);
+    poly(x, [[30, 40], [59, 39], [62, 65], [33, 66]], color, INK, 0.9);
+    line(x, [[33, 62], [60, 61]], 1.4, gold);
+    footman(x, 46, 39, 0.48, 'inf', st, cul, color, sk, { elite: true });
+    ell(x, 73, 52, 14, 14, 0.24, hide, INK, 0.9);
+    ell(x, 68, 57, 7, 10, -0.28, '#645e56', dark, 0.7);
+    curve(x, [83, 57], [92, 75], [91, 67], 7, hide);
+    curve(x, [81, 60], [91, 62], [95, 55], 2.2, '#ede2c7');
+    ell(x, 80, 51, 1.2, 0.9, 0, INK);
+    line(x, [[73, 42], [83, 45], [86, 50]], 1.5, color);
+  }
+
   // ---------- 组合 ----------
   function paint(t, cul, color) {
     const c = document.createElement('canvas'); c.width = c.height = SZ;
@@ -590,9 +614,17 @@ var UNITART = (function () {
     x.scale(SZ / 100, SZ / 100);
     const st = style(cul), sk = skin(cul);
     paper(x, color, seedOf(t + cul));
-    const elite = t === 'elite';
+    const id = t;
+    const unit = DATA.UNITS[t];
+    t = DATA.unitBase(t);
+    const elite = t === 'elite' || !!unit?.home;
     const o = { elite, great: st === 'euro' && (t === 'hcav' || t === 'elite'), crest: elite, beard: t === 'hcav' || elite, mail: t === 'hcav' };
-    if (t === 'inf' || t === 'bow' || t === 'fire') {
+    o.axe = id === 'byz_varangian';
+    o.crossbow = id === 'daviet_bow';
+    o.longbow = id === 'england_longbow';
+    if (unit?.group === 'elephant') {
+      elephant(x, st, cul, color, sk);
+    } else if (t === 'inf' || t === 'bow' || t === 'fire') {
       // 后排虚影成阵
       x.save(); x.globalAlpha = 0.28;
       footman(x, 26, 80, 0.72, t, st, cul, '#6b6258', '#9b9080', o);
@@ -608,16 +640,18 @@ var UNITART = (function () {
     } else if (t === 'siege') {
       siege(x, st, cul, color, sk);
     } else if (t === 'navy') {
-      navy(x, st, cul, color, sk);
+      navy(x, st, cul, color, sk, id === 'venice_galley');
     }
     // 边框墨痕
     x.strokeStyle = 'rgba(34,30,25,0.55)'; x.lineWidth = 1.2; x.strokeRect(0.6, 0.6, 98.8, 98.8);
     return c;
   }
 
-  function facInfo(f) {
+  function facInfo(f, t) {
     const F = typeof GAME !== 'undefined' && GAME.fac ? GAME.fac(f) : null;
-    return F ? { cul: F.culture, color: F.color } : { cul: 'han', color: '#b3322a' };
+    const home = DATA.UNITS[t]?.home;
+    const native = home && (F ? GAME.fac(home) : DATA.FACTIONS.find(faction => faction.id === home));
+    return { cul: native?.culture || F?.culture || 'han', color: F?.color || '#b3322a' };
   }
   // 取画布（缓存）
   function get(t, cul, color) {
@@ -626,16 +660,16 @@ var UNITART = (function () {
     if (!c) { c = paint(t, cul, color); cache.set(key, c); }
     return c;
   }
-  function forFac(f, t) { const i = facInfo(f); return get(t, i.cul, i.color); }
+  function forFac(f, t) { const i = facInfo(f, t); return get(t, i.cul, i.color); }
   // 近景：按 CROP 截取主体，小尺寸时更易辨认
   function bust(c, t) {
-    const box = CROP[t] || CROP.inf, k = SZ / 100, sw = box[2] * k;
+    const box = crop(t), k = SZ / 100, sw = box[2] * k;
     const o = document.createElement('canvas'); o.width = o.height = 128;
     o.getContext('2d').drawImage(c, box[0] * k - sw / 2, box[1] * k - sw / 2, sw, sw, 0, 0, 128, 128);
     return o;
   }
   function url(f, t, close) {
-    const i = facInfo(f);
+    const i = facInfo(f, t);
     const key = t + '|' + i.cul + '|' + i.color + (close ? '|c' : '');
     let u = urls.get(key);
     if (!u) { const c = get(t, i.cul, i.color); u = (close ? bust(c, t) : c).toDataURL('image/png'); urls.set(key, u); }
@@ -648,6 +682,8 @@ var UNITART = (function () {
   }
   // 画布上的圆章：用于六角小战场
   const CROP = { inf: [48, 58, 64], bow: [52, 58, 64], fire: [54, 56, 66], cav: [48, 56, 76], hbow: [48, 56, 76], hcav: [50, 54, 78], elite: [46, 52, 80], siege: [52, 52, 90], navy: [50, 46, 92] };
+  const ELEPHANT_CROP = [55, 50, 88];
+  function crop(t) { return DATA.UNITS[t]?.group === 'elephant' ? ELEPHANT_CROP : CROP[DATA.unitBase(t)] || CROP.inf; }
   function token(ctx, f, t, cx, cy, r, opt) {
     opt = opt || {};
     const c = forFac(f, t);
@@ -656,7 +692,7 @@ var UNITART = (function () {
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(cx + 1.5, cy + 2, r, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
     // 取画面中部偏上，略放大
-    const box = CROP[t] || CROP.inf;   // [中心x, 中心y, 边长]
+    const box = crop(t);   // [中心x, 中心y, 边长]
     const k = SZ / 100, sw = box[2] * k, sx = box[0] * k - sw / 2, sy = box[1] * k - sw / 2;
     if (opt.flip) { ctx.translate(cx, 0); ctx.scale(-1, 1); ctx.translate(-cx, 0); }
     ctx.drawImage(c, sx, sy, sw, sw, cx - r, cy - r, r * 2, r * 2);

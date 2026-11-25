@@ -4,6 +4,10 @@ var RENDER = (function () {
   const W = GEO.W, H = GEO.H;
   const BW = Math.ceil(HS * SQ3 * (W + 0.5) + PAD * 2), BH = Math.ceil(HS * 1.5 * (H - 1) + HS * 2 + PAD * 2);
   const OX = HS * SQ3 / 2 + PAD, OY = HS + PAD;
+  const HEX_CORNERS = Array.from({ length: 6 }, (_, k) => {
+    const a = Math.PI / 180 * (60 * k - 30);
+    return [Math.cos(a), Math.sin(a)];
+  });
   const T = GEO.T;
   let base = null, polit = null, fog = null;
   let canvas, ctx, dpr = 1, layerScale = 1;
@@ -33,7 +37,7 @@ var RENDER = (function () {
     for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); const px = x + s * Math.cos(a), py = y + s * Math.sin(a); k ? c.lineTo(px, py) : c.moveTo(px, py); }
     c.closePath();
   }
-  function corners(i, s) { const x = tx(i), y = ty(i); const out = []; for (let k = 0; k < 6; k++) { const a = Math.PI / 180 * (60 * k - 30); out.push([x + s * Math.cos(a), y + s * Math.sin(a)]); } return out; }
+  function corners(i, s) { const x = tx(i), y = ty(i); return HEX_CORNERS.map(([dx, dy]) => [x + s * dx, y + s * dy]); }
   function mkCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
   const h01 = (a, b, s) => GEO.hash(a, b, s);
 
@@ -364,6 +368,14 @@ var RENDER = (function () {
   }
   function buildPolitical() {
     const S = GAME.S;
+    const cities = JSON.stringify(S.cities.map(c => [c.tile, c.f, opts.showNames ? c.pop : 0]));
+    const factions = JSON.stringify(Object.values(S.factions).map(f => [f.id, f.alive, f.color, opts.showNames ? f.name : '']));
+    if (politicalInput?.player === S.player && politicalInput.names === opts.showNames &&
+        politicalInput.cities === cities && politicalInput.factions === factions &&
+        S.tileCity.every((v, i) => v === politicalInput.tiles[i]) &&
+        S.explored.every((v, i) => v === politicalInput.explored[i])) return;
+    politicalInput = { player: S.player, names: opts.showNames, cities, factions,
+      tiles: S.tileCity.slice(), explored: S.explored.slice() };
     const scale = PS * layerScale;
     if (!polit) polit = mkCanvas(Math.ceil(BW * scale), Math.ceil(BH * scale));
     const p = polit.getContext('2d');
@@ -378,9 +390,11 @@ var RENDER = (function () {
     borderSegs = [];
     for (let i = 0; i < N; i++) {
       const f = own[i]; if (!f || !S.explored[i]) continue;
-      const cs = corners(i, HS), cx = tx(i), cy = ty(i);
+      let cs;
+      const cx = tx(i), cy = ty(i);
       for (const n of GEO.NBR[i]) {
         if (own[n] === f) continue;
+        cs ||= corners(i, HS);
         const water = GEO.isWater(n);
         const nx = tx(n), ny = ty(n);
         const pair = cs.map((pt, k) => [k, (pt[0] - nx) ** 2 + (pt[1] - ny) ** 2]).sort((a, b) => a[1] - b[1]).slice(0, 2).map(q => cs[q[0]]);
@@ -425,6 +439,7 @@ var RENDER = (function () {
     }
     miniDirty = true; markDirty();
   }
+  let politicalInput = null;
   function drawOverview(context, width, height, { captured, capital }) {
     const S = GAME.S, kx = width / BW, ky = height / BH;
     const paint = territoryPaths(politicalOwners(S), S.explored);
@@ -502,8 +517,8 @@ var RENDER = (function () {
   function buildFog() {
     const S = GAME.S, SC = 4 / layerScale, mw = Math.ceil(BW / SC), mh = Math.ceil(BH / SC);
     // 回放收尾、读档和事件都可能再次请求绘制同一份迷雾。
-    if (fogExplored && S.explored.every((v, i) => v === fogExplored[i]) &&
-        S.visible.every((v, i) => v === fogVisible[i])) return;
+    const exploredChanged = !fogExplored || S.explored.some((v, i) => v !== fogExplored[i]);
+    if (!exploredChanged && S.visible.every((v, i) => v === fogVisible[i])) return false;
     if (!fog) fog = mkCanvas(mw, mh);
     if (!fogNoise) {
       fogNoise = new Float32Array(mw * mh);
@@ -540,6 +555,7 @@ var RENDER = (function () {
     fogExplored = S.explored.slice();
     fogVisible = S.visible.slice();
     miniDirty = true; markDirty();
+    return exploredChanged;
   }
 
   // ---------- 小地图 ----------
@@ -629,13 +645,14 @@ var RENDER = (function () {
     if (dirty || anim || fx.floats.length || now - t0 >= 50) {
       t0 = now; dirty = false;
       sizeBuffer();
-      if (miniDirty) { miniDirty = false; buildMini(); }
+      if (miniDirty && miniCanvas?.getClientRects().length) { miniDirty = false; buildMini(); }
       draw(now);
     }
     if (dirty || gestureUntil || hasAnimation()) scheduleFrame();
   }
   function draw(now) {
     const S = GAME.S;
+    if (anim) stepAnim(now);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#e8dfc8'; ctx.fillRect(0, 0, innerWidth, innerHeight);
     if (!base) return;
@@ -650,7 +667,7 @@ var RENDER = (function () {
     drawGrid(S, z);
     drawBorders(z);
     // 航线
-    drawRoutes(S);
+    drawRoutes(S, cam.x, cam.y, cam.x + innerWidth / z, cam.y + innerHeight / z);
     // 选中格 / 悬停
     if (state.hover >= 0) { hexPath(ctx, tx(state.hover), ty(state.hover), HS - 1); ctx.strokeStyle = 'rgba(30,30,30,0.35)'; ctx.lineWidth = 1.5 / z + 0.5; ctx.stroke(); }
     if (state.sel && state.sel.tile != null) {
@@ -666,7 +683,6 @@ var RENDER = (function () {
       ctx.drawImage(fog, sx / SC, sy / SC, (ex - sx) / SC, (ey - sy) / SC, (sx - cam.x) * z, (sy - cam.y) * z, (ex - sx) * z, (ey - sy) * z);
     }
     // 城市与军队（屏幕坐标）
-    if (anim) stepAnim(now);
     labels = [];
     if (opts.showSites) drawSites(S, z);
     drawCities(S, z);
@@ -675,7 +691,7 @@ var RENDER = (function () {
     drawFx(now);
     if (anim && anim.label) {
       ctx.save(); ctx.font = `bold 20px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const w = ctx.measureText(anim.label).width + 40, x = (innerWidth - 380) / 2, y = 92;
+      const w = ctx.measureText(anim.label).width + 40, x = replayWidth() / 2, y = 92;
       ctx.fillStyle = 'rgba(34,30,25,0.88)'; ctx.fillRect(x - w / 2, y - 18, w, 36);
       ctx.fillStyle = anim.labelColor || '#a8302a'; ctx.fillRect(x - w / 2, y - 18, 6, 36);
       ctx.fillStyle = '#f4ecd8'; ctx.fillText(anim.label, x + 3, y + 1);
@@ -734,7 +750,7 @@ var RENDER = (function () {
   function w2s(x, y) { return [(x - cam.x) * cam.z, (y - cam.y) * cam.z]; }
   function onScreen(x, y, m) { return x > -m && y > -m && x < innerWidth + m && y < innerHeight + m; }
 
-  function drawRoutes(S) {
+  function drawRoutes(S, left, top, right, bottom) {
     ctx.save();
     ctx.setLineDash([5, 6]); ctx.lineWidth = 1.6;
     for (const c of S.cities) {
@@ -745,7 +761,11 @@ var RENDER = (function () {
         if (!mine && b.f !== S.player) continue;
         if (!S.explored[c.tile] || !S.explored[b.tile]) continue;
         const x0 = tx(c.tile), y0 = ty(c.tile), x1 = tx(b.tile), y1 = ty(b.tile);
+        // 二次曲线完全落在起点、终点和控制点的外接框内。
+        if (Math.max(x0, x1) < left - 3 || Math.min(x0, x1) > right + 3 ||
+            Math.min(y0, y1) > bottom + 3 || Math.max(y0, y1) + 200 < top - 3) continue;
         const mx = (x0 + x1) / 2, my = (y0 + y1) / 2 + Math.min(200, Math.hypot(x1 - x0, y1 - y0) * 0.18);
+        if (Math.max(y0, y1, my) < top - 3) continue;
         ctx.strokeStyle = mine ? 'rgba(150,100,30,0.75)' : 'rgba(90,110,120,0.6)';
         ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(mx, my, x1, y1); ctx.stroke();
       }
@@ -881,10 +901,42 @@ var RENDER = (function () {
     if (a.progTo != null && a.progFrac > 0 && GEO.dist(a.tile, a.progTo) === 1) { const k = Math.min(0.62, a.progFrac * 0.75); x += (tx(a.progTo) - x) * k; y += (ty(a.progTo) - y) * k; }
     return [x, y];
   }
-  function dispOf(a) { const [x, y] = transitXY(a); return { id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units), idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0, routed: !!(a.path && a.path.length), sentry: !!a.sentry }; }
+  function armyMarker(tile, wx, wy, z) {
+    let [x, y] = w2s(wx, wy);
+    const low = z < 0.6;
+    const radius = low ? Math.max(10, 8 + 11 * z) : Math.max(10, Math.min(19, 6 + 8 * z));
+    if (Math.abs(wx - tx(tile)) < 0.5 && Math.abs(wy - ty(tile)) < 0.5 && GAME.cityAt(tile)) {
+      x += radius * (low ? 0.75 : 1.15);
+      y -= radius * (low ? 0.55 : 0.75);
+    }
+    return { x, y, radius };
+  }
+  function armyAtScreen(x, y) {
+    const S = GAME.S, z = cam.z;
+    let hit = null, nearest = Infinity;
+    for (let i = S.armies.length - 1; i >= 0; i--) {
+      const a = S.armies[i];
+      if (a.f !== S.player && !S.visible[a.tile]) continue;
+      const p = armyMarker(a.tile, ...transitXY(a), z);
+      const dx = x - p.x - (z < 0.6 ? p.radius * 0.05 : 0);
+      const dy = y - p.y + (z < 0.6 ? p.radius * 0.44 : 0);
+      const d = dx * dx + dy * dy, r = z < 0.6 ? p.radius * 0.6 : p.radius + 1.6;
+      if (d <= r * r && d < nearest) { hit = a; nearest = d; }
+    }
+    return hit;
+  }
+  function dispOf(a, [x, y] = transitXY(a)) { return { id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units), idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0, routed: !!(a.path && a.path.length), sentry: !!a.sentry }; }
   function drawArmies(S, z, now) {
-    const list = anim ? [...anim.disp.values()] : S.armies.map(dispOf);
-    for (const d of list) {
+    if (!anim) {
+      for (const a of S.armies) {
+        if (a.f !== S.player && !S.visible[a.tile]) continue;
+        const pos = transitXY(a);
+        const [x, y] = w2s(...pos);
+        if (onScreen(x, y, 60)) drawArmyEntry(dispOf(a, pos), z, now, 1);
+      }
+      return;
+    }
+    for (const d of anim.disp.values()) {
       const mine = d.f === S.player;
       if (!mine && !(S.visible[d.tile] || (anim && anim.vis[d.tile]))) continue;
       let alpha = 1;
@@ -901,10 +953,8 @@ var RENDER = (function () {
   }
   function drawArmyEntry(d, z, now, alpha) {
     const S = GAME.S;
-    let [x, y] = w2s(d.x, d.y);
+    let { x, y, radius } = armyMarker(d.tile, d.x, d.y, z);
     if (!onScreen(x, y, 60)) return;
-    const c = GAME.cityAt(d.tile);
-    const atCenter = Math.abs(d.x - tx(d.tile)) < 0.5 && Math.abs(d.y - ty(d.tile)) < 0.5;
     const F = GAME.fac(d.f);
     const g = GAME.gen(d.gen);
     const sel = state.sel && state.sel.army === d.id;
@@ -913,8 +963,7 @@ var RENDER = (function () {
     ctx.globalAlpha = alpha;
     if (d.shake) { x += d.shake[0]; y += d.shake[1]; }
     if (z < 0.6) {
-      const s = Math.max(10, 8 + 11 * z);
-      if (c && atCenter) { x += s * 0.75; y -= s * 0.55; }
+      const s = radius;
       ctx.strokeStyle = 'rgba(30,25,20,0.95)'; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(x - s * 0.45, y + s * 0.6); ctx.lineTo(x - s * 0.45, y - s * 0.75); ctx.stroke();
       ctx.fillStyle = F.color; ctx.fillRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
@@ -924,8 +973,7 @@ var RENDER = (function () {
       if (d.sentry) drawSentryMark(x + s, y - s * 0.44);
       ctx.restore(); return;
     }
-    const R = Math.max(10, Math.min(19, 6 + 8 * z));
-    if (c && atCenter) { x += R * 1.15; y -= R * 0.75; }
+    const R = radius;
     // 小旗
     const fx0 = x + R * 0.55, fy0 = y - R * 0.55;
     ctx.strokeStyle = 'rgba(30,25,20,0.9)'; ctx.lineWidth = 1.3;
@@ -1043,7 +1091,9 @@ var RENDER = (function () {
     if (!steps.length) finishAnim();
   }
   function lerp(a, b, t) { return a + (b - a) * t; }
-  function inView(x, y) { const [sx, sy] = w2s(x, y); return sx > innerWidth * 0.12 && sx < innerWidth - 400 && sy > 90 && sy < innerHeight - 150; }
+  const phoneReplay = matchMedia('(max-width: 600px), (max-height: 500px)');
+  function replayWidth() { return phoneReplay.matches ? innerWidth : innerWidth - 380; }
+  function inView(x, y) { const [sx, sy] = w2s(x, y); const w = replayWidth(); return sx > w * 0.12 && sx < w * 0.88 && sy > 90 && sy < innerHeight - 150; }
   function posOnPath(p, t) {
     if (p.length < 2) return [p[0].x, p[0].y, p[0].tile];
     const seg = t * (p.length - 1), i = Math.min(p.length - 2, Math.floor(seg)), f = seg - i;
@@ -1059,7 +1109,7 @@ var RENDER = (function () {
         if (st0.dur > 0 && st0.f) { const F = GAME.fac(st0.f); anim.label = st0.f === GAME.S.player ? '' : `【${F.name}】行动中`; anim.labelColor = F.color; }
         if (anim.follow && st0.dur > 0 && st0.focus && !inView(st0.focus[0], st0.focus[1])) {
           const pd = 450 * (anim.k || 1) + 120;
-          st0.pan = { x0: cam.x, y0: cam.y, x1: st0.focus[0] - (innerWidth - 380) / 2 / cam.z, y1: st0.focus[1] - innerHeight / 2 / cam.z, t0: now, d: pd };
+          st0.pan = { x0: cam.x, y0: cam.y, x1: st0.focus[0] - replayWidth() / 2 / cam.z, y1: st0.focus[1] - innerHeight / 2 / cam.z, t0: now, d: pd };
           st0.t0 = now + pd;
         }
         beginStep(anim.cur, now);
@@ -1218,7 +1268,7 @@ var RENDER = (function () {
   }
 
   return {
-    opts, init, buildBase, buildPolitical, buildFog, buildMini, drawOverview, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty,
+    opts, init, buildBase, buildPolitical, buildFog, buildMini, drawOverview, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, armyAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty,
     flash: (tile) => { state.flash = { tile, t: performance.now() }; markDirty(); }, minZoom,
   };
 })();

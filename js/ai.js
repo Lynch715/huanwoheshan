@@ -177,17 +177,18 @@ var AI = (function () {
     const nomad = DATA.NOMAD[F.culture];
     const w = {};
     for (const o of opts) {
+      const base = DATA.unitBase(o);
       let v = 1;
-      if (o === 'inf') v = nomad ? 1.5 : 3.5;
-      if (o === 'bow') v = 2.5;
-      if (o === 'cav') v = nomad ? 3 : 1.5;
-      if (o === 'hbow') v = 4;
-      if (o === 'hcav') v = 2.5;
-      if (o === 'fire') v = 3;
-      if (o === 'siege') v = atWarNow ? 0.8 : 0.1;
-      if (o === 'navy') v = ['japan', 'england', 'venice', 'sicily', 'denmark', 'norway', 'goryeo', 'byz'].includes(c.f) ? 0.6 : 0.05;
-      if (o === 'elite') v = 1.5;
-      w[o] = v;
+      if (base === 'inf') v = nomad ? 1.5 : 3.5;
+      if (base === 'bow') v = 2.5;
+      if (base === 'cav') v = nomad ? 3 : 1.5;
+      if (base === 'hbow') v = 4;
+      if (base === 'hcav') v = 2.5;
+      if (base === 'fire') v = 3;
+      if (base === 'siege') v = atWarNow ? 0.8 : 0.1;
+      if (base === 'navy') v = ['japan', 'england', 'venice', 'sicily', 'denmark', 'norway', 'goryeo', 'byz'].includes(c.f) ? 0.6 : 0.05;
+      if (base === 'elite') v = 1.5;
+      w[o] = U[o].home ? v * 0.5 : v;
     }
     let tot = 0; for (const k in w) tot += w[k];
     let x = rand() * tot;

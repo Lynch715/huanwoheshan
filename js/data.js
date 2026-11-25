@@ -292,6 +292,26 @@ var DATA = (function () {
     fire: { name: '火器营', atk: 17, def: 15, mv: 3, prod: 17, gold: 45, man: 5, food: 1, iron: 2, tech: 'tuhuoqiang', desc: '突火枪与火药兵' },
     navy: { name: '舟师', atk: 5, def: 6, sea: 16, mv: 6, prod: 14, gold: 30, man: 4, food: 1, tech: 'haichuan', needDock: true, desc: '战船，可载军渡海' },
   };
+  // 本地军制以城池原属为凭，城易主后仍能在当地招募。
+  const LOCAL_UNITS = [
+    ['jin_tiefutu', 'jin', 'hcav', '铁浮屠', { atk: 18, def: 16, mv: 3, prod: 23, gold: 65, iron: 3 }, '重甲铁骑，守强而行缓'],
+    ['xia_tieyao', 'xia', 'hcav', '铁鹞子', { atk: 20, def: 12, prod: 21, gold: 62, horse: 4 }, '具装突骑，善攻，费马较多'],
+    ['mongol_keshig', 'mongol', 'hbow', '怯薛射骑', { atk: 14, def: 9, prod: 15, gold: 40 }, '扈从精骑，善骑射'],
+    ['goryeo_shenqi', 'goryeo', 'cav', '神骑军', { atk: 14, def: 11, mv: 4, prod: 14, gold: 40 }, '别武班骑兵，护阵而行'],
+    ['japan_kyuba', 'japan', 'hbow', '弓马武士', { atk: 13, def: 11, mv: 4, prod: 14, gold: 39 }, '马背挽弓，守势胜于轻弓骑'],
+    ['daviet_bow', 'daviet', 'bow', '交趾劲弩', { atk: 13, def: 8, prod: 12, gold: 28 }, '强弩利于齐射，近战守势稍弱'],
+    ['khmer_elephant', 'khmer', 'hcav', '吴哥战象', { atk: 21, def: 15, mv: 2, horse: 0, iron: 1, food: 4, prod: 24, gold: 72, group: 'elephant', tacticalMove: 2 }, '象阵力大，行缓而粮费重'],
+    ['pagan_elephant', 'pagan', 'hcav', '蒲甘象阵', { atk: 18, def: 18, mv: 2, horse: 0, iron: 1, food: 4, prod: 23, gold: 69, group: 'elephant', tacticalMove: 2 }, '重象稳阵，行缓而耐战'],
+    ['seljuk_ghulam', 'seljuk', 'hcav', '古拉姆甲骑', { atk: 19, def: 14, prod: 21, gold: 61 }, '苏丹宿卫甲骑，攻守相兼'],
+    ['byz_varangian', 'byz', 'inf', '瓦兰吉卫队', { atk: 11, def: 14, mv: 2, prod: 15, gold: 29, man: 6, iron: 1 }, '持长斧步战，列为重步'],
+    ['england_longbow', 'england', 'bow', '英格兰长弓队', { atk: 14, def: 8, prod: 13, gold: 32, tacticalRange: 4 }, '长弓善远射，近守较弱'],
+    ['france_knights', 'france', 'hcav', '法兰克枪骑', { atk: 20, def: 12, prod: 22, gold: 65 }, '披甲持枪，强在突阵'],
+    ['venice_galley', 'venice', 'navy', '威尼斯桨战船', { sea: 21, prod: 20, gold: 46, food: 2 }, '桨帆战船，仍可载军渡海'],
+  ];
+  for (const [id, home, base, name, stats, desc] of LOCAL_UNITS) {
+    UNITS[id] = { ...UNITS[base], nomad: false, ...stats, home, base, name, desc };
+  }
+  function unitBase(t) { return UNITS[t]?.base || t; }
   // 按交战目标格取值。defBow 仅限守军弓营，siege 列只在野战生效；缺省为一倍。
   const TERRAIN_COMBAT = {
     groups: { cav: 'cav', hbow: 'cav', hcav: 'cav', elite: 'cav', inf: 'inf', bow: 'bow', fire: 'fire', siege: 'siege', navy: 'navy' },
@@ -299,10 +319,10 @@ var DATA = (function () {
       PLAIN: { cav: 1.10 },
       STEPPE: { cav: 1.15 },
       HILL: { cav: 0.90, defBow: 1.15, siege: 0.80 },
-      MTN: { cav: 0.70, inf: 1.10, defBow: 1.15, siege: 0.60 },
+      MTN: { cav: 0.70, inf: 1.10, defBow: 1.15, siege: 0.60, elephant: 0.65 },
       FOREST: { cav: 0.75, inf: 1.10, bow: 0.90, siege: 0.70 },
-      JUNGLE: { cav: 0.70, inf: 1.10, bow: 0.85, fire: 0.85, siege: 0.70 },
-      PLATEAU: { cav: 0.90, siege: 0.80 },
+      JUNGLE: { cav: 0.70, inf: 1.10, bow: 0.85, fire: 0.85, siege: 0.70, elephant: 0.90 },
+      PLATEAU: { cav: 0.90, siege: 0.80, elephant: 0.80 },
     },
     highGround: { from: ['HILL', 'MTN'], to: ['PLAIN', 'STEPPE', 'DESERT'], mult: 1.10 },
     crossing: { att: 0.85, def: 1.15 },
@@ -320,12 +340,18 @@ var DATA = (function () {
     inf: ['cav', 'hbow'], bow: ['inf', 'siege'], cav: ['bow', 'siege', 'hbow'], hbow: ['inf', 'siege'],
     hcav: ['inf', 'bow', 'siege'], elite: ['inf', 'bow', 'cav', 'hbow', 'siege'], fire: ['cav', 'hcav', 'inf', 'hbow'], siege: [], navy: [],
   };
+  const baseBeats = { ...BEATS };
+  for (const t of Object.keys(UNITS)) {
+    const base = unitBase(t);
+    TERRAIN_COMBAT.groups[t] = UNITS[t].group || TERRAIN_COMBAT.groups[base];
+    BEATS[t] = baseBeats[base].flatMap(enemy => Object.keys(UNITS).filter(other => unitBase(other) === enemy));
+  }
   const CULTURE_UNIT_NAME = {
     han: { inf: '步卒', bow: '神臂弩手', cav: '游奕骑', hbow: '弓马军', hcav: '具装骑',
       elite: '背嵬军', siege: '砲车', fire: '火器营', navy: '舟师' },
-    jurchen: { inf: '女真步军', bow: '强弓手', cav: '拐子马', hbow: '射骑军', hcav: '铁浮屠',
+    jurchen: { inf: '女真步军', bow: '强弓手', cav: '拐子马', hbow: '射骑军', hcav: '女真甲骑',
       elite: '合扎亲军', siege: '行砲军', fire: '震雷军', navy: '战舸' },
-    tangut: { inf: '步跋子', bow: '硬弓军', cav: '擒生骑', hbow: '弓马军', hcav: '铁鹞子',
+    tangut: { inf: '步跋子', bow: '硬弓军', cav: '擒生骑', hbow: '弓马军', hcav: '西夏甲骑',
       elite: '御围军', siege: '泼喜军', fire: '火铳军', navy: '河曲舟军' },
     mongol: { inf: '签军', bow: '手弩营', cav: '探马赤军', hbow: '蒙古弓骑', hcav: '怯薛',
       elite: '宿卫军', siege: '回回砲', fire: '火砲军', navy: '渡江舟师' },
@@ -335,7 +361,7 @@ var DATA = (function () {
       elite: '赞普亲军', siege: '山砲营', fire: '火管队', navy: '渡河舟兵' },
     bai: { inf: '大理步军', bow: '白弩手', cav: '游哨骑', hbow: '弓马手', hcav: '重甲骑',
       elite: '都府亲军', siege: '抛石架', fire: '火药军', navy: '湖上舟队' },
-    korean: { inf: '长枪军', bow: '弓手', cav: '神骑军', hbow: '骑射手', hcav: '别武甲骑',
+    korean: { inf: '长枪军', bow: '弓手', cav: '高丽轻骑', hbow: '骑射手', hcav: '别武甲骑',
       elite: '三别抄', siege: '城砲军', fire: '火器都', navy: '海上船军' },
     japanese: { inf: '武士', bow: '弓武士', cav: '早马骑', hbow: '骑射武士', hcav: '甲胄骑',
       elite: '御家人', siege: '攻城车', fire: '火器众', navy: '水军众' },
@@ -343,9 +369,9 @@ var DATA = (function () {
       elite: '禁卫军', siege: '石砲车', fire: '火铳手', navy: '交趾战船' },
     cham: { inf: '持盾兵', bow: '林弓手', cav: '巡哨骑', hbow: '骑射队', hcav: '象兵',
       elite: '王卫军', siege: '砲车队', fire: '火管手', navy: '占城舟师' },
-    khmer: { inf: '长矛军', bow: '密林弓手', cav: '趋骑军', hbow: '弓马队', hcav: '象兵',
+    khmer: { inf: '长矛军', bow: '密林弓手', cav: '趋骑军', hbow: '弓马队', hcav: '真腊甲骑',
       elite: '吴哥卫军', siege: '石砲车', fire: '火药营', navy: '湖舟军' },
-    burmese: { inf: '持枪卒', bow: '山地弓手', cav: '游骑军', hbow: '马背弓手', hcav: '象兵',
+    burmese: { inf: '持枪卒', bow: '山地弓手', cav: '游骑军', hbow: '马背弓手', hcav: '蒲甘甲骑',
       elite: '宫门卫军', siege: '攻寨砲车', fire: '火器手', navy: '江上舟队' },
     indian: { inf: '长矛队', bow: '竹弓手', cav: '轻骑', hbow: '弓骑', hcav: '象兵',
       elite: '王帐卫士', siege: '投石机', fire: '火药营', navy: '洋舶军' },
@@ -1350,6 +1376,6 @@ var DATA = (function () {
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
   return { ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
-    CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
+    CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, unitBase, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

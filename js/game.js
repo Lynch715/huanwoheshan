@@ -903,7 +903,8 @@ var GAME = (function () {
   function armyUpkeep(a, units = a.units, foodMul = supplyMultiplier(a.f), total = { gold: 0, food: 0 }) {
     const fm = foodMul * (hasSkill(gen(a.gen), '运筹') ? 0.5 : 1);
     for (const u of units) {
-      total.gold += ['hcav', 'elite', 'fire'].includes(u.t) ? 2.5 : (['cav', 'hbow', 'navy'].includes(u.t) ? 2 : 1.5);
+      const base = DATA.unitBase(u.t);
+      total.gold += ['hcav', 'elite', 'fire'].includes(base) ? 2.5 : (['cav', 'hbow', 'navy'].includes(base) ? 2 : 1.5);
       total.food += U[u.t].food * fm;
     }
     return total;
@@ -990,6 +991,7 @@ var GAME = (function () {
     const F = fac(c.f);
     for (const id in U) {
       const u = U[id];
+      if (u.home && (c.origF ?? c.f) !== u.home) continue;
       if (u.tech && !hasTech(c.f, u.tech)) continue;
       if (id === 'elite' && c.f !== 'song') continue;
       if (u.nomad && !DATA.NOMAD[F.culture]) continue;
@@ -1011,6 +1013,7 @@ var GAME = (function () {
   }
   function queueUnit(cid, id) {
     const c = city(cid), F = fac(c.f);
+    if (!U[id] || (U[id].home && !unitOptions(c).includes(id))) return false;
     if (!canAffordUnit(c, id)) return false;
     const k = unitCost(c, id);
     F.gold -= k.gold; F.man -= k.man; F.horse -= k.horse; F.iron -= k.iron;
@@ -1162,12 +1165,12 @@ var GAME = (function () {
     return g ? g.name + '部' : '偏师';
   }
   function canSail(a) {
-    const nav = a.units.filter(u => u.t === 'navy').length;
+    const nav = a.units.filter(u => DATA.unitBase(u.t) === 'navy').length;
     return nav > 0 && nav * 3 >= a.units.length - nav;
   }
   function armyMP(a, onWater) {
     let mv = 99;
-    for (const u of a.units) if (u.t !== 'navy') mv = Math.min(mv, U[u.t].mv);
+    for (const u of a.units) if (DATA.unitBase(u.t) !== 'navy') mv = Math.min(mv, U[u.t].mv);
     if (mv === 99) mv = 6;
     mv += techFx(a.f).landMP || 0;
     const g = gen(a.gen);
@@ -1307,8 +1310,8 @@ var GAME = (function () {
       const next = step.to;
       if (step.kind === 'attack') {
         if (allowAttack && !allowAttack(next, step.foe)) break;
-        a.path = [];
         if (a.f === S.player && hooks.engage) { out.push({ engage: true, aid: a.id, tile: next }); break; }
+        a.path = [];
         if (deferDefense(a, next, step.foe)) break;
         out.push(attack(a, next));
         break;
@@ -1353,7 +1356,7 @@ var GAME = (function () {
   function moveArmyTo(aid, goal) {
     const a = army(aid);
     if (!a) return { ok: false };
-    const p = findPath(a, goal);
+    const p = findPath(a, goal, a.f === S.player ? Infinity : undefined);
     if (!p) return { ok: false, msg: '无路可达' };
     a.path = p;
     const res = advance(a);
@@ -1383,13 +1386,14 @@ var GAME = (function () {
   // 临阵反击可更换攻防属性，但地形所认的攻守两军从开战至终局不变。
   function terrainPower(type, statRole, role, ctx, g) {
     const unit = U[type];
+    const navy = DATA.unitBase(type) === 'navy';
     let base = statRole === 'att' ? unit.atk : unit.def;
-    if (ctx.water) base = type === 'navy' ? unit.sea : base * TC.water.embarked;
-    else if (type === 'navy') base *= navyLandMult(ctx);
+    if (ctx.water) base = navy ? unit.sea : base * TC.water.embarked;
+    else if (navy) base *= navyLandMult(ctx);
     if (role === 'att') {
       if (ctx.downhill) base *= TC.highGround.mult;
       if (ctx.crossing) base *= TC.crossing.att;
-      if (ctx.landing && type !== 'navy') base *= landingMult(g);
+      if (ctx.landing && !navy) base *= landingMult(g);
     }
     return base * unitTerrainMult(type, role, ctx);
   }
@@ -1397,7 +1401,7 @@ var GAME = (function () {
   function terrainDefense(ctx, noTerrain) {
     return noTerrain ? 1 : (ctx.crossing ? TC.crossing.def : 1) + TERR[ctx.tt].def;
   }
-  const terrainGroupName = { cav: '骑兵', inf: '步卒', bow: '弓弩', fire: '火器', siege: '砲车', navy: '舟师' };
+  const terrainGroupName = { cav: '骑兵', inf: '步卒', bow: '弓弩', fire: '火器', siege: '砲车', navy: '舟师', elephant: '战象' };
   const terrainAction = { [T.PLAIN]: '驰平原', [T.STEPPE]: '驰草原', [T.HILL]: '据丘陵', [T.MTN]: '入山',
     [T.FOREST]: '入林', [T.JUNGLE]: '入雨林', [T.PLATEAU]: '上高原' };
   function battleTerrainRows(B, M = {}) {
@@ -1457,8 +1461,8 @@ var GAME = (function () {
     if (H('守险') && terrainRole === 'def' && ctx.rough) m *= TC.skills.roughDefense;
     if (H('攻城') && role === 'att' && ctx.city) m *= 1.4;
     if (H('水战') && (ctx.water || ctx.river)) m *= TC.skills.waterBattle;
-    if (H('铁骑') && ['cav', 'hcav', 'hbow', 'elite'].includes(u.t)) m *= 1.25;
-    if (H('神射') && ['bow', 'hbow'].includes(u.t)) m *= 1.3;
+    if (H('铁骑') && TC.groups[u.t] === 'cav') m *= 1.25;
+    if (H('神射') && ['bow', 'hbow'].includes(DATA.unitBase(u.t))) m *= 1.3;
     return m;
   }
   function sidePower(side, enemy, role, ctx) {
@@ -1475,8 +1479,9 @@ var GAME = (function () {
           for (const e of DATA.BEATS[u.t] || []) if (counts[e]) m += 0.4 * counts[e] / tot;
           for (const et in counts) if ((DATA.BEATS[et] || []).includes(u.t)) m -= 0.3 * counts[et] / tot;
         }
-        m *= (1 + (tech.unit[u.t] || 0)) * (1 + (tech.unit.all || 0));
-        if (u.t === 'bow' && g) m *= 1 + itemSum(g, 'bow');
+        const base = DATA.unitBase(u.t);
+        m *= (1 + (tech.unit[base] || 0)) * (1 + (tech.unit.all || 0));
+        if (base === 'bow' && g) m *= 1 + itemSum(g, 'bow');
         m *= skillMult(g, u, ctx, role);
         perUnit[u.t] = terrainPower(u.t, role, role, ctx, g) * m;
       }
@@ -2222,8 +2227,8 @@ var GAME = (function () {
     if (selected.some(i => units[i].s >= 100)) return { ok: false, msg: '须选未满编之营' };
     const strength = selected.reduce((sum, i) => sum + units[i].s, 0);
     const retained = Math.ceil((strength - 1e-9) / 100);
-    if (owner.units && type === 'navy' && retained < selected.length && GEO.isWater(owner.tile)) {
-      const navy = units.filter(u => u.t === 'navy').length;
+    if (owner.units && DATA.unitBase(type) === 'navy' && retained < selected.length && GEO.isWater(owner.tile)) {
+      const navy = units.filter(u => DATA.unitBase(u.t) === 'navy').length;
       if ((navy - selected.length + retained) * 3 < units.length - navy) return { ok: false, msg: '合营后舟载不足，须先登岸' };
     }
     return { ok: true, indices: selected, strength, retained };
@@ -2737,7 +2742,7 @@ var GAME = (function () {
   }
 
   // ---------- 视野 ----------
-  function armySight(a) { return a.units.some(u => ['cav', 'hbow', 'hcav', 'elite'].includes(u.t)) ? 3 : 2; }
+  function armySight(a) { return a.units.some(u => TC.groups[u.t] === 'cav') ? 3 : 2; }
   function revealAround(t, r) {
     for (const x of GEO.ring(t, r)) {
       S.explored[x] = 1; S.visible[x] = 1;

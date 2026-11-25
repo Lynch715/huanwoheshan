@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.19.1';
+  const VERSION = '0.20.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -11,7 +11,7 @@ var UI = (function () {
   let cityFilter = 'all', citySort = 'pop';
   let pendingTarget = -1;
   let moveMode = false;
-  let battleQueue = [], inTurn = false;
+  let battleQueue = [], marchEngagements = [], inTurn = false, batchingMarch = false;
   const unitPick = new Set();
   const SAVE_PREFIX = 'hwhs_save_';
   const HALL_KEY = 'hwhs_hall';
@@ -159,7 +159,7 @@ var UI = (function () {
       else { if (majorSound(e)) AUDIO.play('major'); toast(e.text, e.type); }
     });
     GAME.on('battle', r => battleQueue.push(r));
-    GAME.on('change', () => { refreshTop(); RENDER.markDirty(); });
+    GAME.on('change', () => { if (!inTurn && !batchingMarch) refreshTop(); RENDER.markDirty(); });
     GAME.on('event', () => {});
   }
 
@@ -221,7 +221,7 @@ var UI = (function () {
     AUDIO.beginReplay();
     RENDER.centerOn(tile);
     TACTIC.prebattle(a, tile, opts => {
-      if (!opts) { refreshSide(); refreshTop(); return; }
+      if (!opts) { refreshSide(); refreshTop(); setTimeout(processPending, 10); return; }
       if (!GAME.army(aid)) return;
       GAME.takeAnim();
       const snap = RENDER.snapshot();
@@ -239,6 +239,7 @@ var UI = (function () {
     });
   }
   function enterGame() {
+    marchEngagements = [];
     GAME.hooks.engage = true;
     GAME.hooks.defend = (a, tile) => SET.defend === 'all' || (SET.defend === 'city' && !!GAME.cityAt(tile) && GAME.cityAt(tile).f === P());
     $('title').classList.add('hidden');
@@ -389,7 +390,8 @@ var UI = (function () {
     const drawerOpen = !$('side').classList.contains('drawer-closed') && !$('side').classList.contains('hidden');
     if (!a || drawerOpen) { bar.classList.add('hidden'); return; }
     const g = a.gen != null ? GAME.gen(a.gen) : null;
-    const head = `<div class="ob-head">${g ? PORTRAIT.img(g, 34) : ''}<div><b>${esc(GAME.armyName(a))}</b><span class="note">${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人 · 行军力 ${Math.round(a.mp * 10) / 10}/${GAME.armyMP(a)} · 士气 ${Math.round(a.morale)}</span></div></div>`;
+    const c = GAME.cityAt(a.tile);
+    const head = `<div class="ob-head">${g ? PORTRAIT.img(g, 34) : ''}<div><b>${esc(GAME.armyName(a))}</b><span class="note">${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人 · 行军力 ${Math.round(a.mp * 10) / 10}/${GAME.armyMP(a)} · 士气 ${Math.round(a.morale)}</span></div>${c ? '<button type="button" class="btn" data-act="inspect-town">城池</button>' : ''}</div>`;
     let body;
     if (pendingTarget >= 0) {
       const t = pendingTarget, c = GAME.cityAt(t), ea = GAME.armyAt(t);
@@ -529,10 +531,11 @@ var UI = (function () {
       if (e.type !== 'pointerup' || dragged || pinched || held || !S()) return;
       if (p.type !== 'mouse' && distance(p, point(e)) > 8) return;
       if (document.elementFromPoint(e.clientX, e.clientY) !== cv) return;
-      const t = RENDER.tileAtScreen(e.clientX, e.clientY);
+      const armyHit = p.button === 0 && !moveMode ? RENDER.armyAtScreen(e.clientX, e.clientY) : null;
+      const t = armyHit?.tile ?? RENDER.tileAtScreen(e.clientX, e.clientY);
       if (t < 0) return;
       if (p.button === 2 || (p.button === 0 && moveMode && !phone.matches)) orderMove(t);
-      else if (p.button === 0) clickTile(t, p.type !== 'mouse');
+      else if (p.button === 0) clickTile(t, p.type !== 'mouse', armyHit);
       if (p.type !== 'mouse') {
         clearTimeout(tipTimer);
         lastHover = -1;
@@ -640,7 +643,7 @@ var UI = (function () {
     showSavedPath();
     if (sel && sel.type === 'army') {
       const ar = GAME.army(sel.id);
-      if (ar && ar.f === P() && t !== ar.tile && (moveMode || true)) {
+      if (ar && ar.f === P() && t !== ar.tile) {
         const p = GAME.findPath(ar, t, 3000);
         if (p && p.length) {
           const full = [ar.tile, ...p];
@@ -710,14 +713,15 @@ var UI = (function () {
     return r.op >= 0 ? '通好' : '冷淡';
   }
 
-  function clickTile(t, touch) {
+  function clickTile(t, touch, armyHit) {
     const a = GAME.armyAt(t), c = GAME.cityAt(t);
     const visA = a && (a.f === P() || S().visible[t]);
+    if (armyHit && (armyHit.f === P() || !myArmySel())) { select({ type: 'army', id: armyHit.id, tile: armyHit.tile }); return; }
     if (sel && sel.type === 'army' && sel.tile === t && c) { select({ type: 'city', id: c.id, tile: t }); return; }
     const myA = sel && sel.type === 'army' && GAME.army(sel.id);
     if (myA && myA.f === P() && t !== myA.tile && !(visA && a.f === P())) {
       if (pendingTarget === t) { orderMove(t); return; }
-      const p = GAME.findPath(myA, t, 4000);
+      const p = GAME.findPath(myA, t, Infinity);
       if (!p || !p.length) { toast('无路可达'); return; }
       const full = [myA.tile, ...p];
       RENDER.state.path = full; RENDER.state.pathTurns = pathTurns(myA, full);
@@ -726,13 +730,13 @@ var UI = (function () {
       RENDER.markDirty();
       return;
     }
-    if (visA && a.f === P()) select({ type: 'army', id: a.id, tile: t });
-    else if (c && S().explored[t]) select({ type: 'city', id: c.id, tile: t });
+    if (c && S().explored[t]) select({ type: 'city', id: c.id, tile: t });
     else if (visA) select({ type: 'army', id: a.id, tile: t });
     else if (S().explored[t]) select({ type: 'tile', tile: t });
     else select(null);
   }
   function select(s) {
+    cancelAnimationFrame(panAnim);
     sel = s; unitPick.clear(); setPendingTarget(-1);
     moveMode = false;
     $('map').style.cursor = 'default';
@@ -777,14 +781,16 @@ var UI = (function () {
     moveMode = false; $('map').style.cursor = 'default';
     if (!res.ok) { GAME.takeAnim(); toast(res.msg || '无法抵达'); return; }
     RENDER.state.path = null;
+    const battles = res.battles || [];
+    marchEngagements.push(...battles.filter(b => b.engage));
+    refreshSight();
     const fin = () => {
-      afterAction(res.battles && res.battles.length);
+      afterAction(battles.some(b => !b.engage));
       const still = GAME.army(a.id);
       if (still && sel) { sel.tile = still.tile; RENDER.state.sel = { tile: still.tile, army: still.id }; showSavedPath(); }
       else select(null);
       refreshSide(); flushDeferred();
-      const eng = (res.battles || []).find(b => b.engage);
-      if (eng) engage(eng.aid, eng.tile); else setTimeout(processPending, 30);
+      setTimeout(processPending, 30);
     };
     RENDER.play(snap, GAME.takeAnim(), Math.max(animSpeed, animSpeed ? 1 : 0), fin);
   }
@@ -794,15 +800,20 @@ var UI = (function () {
     GAME.takeAnim();
     const snap = RENDER.snapshot();
     let battles = 0; const engs = [];
-    for (const id of ids) { const r = GAME.continueArmy(id); for (const b of r) { if (b.engage) engs.push(b); else battles++; } }
+    batchingMarch = true;
+    try {
+      for (const id of ids) for (const b of GAME.continueArmy(id)) { if (b.engage) engs.push(b); else battles++; }
+    } finally { batchingMarch = false; }
     const evs = GAME.takeAnim();
-    if (!evs.length && !engs.length) { showSavedPath(); refreshSide(); toast('本回合暂不能续行'); return; }
+    if (!evs.length && !engs.length) { showSavedPath(); refreshSide(); refreshTop(); toast('本回合暂不能续行'); return; }
+    marchEngagements.push(...engs);
+    refreshSight();
     RENDER.state.path = null;
     RENDER.play(snap, evs, Math.max(animSpeed, animSpeed ? 1 : 0), () => {
       afterAction(battles);
       if (sel && sel.type === 'army') { const a = GAME.army(sel.id); if (a) { sel.tile = a.tile; RENDER.state.sel = { tile: a.tile, army: a.id }; showSavedPath(); } else select(null); }
       refreshSide(); flushDeferred();
-      if (engs.length) engage(engs[0].aid, engs[0].tile); else setTimeout(processPending, 30);
+      setTimeout(processPending, 30);
     });
   }
   function continueAll() {
@@ -823,10 +834,13 @@ var UI = (function () {
     const world = L.filter(e => e.type === 'world').slice(-Math.min(2, 5 - own.length));
     for (const e of [...world, ...own]) toast(e.text, e.type);
   }
-  function afterAction(major) {
+  function refreshSight(major = false) {
+    if (major) GAME.assignTerritory(false);
     GAME.updateVisibility();
-    if (major) { GAME.assignTerritory(false); RENDER.buildPolitical(); }
-    RENDER.buildFog();
+    if (RENDER.buildFog() || major) RENDER.buildPolitical();
+  }
+  function afterAction(major) {
+    refreshSight(major);
     refreshTop(); RENDER.markDirty();
     flushBattles(false);
   }
@@ -868,7 +882,11 @@ var UI = (function () {
     else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); layoutText(el); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
     if (sel.type !== 'tile') {
-      el.querySelector('.ph').insertAdjacentHTML('afterend', `<button class="record-link terrain-link" data-act="terrain" data-arg="${sel.tile}">察看地势 · ${tileTerrainName(sel.tile)}</button>`);
+      const stationed = GAME.armyAt(sel.tile);
+      const visibleArmy = stationed && (stationed.f === P() || S().visible[sel.tile]);
+      const switchTo = sel.type === 'army' && GAME.cityAt(sel.tile) ? '<button class="btn sm" data-act="inspect-town">查看城池</button>' :
+        sel.type === 'city' && visibleArmy ? '<button class="btn sm" data-act="inspect-army">查看驻军</button>' : '';
+      el.querySelector('.ph').insertAdjacentHTML('afterend', `<button class="record-link terrain-link" data-act="terrain" data-arg="${sel.tile}">察看地势 · ${tileTerrainName(sel.tile)}</button>${switchTo}`);
     }
     layoutText(el);
     renderOrderBar();
@@ -1028,7 +1046,7 @@ var UI = (function () {
       h += `<div class="sec">征兵</div>`;
       for (const u of GAME.unitOptions(c)) {
         const k = GAME.unitCost(c, u), ok = GAME.canAffordUnit(c, u);
-        h += `<div class="row ${ok ? 'click' : ''}" ${ok ? `data-act="recruit" data-arg="${u}"` : ''} style="${ok ? '' : 'opacity:.45'}">${UNITART.img(P(), u, 52, 'big')}<span class="grow"><b>${unitName(P(), u)}</b> <span class="note">攻${U[u].atk} 守${U[u].def} 行${U[u].mv}</span><br><span class="note">${U[u].desc}</span></span><span class="cost">钱${k.gold} 兵${k.man}${k.horse ? ' 马' + k.horse : ''}${k.iron ? ' 铁' + k.iron : ''}<br>工${k.prod}·${Math.ceil(k.prod / Math.max(0.1, y.prod * GAME.E()))}${TU()}</span></div>`;
+        h += `<div class="row ${ok ? 'click' : ''}" ${ok ? `data-act="recruit" data-arg="${u}"` : ''} style="${ok ? '' : 'opacity:.45'}">${UNITART.img(P(), u, 52, 'big')}<span class="grow"><b>${unitName(P(), u)}</b>${U[u].home ? ' <span class="chip">本地</span>' : ''} <span class="note">攻${U[u].atk} 守${U[u].def} 行${U[u].mv}</span><br><span class="note">${U[u].desc}</span></span><span class="cost">钱${k.gold} 兵${k.man}${k.horse ? ' 马' + k.horse : ''}${k.iron ? ' 铁' + k.iron : ''}<br>工${k.prod}·${Math.ceil(k.prod / Math.max(0.1, y.prod * GAME.E()))}${TU()}</span></div>`;
       }
     } else {
       const slots = GAME.tradeSlots(c);
@@ -1139,6 +1157,16 @@ var UI = (function () {
       case 'maptoggle': setMini(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'drawertoggle': setDrawer(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'terrain': showTileTerrain(+arg); break;
+      case 'inspect-town': {
+        const town = GAME.cityAt(sel?.tile);
+        if (town) select({ type: 'city', id: town.id, tile: town.tile });
+        break;
+      }
+      case 'inspect-army': {
+        const unit = GAME.armyAt(sel?.tile);
+        if (unit && (unit.f === P() || S().visible[unit.tile])) select({ type: 'army', id: unit.id, tile: unit.tile });
+        break;
+      }
       case 'zoomin': zoomCenter(1.2); break;
       case 'zoomout': zoomCenter(1 / 1.2); break;
       case 'cancelpreview': cancelPreview(); break;
@@ -1206,6 +1234,7 @@ var UI = (function () {
       case 'gototile': { closeModal(); const t = +arg; RENDER.centerOn(t); RENDER.flash(t); break; }
       case 'nextcity': nextIdleCity(); break;
       case 'contall': continueAll(); break;
+      case 'contall-panel': closeModal(); continueAll(); break;
       case 'nextidle': nextIdle(); break;
       case 'sentry': if (a && a.f === P()) sentryOrder(a); break;
       case 'genpick': pickGeneral(a.gen != null ? '更换主将' : '任命主将', g => true, g => g.tong, gid => { GAME.setArmyGeneral(a.id, gid); refreshSide(); }, true); break;
@@ -2097,10 +2126,14 @@ var UI = (function () {
     if (sort === 'gold' || sort === 'food') rows.sort((a, b) => b.upkeep[sort] - a.upkeep[sort]);
     const sortButtons = [['gold', '按钱饷排序'], ['food', '按粮饷排序']].map(([key, label]) =>
       `<button class="btn sm ${sort === key ? 'red' : ''}" type="button" data-act="armies" data-arg="${key}" aria-pressed="${sort === key}">${label}</button>`).join('');
-    let h = `<h1>诸军</h1><div class="btns">${sortButtons}</div><div class="scroll" style="max-height:65vh"><table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th><th>每季军饷</th></tr>`;
+    const ready = rows.filter(({ a }) => a.path?.length && a.mp > 0).length;
+    const march = ready ? `<button type="button" class="btn sm red" data-act="contall-panel">${ready} 军待续 · 全军继续</button>` : '';
+    let h = `<h1>诸军</h1><div class="btns">${sortButtons}${march}</div><div class="scroll" style="max-height:65vh"><table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th><th>每季军饷</th></tr>`;
     for (const { a, upkeep } of rows) {
       const c = GAME.cityAt(a.tile), own = GAME.tileOwner(a.tile);
-      h += `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${esc(GAME.armyName(a))}</b></td><td>${a.gen != null ? GAME.gen(a.gen).name : '—'}</td><td>${a.units.length}</td><td>${fmt(GAME.sumStr(a.units))}</td><td>${Math.round(a.morale)}</td><td>${c ? c.name : (own ? facName(own) + '境内' : '荒野')}</td><td>${a.path && a.path.length ? '行军中' : a.sentry ? '驻守' : a.mp > 0 ? '<span class=pos>待命</span>' : '已动'}</td><td class="army-upkeep">${upkeepText(upkeep)}</td></tr>`;
+      const goal = a.path?.at(-1);
+      const route = goal == null ? '' : `${a.mp > 0 ? '待续' : '已定路线'} · ${esc(GAME.cityAt(goal)?.name || GEO.TERRAIN[GEO.terrain[goal]]?.name || '野外')}`;
+      h += `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${esc(GAME.armyName(a))}</b></td><td>${a.gen != null ? GAME.gen(a.gen).name : '—'}</td><td>${a.units.length}</td><td>${fmt(GAME.sumStr(a.units))}</td><td>${Math.round(a.morale)}</td><td>${c ? c.name : (own ? facName(own) + '境内' : '荒野')}</td><td>${route || (a.sentry ? '驻守' : a.mp > 0 ? '<span class=pos>待命</span>' : '已动')}</td><td class="army-upkeep">${upkeepText(upkeep)}</td></tr>`;
     }
     h += `</table></div>`;
     openModal(h, { width: '760px' });
@@ -2608,7 +2641,8 @@ var UI = (function () {
 
   // ---------- 事件 ----------
   function processPending() {
-    if (!S() || !$('title').classList.contains('hidden') || !$('modal-bg').classList.contains('hidden')) return;
+    if (!S() || inTurn || RENDER.isAnimating() || $('tac-bg')?.classList.contains('hidden') === false ||
+        !$('title').classList.contains('hidden') || !$('modal-bg').classList.contains('hidden')) return;
     if (battleQueue.length) { flushBattles(true); return; }
     if (S().defeat && !S().settlement) GAME.finishGame('defeat');
     const settlement = S().settlement;
@@ -2620,7 +2654,17 @@ var UI = (function () {
       return;
     }
     const p = S().pending.shift();
-    if (!p) { refreshTop(); refreshSide(); return; }
+    if (!p) {
+      while (marchEngagements.length) {
+        const { aid, tile } = marchEngagements.shift(), a = GAME.army(aid);
+        if (a?.f !== P() || a.mp <= 0 || !a.path?.length) continue;
+        const step = GAME.routeStep(a, a.tile, a.path);
+        if (step.kind !== 'attack' || step.to !== tile) continue;
+        engage(aid, tile);
+        return;
+      }
+      refreshTop(); refreshSide(); return;
+    }
     if (!EVENTS.presentable(p)) return processPending();
     showEvent(p);
   }
