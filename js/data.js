@@ -101,10 +101,10 @@ var DATA = (function () {
       command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.50 },
       occupation: { seasons: 6, production: 0.32, loyalty: 22, unrest: 42, revolt: 0.11 },
       debt: { governance: 0.023, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
-    { name: '地狱', aiYield: 1.22, aiBattle: 1.269, startReserve: 0.5, northGarrison: 2, northArmy: 1, eraRecruit: 6, ransom: 1.3, requestProtection: 4, regenMan: 1, refillGold: 0.8,
+    { name: '绝境', aiYield: 1.65, aiBattle: 2.15, startReserve: 0.35, northGarrison: 4, northArmy: 4, eraRecruit: 8, ransom: 1.3, requestProtection: 4, regenMan: 1.6, refillGold: 1,
       coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0,
         speedW: 1.6, brokenW: 0.04, leagueGap: 0.06, ratioSlope: 3.5, ratioFloor: 0.2, waveMax: 5, waveCool: 8, giftMult: 1.3 },
-      command: { armies: 3, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.98, retreat: 54, morale: 38, reconquest: 8, northPush: 3, siegeInterval: 0.30 },
+      command: { armies: 6, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.95, retreat: 54, morale: 38, reconquest: 10, northPush: 6, siegeInterval: 0.16 },
       occupation: { seasons: 8, production: 0.42, loyalty: 18, unrest: 48, revolt: 0.19 },
       debt: { governance: 0.035, morale: 22, desertion: 0.34, hunger: 12, famine: 0.09 } },
   ];
@@ -479,45 +479,45 @@ var DATA = (function () {
   const ERAS = ['', '中兴', '开海', '万国'];
   const TECHS = {
     zhanchengdao: { name: '占城稻', branch: '农桑', era: 1, cost: 80, desc: '全国粮产 +10%' },
-    weitian: { name: '圩田', branch: '农桑', era: 1, cost: 60, desc: '解锁圩田' },
-    changping: { name: '常平法', branch: '农桑', era: 1, cost: 120, req: ['weitian'], desc: '解锁常平仓' },
+    weitian: { name: '圩田', branch: '农桑', era: 1, cost: 60, desc: '可建圩田' },
+    changping: { name: '常平法', branch: '农桑', era: 1, cost: 120, req: ['weitian'], desc: '可建常平仓' },
     nongshu: { name: '农书', branch: '农桑', era: 1, cost: 200, req: ['zhanchengdao'], desc: '粮产 +10%，人口增长加快' },
     mianfang: { name: '棉纺', branch: '农桑', era: 1, cost: 280, req: ['nongshu'], desc: '钱 +10%' },
-    yetie: { name: '冶铁', branch: '工技', era: 1, cost: 60, desc: '解锁冶铁务' },
+    yetie: { name: '冶铁', branch: '工技', era: 1, cost: 60, desc: '可建冶铁务' },
     huoyao: { name: '火药', branch: '工技', era: 1, cost: 120, req: ['yetie'], desc: '火器之基' },
     paoche: { name: '霹雳炮', branch: '工技', era: 1, cost: 200, req: ['huoyao'], desc: '砲车攻城 +50%' },
-    tuhuoqiang: { name: '突火枪', branch: '工技', era: 1, cost: 340, req: ['paoche'], desc: '解锁火器营' },
+    tuhuoqiang: { name: '突火枪', branch: '工技', era: 1, cost: 340, req: ['paoche'], desc: '可募火器营' },
     yinshua: { name: '活字印刷', branch: '工技', era: 1, cost: 220, desc: '文 +20%' },
     huochong: { name: '铜火铳', branch: '工技', era: 2, cost: 520, req: ['tuhuoqiang'], desc: '火器营 +40%' },
     shenbigong: { name: '神臂弓', branch: '兵学', era: 1, cost: 80, desc: '弓弩 +25%' },
-    lianbing: { name: '练兵法', branch: '兵学', era: 1, cost: 110, desc: '解锁军营，士气恢复加快' },
-    jiaqi: { name: '甲骑', branch: '兵学', era: 1, cost: 180, desc: '解锁甲骑' },
-    beiwei: { name: '背嵬法', branch: '兵学', era: 1, cost: 280, req: ['lianbing', 'jiaqi'], desc: '解锁背嵬军（仅宋）' },
+    lianbing: { name: '练兵法', branch: '兵学', era: 1, cost: 110, desc: '可建军营，士气恢复加快' },
+    jiaqi: { name: '甲骑', branch: '兵学', era: 1, cost: 180, desc: '可募甲骑' },
+    beiwei: { name: '背嵬法', branch: '兵学', era: 1, cost: 280, req: ['lianbing', 'jiaqi'], desc: '可募背嵬军（仅宋）' },
     chengfang: { name: '城防术', branch: '兵学', era: 1, cost: 150, desc: '城防 +50%' },
     wujing: { name: '武经总要', branch: '兵学', era: 1, cost: 320, req: ['lianbing'], desc: '全军战力 +10%' },
-    shuyuan: { name: '书院', branch: '文治', era: 1, cost: 60, desc: '解锁书院' },
+    shuyuan: { name: '书院', branch: '文治', era: 1, cost: 60, desc: '可建书院' },
     lixue: { name: '理学', branch: '文治', era: 1, cost: 260, req: ['shuyuan'], desc: '民心 +5，文 +10%' },
     kejugaige: { name: '科举改革', branch: '文治', era: 1, cost: 200, req: ['shuyuan'], desc: '每科多录一人' },
     caoyun: { name: '漕运', branch: '文治', era: 1, cost: 180, desc: '军粮消耗 -25%' },
     yichuan: { name: '驿传', branch: '文治', era: 1, cost: 220, desc: '陆路行军 +1' },
     honglu: { name: '鸿胪寺', branch: '文治', era: 1, cost: 150, desc: '外交好感增长加倍，遣使减半' },
-    zhinanzhen: { name: '指南针', branch: '航海', era: 1, cost: 80, desc: '解锁市舶司' },
-    haichuan: { name: '海船', branch: '航海', era: 1, cost: 120, desc: '解锁船坞与舟师' },
+    zhinanzhen: { name: '指南针', branch: '航海', era: 1, cost: 80, desc: '可建市舶司' },
+    haichuan: { name: '海船', branch: '航海', era: 1, cost: 120, desc: '可建船坞、可募舟师' },
     shuishi: { name: '水师', branch: '航海', era: 1, cost: 260, req: ['haichuan'], desc: '舟师 +40%，航速 +2' },
     yuanyang: { name: '远洋', branch: '航海', era: 2, cost: 420, req: ['zhinanzhen', 'shuishi'], desc: '海贸 +50%，航线不限远近' },
 
     // 农桑
-    shecang: { name: '社仓之法', branch: '农桑', era: 1, cost: 180, req: ['changping'], desc: '解锁社仓' },
-    tangyan: { name: '陂塘灌田', branch: '农桑', era: 2, cost: 445, req: ['weitian', 'nongshu'], desc: '粮产 +8%，解锁堰渠', eff: { foodPct: 0.08 } },
-    haitang: { name: '海塘修筑', branch: '农桑', era: 2, cost: 580, req: ['tangyan', 'haichuan'], desc: '解锁海塘' },
+    shecang: { name: '社仓之法', branch: '农桑', era: 1, cost: 180, req: ['changping'], desc: '可建社仓' },
+    tangyan: { name: '陂塘灌田', branch: '农桑', era: 2, cost: 445, req: ['weitian', 'nongshu'], desc: '粮产 +8%，可建堰渠', eff: { foodPct: 0.08 } },
+    haitang: { name: '海塘修筑', branch: '农桑', era: 2, cost: 580, req: ['tangyan', 'haichuan'], desc: '可建海塘' },
     canmulue: { name: '蚕桑谱', branch: '农桑', era: 2, cost: 725, req: ['mianfang', 'yinshua'], desc: '钱 +12%', eff: { goldPct: 0.12 } },
     nongsangtupu: { name: '农桑图谱', branch: '农桑', era: 3, cost: 1050, req: ['tangyan', 'canmulue'], desc: '粮产 +8%，增长所需存粮 -8%', eff: { foodPct: 0.08, growth: 0.08 } },
     quanji: { name: '乡里劝农', branch: '农桑', era: 3, cost: 1460, req: ['shecang', 'nongsangtupu'], desc: '粮产 +6%，民心 +2', eff: { foodPct: 0.06, happy: 2 } },
     liangzhong: { name: '良种留储', branch: '农桑', era: 3, cost: 1780, req: ['quanji', 'haitang'], desc: '粮产 +9%，增长所需存粮 -10%', eff: { foodPct: 0.09, growth: 0.10 } },
 
     // 工技
-    yingzao: { name: '营造法式', branch: '工技', era: 1, cost: 215, req: ['yetie'], desc: '解锁都料场' },
-    jingye: { name: '精冶法', branch: '工技', era: 2, cost: 455, req: ['yingzao', 'yetie'], desc: '铁 +1/季，解锁精冶场', eff: { iron: 1 } },
+    yingzao: { name: '营造法式', branch: '工技', era: 1, cost: 215, req: ['yetie'], desc: '可建都料场' },
+    jingye: { name: '精冶法', branch: '工技', era: 2, cost: 455, req: ['yingzao', 'yetie'], desc: '铁 +1/季，可建精冶场', eff: { iron: 1 } },
     shuilizhuan: { name: '水力转轮', branch: '工技', era: 2, cost: 640, req: ['jingye', 'tangyan'], desc: '工 +12%', eff: { prodPct: 0.12 } },
     huihuipao: { name: '回回砲', branch: '工技', era: 2, cost: 870, req: ['paoche', 'yingzao'], desc: '砲车攻城 +20%', eff: { siegePct: 0.20 } },
     baigong: { name: '百工会造', branch: '工技', era: 3, cost: 1130, req: ['jingye', 'shuilizhuan'], desc: '工 +10%，铁 +1/季', eff: { prodPct: 0.10, iron: 1 } },
@@ -525,27 +525,27 @@ var DATA = (function () {
     kaogong: { name: '工部程式', branch: '工技', era: 3, cost: 1880, req: ['qiyang', 'huihuipao'], desc: '工 +12%', eff: { prodPct: 0.12 } },
 
     // 兵学
-    junzheng: { name: '军伍簿', branch: '兵学', era: 1, cost: 205, req: ['lianbing'], desc: '军团士气恢复 +1，解锁都教场', eff: { morale: 1 } },
+    junzheng: { name: '军伍簿', branch: '兵学', era: 1, cost: 205, req: ['lianbing'], desc: '军团士气恢复 +1，可建都教场', eff: { morale: 1 } },
     huojian: { name: '火箭营法', branch: '兵学', era: 2, cost: 600, req: ['huoyao', 'shenbigong'], desc: '弓弩 +10%，火器营 +5%', eff: { unit: { bow: 0.10, fire: 0.05 } } },
-    wengcheng: { name: '瓮城制', branch: '兵学', era: 2, cost: 780, req: ['chengfang', 'yingzao'], desc: '城防 +18%，解锁瓮城', eff: { wallPct: 0.18 } },
+    wengcheng: { name: '瓮城制', branch: '兵学', era: 2, cost: 780, req: ['chengfang', 'yingzao'], desc: '城防 +18%，可建瓮城', eff: { wallPct: 0.18 } },
     jiaye: { name: '甲仗整治', branch: '兵学', era: 3, cost: 1100, req: ['jiaqi', 'jingye', 'junzheng'], desc: '甲骑 +18%，步卒 +8%', eff: { unit: { hcav: 0.18, inf: 0.08 } } },
     jiangtaolue: { name: '将略新编', branch: '兵学', era: 3, cost: 1510, req: ['huojian', 'wujing'], desc: '全军战力 +8%，弓弩另加 7%', eff: { unit: { all: 0.08, bow: 0.07 } } },
     zhenwu: { name: '兵制通纂', branch: '兵学', era: 3, cost: 1840, req: ['jiaye', 'jiangtaolue', 'wengcheng'], desc: '全军战力 +8%，轻骑另加 12%，弓骑另加 10%，城防 +20%', eff: { unit: { all: 0.08, cav: 0.12, hbow: 0.10 }, wallPct: 0.20 } },
 
     // 文治
-    shiyi: { name: '市易法', branch: '文治', era: 1, cost: 245, req: ['honglu'], desc: '钱 +4%，解锁镇市', eff: { goldPct: 0.04 } },
-    zhoukuan: { name: '州学课士', branch: '文治', era: 2, cost: 475, req: ['shuyuan', 'yinshua'], desc: '文 +7%，解锁州学', eff: { sciPct: 0.07 } },
-    yanchao: { name: '盐钞法', branch: '文治', era: 2, cost: 655, req: ['shiyi', 'mianfang'], desc: '钱 +12%，解锁交引铺', eff: { goldPct: 0.12 } },
+    shiyi: { name: '市易法', branch: '文治', era: 1, cost: 245, req: ['honglu'], desc: '钱 +4%，可建镇市', eff: { goldPct: 0.04 } },
+    zhoukuan: { name: '州学课士', branch: '文治', era: 2, cost: 475, req: ['shuyuan', 'yinshua'], desc: '文 +7%，可建州学', eff: { sciPct: 0.07 } },
+    yanchao: { name: '盐钞法', branch: '文治', era: 2, cost: 655, req: ['shiyi', 'mianfang'], desc: '钱 +12%，可建交引铺', eff: { goldPct: 0.12 } },
     xiangyue: { name: '乡约', branch: '文治', era: 2, cost: 810, req: ['lixue', 'zhoukuan'], desc: '民心 +3', eff: { happy: 3 } },
-    taixue: { name: '太学条法', branch: '文治', era: 3, cost: 1100, req: ['zhoukuan', 'kejugaige', 'xiangyue'], desc: '文 +12%，解锁太学', eff: { sciPct: 0.12 } },
+    taixue: { name: '太学条法', branch: '文治', era: 3, cost: 1100, req: ['zhoukuan', 'kejugaige', 'xiangyue'], desc: '文 +12%，可建太学', eff: { sciPct: 0.12 } },
     tongzhi: { name: '州县图经', branch: '文治', era: 3, cost: 1450, req: ['taixue', 'yingzao'], desc: '文 +8%，民心 +2', eff: { sciPct: 0.08, happy: 2 } },
     liangce: { name: '钱谷会计', branch: '文治', era: 3, cost: 1900, req: ['yanchao', 'tongzhi'], desc: '钱 +14%，民心 +2', eff: { goldPct: 0.14, happy: 2 } },
 
     // 航海
     gangxu: { name: '海舶市例', branch: '航海', era: 1, cost: 210, req: ['zhinanzhen'], desc: '海贸 +7%', eff: { tradePct: 0.07 } },
-    shuigecang: { name: '水密隔舱', branch: '航海', era: 2, cost: 485, req: ['haichuan', 'gangxu'], desc: '舟师 +10%，解锁海船场', eff: { unit: { navy: 0.10 } } },
+    shuigecang: { name: '水密隔舱', branch: '航海', era: 2, cost: 485, req: ['haichuan', 'gangxu'], desc: '舟师 +10%，可建海船场', eff: { unit: { navy: 0.10 } } },
     qianxing: { name: '牵星术', branch: '航海', era: 2, cost: 660, req: ['shuigecang', 'zhinanzhen'], desc: '航速 +1', eff: { seaMP: 1 } },
-    hangcheng: { name: '海舶程簿', branch: '航海', era: 2, cost: 850, req: ['qianxing', 'yuanyang'], desc: '海贸 +8%，解锁泊舶院', eff: { tradePct: 0.08 } },
+    hangcheng: { name: '海舶程簿', branch: '航海', era: 2, cost: 850, req: ['qianxing', 'yuanyang'], desc: '海贸 +8%，可建泊舶院', eff: { tradePct: 0.08 } },
     jinhaidu: { name: '海舶护航', branch: '航海', era: 3, cost: 1370, req: ['qianxing', 'huojian', 'caoyun'], desc: '舟师 +15%，军粮消耗 -12%', eff: { unit: { navy: 0.15 }, supply: 0.12 } },
     sihai: { name: '四海舆程', branch: '航海', era: 3, cost: 1900, req: ['hangcheng', 'jinhaidu', 'yichuan'], desc: '航速 +1，陆路行军 +0.6，海贸 +10%', eff: { seaMP: 1, landMP: 0.60, tradePct: 0.10 } },
   };
@@ -1258,6 +1258,7 @@ var DATA = (function () {
   };
 
   // ---------- 人名生成 ----------
+  const NAME_INITIAL_EXCLUSIONS = new Set('买卖相守请令使可将为以与自所');
   const NAMES = {
     han: { s: '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜谢邹章苏潘葛范彭鲁韦马方任袁柳鲍史唐费薛雷贺倪汤罗毕郝安常傅齐康余顾孟黄萧尹姚邵汪毛狄米贝明臧计伏成戴宋庞熊纪舒屈项祝董梁杜阮蓝闵季贾路江童颜郭梅盛林钟徐邱骆高夏蔡田胡凌霍虞万柯卢莫房解应宗丁宣邓单杭洪包左石崔吉龚程邢裴陆荣翁荀甄家封储靳段侯全班仰秋仲伊宫宁仇栾甘厉戎祖武符刘景詹龙叶幸司黎溥印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟谭贡劳姬申扶堵冉宰郦雍桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公阿哀爱柏拜保葆薄闭卞卜布才岑车谌迟淳丛寸代但刁典鼎冬窦端多恩樊凡繁斐芾风奉佛福付干皋根弓苟谷固辜官管贯圭贵归衮海黑赫花滑环皇淮徽惠基蓟稽祭甲焦角揭介晋京经井敬境鸠巨隗郐邝库乐隶栗练励廉濂莲凉良聊列留楼露鹿落麻买麦茂茅茆密宓麋麴苗名墨牟木沐穆牧纳南年念辇庖盆逄皮毗平朴杞祁綦漆戚岐祈契千潜强侨桥樵郗郄郤钦芩覃青清庆丘求裘区渠曲泉阙阕仁仍如儒汝润芮赛山闪陕善商赏韶少审深神胜生时守受疏帅霜水四寺似颂粟素肃随隋遂锁台谈桃滕藤特铁佟同涂徒土吐拓佗外危委味位尉问乌巫吾伍务戊希奚席洗冼鲜宪乡肖信新星刑杏休修续玄轩学雅闫延言仵尧瑶冶野衣夷仪义意佚弋殷隐英郢营邕永尤邮由攸俞于於愚渔禹羽隅玉郁宇元员原源爰岳云郧恽郓蔗展湛占仉仝肇折臻针贞征知支植直郅挚执种重舟诸主渚竹涿濯拙兹淄纵佐胙阼作逢洑虢郇邬睦菅藺夙俟卬娄闾馀綝', g: '世忠彦文武德明光远道宗元正之仲伯叔安国邦华士良信义仁礼智勇刚毅弘谦泰俊杰英豪雄伟卿相廷亮成章思孝立显达观恕宣辅弼韬略甫翼克允珪璋璞璟璠珩琛琦钰珏玮琰玠珣琮琚琇璧琬璘璨琢瑜瑾瑛琏璜琨珉瑑玙瑀瑄璇韫蕴昶晟昀煜晖晔晏晞晗晁旭昉曜昕熹炳炜烨炯烜敏俭廉清恭厚朴质' },
     jurchen: { s: ['完颜', '纥石烈', '仆散', '徒单', '乌古论', '夹谷', '蒲察', '温迪罕', '术虎', '裴满', '纳兰', '纥石', '乌林答', '斜卯', '唐括', '忒里辟', '兀颜', '术甲', '颜盏', '移剌', '石抹'], g: ['阿骨', '斡离', '宗', '撒', '阿鲁', '迪古', '讹可', '胡沙', '合喜', '蒲鲁', '兀', '突合', '习不失', '阿里', '粘没', '蒲家奴', '骨赧', '银术可', '银可术', '阿邻', '本睹', '阿琐', '合住', '胡剌', '溪列', '吾都补', '斜钵', '宗秀', '宗道', '宗望'] },
@@ -1375,7 +1376,9 @@ var DATA = (function () {
   ];
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
-  return { ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
+  const HAN_NAME_INITIALS = [...NAMES.han.g].filter(ch => !NAME_INITIAL_EXCLUSIONS.has(ch)).join('');
+
+  return { HAN_NAME_INITIALS, ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
     CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, unitBase, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

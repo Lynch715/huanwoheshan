@@ -214,7 +214,11 @@ var GAME = (function () {
     const N = DATA.NAMES[culture] || DATA.NAMES.han;
     const s = typeof N.s === 'string' ? N.s[ri(0, N.s.length - 1)] : pick(N.s);
     let g;
-    if (typeof N.g === 'string') { g = N.g[ri(0, N.g.length - 1)]; if (Math.random() < 0.6) g += N.g[ri(0, N.g.length - 1)]; }
+    if (typeof N.g === 'string') {
+      const initials = N === DATA.NAMES.han ? DATA.HAN_NAME_INITIALS : N.g;
+      g = initials[ri(0, initials.length - 1)];
+      if (Math.random() < 0.6) g += N.g[ri(0, N.g.length - 1)];
+    }
     else g = pick(N.g);
     return s + g;
   }
@@ -1545,6 +1549,11 @@ var GAME = (function () {
     const ls = { 7: 0.7, 10: 0.8 }[S.scale] || 1;
     return { r, Pa, Pd, lossA: (0.08 + 0.55 * (1 - r) * (1 - r)) * ls + (M.preA || 0), lossD: (0.08 + 0.55 * r * r) * ls + (M.preD || 0), aStr: sumStr(B.A.units), dStr: sumStr(B.D.units), B };
   }
+  function strengthByType(units, minimum = 1) {
+    const counts = {};
+    for (const u of units) if (u.s >= minimum) counts[u.t] = (counts[u.t] || 0) + u.s;
+    return counts;
+  }
   function attack(a, tile, opts) {
     opts = opts || {};
     if (a.sentry) clearSentry(a);
@@ -1557,6 +1566,8 @@ var GAME = (function () {
     if (c?.f === defF) c.battleTurn = S.turn;
     if (a.f !== 'rebel' && defF !== 'rebel' && defF !== a.f) (getRel(a.f, defF).struckBy ||= {})[a.f] = S.T;
     const before = opts.manual ? opts.manual.before : { a: sumStr(A.units), d: sumStr(D.units), wall: c ? c.wall : 0 };
+    const unitBefore = a.f === S.player || defF === S.player
+      ? opts.manual?.unitBefore || { a: strengthByType(A.units), d: strengthByType(D.units) } : null;
     const fullWall = a.f === S.player && c?.f === defF && before.wall >= maxWall(c) - 0.01;
     const apply = (units, loss) => { for (const u of units) u.s = Math.round(u.s * (1 - clamp(loss * rnd(0.75, 1.25), 0, 0.95))); };
     let r, wallLoss = 0;
@@ -1590,6 +1601,7 @@ var GAME = (function () {
       tile, att: a.f, def: defF, attName: armyName(a), attGen: a.gen, defGen: D.gen, defName: defArmy ? armyName(defArmy) : (c ? c.name + '守军' : ''),
       city: c ? c.name : null, before, after: { a: sumStr(a.units), d: sumStr(D.units.filter(u => u.s >= 10)), wall: c ? c.wall : 0 }, ratio: r, result: '', captured: null, wallLoss,
     };
+    if (unitBefore) rep.unitStrength = { before: unitBefore, after: { a: strengthByType(A.units), d: strengthByType(D.units, 10) } };
     a.mp = 0;
     const F_a = fac(a.f), F_d = fac(defF);
     addWarScore(a.f, defF, attWin ? 2 : -2);
@@ -2024,7 +2036,7 @@ var GAME = (function () {
       revealAround(c.tile, 3);
       if (old !== f && old !== 'rebel' && Math.random() < 0.3) EVENTS.offerFormerOfficial(c, F_old.culture);
     }
-    if (old === S.player) log(`${c.name}失守于【${F_new.name}】！`, 'war', c.tile);
+    if (old === S.player) log(`${c.name}失守于【${F_new.name}】！`, 'war', c.tile, false, { kind: 'cityLost', city: c.id });
     // 天下大事：电脑之间攻城略地
     if (old !== S.player && f !== S.player && old !== f && old !== 'rebel' && f !== 'rebel') {
       const known = fac(S.player).met[f] || fac(S.player).met[old];
@@ -2795,8 +2807,9 @@ var GAME = (function () {
     if (f === S.player) total.governance = total.gold * Math.max(0, cities.length - 40) * difficultyRules().debt.governance;
     return total;
   }
-  function log(text, type, tile, hot) {
-    const e = { t: S.turn, d: dateStr(), text, type: type || 'info' };
+  function cityPromotionText(name, before, tier) { return `${name}由${before}升${TIERS[tier].name}`; }
+  function log(text, type, tile, hot, details) {
+    const e = { t: S.turn, d: dateStr(), text, type: type || 'info', ...details };
     if (tile != null && tile >= 0) e.tile = tile;
     if (hot) e.hot = true; // 天下大事：回合结束时弹出提示
     S.log.push(e);
@@ -2862,7 +2875,7 @@ var GAME = (function () {
             const before = cityTier(c).name;
             c.tier = q.id;
             if (player) {
-              log(`${c.name}${before}升为${c.name}${cityTier(c).name}。`, 'eco', c.tile);
+              log(cityPromotionText(c.name, before, c.tier) + '。', 'eco', c.tile);
               S.pending.push({ ev: 'cityPromotion', city: c.id, before, tier: c.tier });
             }
           }
@@ -3254,7 +3267,7 @@ var GAME = (function () {
   return {
     terrainPower, terrainDefense, battleTerrainRows, tileTerrainRows, expeditionRate,
     equipItem, unequipItem, itemNames, itemOfficer, isItemOldOwner, itemOldOwners, itemMoveReason, itemEquipReason, itemGain, recoverItem, grantItem, sweepItemTransfers,
-    get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum,
+    get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, strengthByType, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum, cityPromotionText,
     fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
     cityTier, cityRoleFx, setCapital, buildingCount, buildingFull, buildingCost, demolishBuilding, tierUpgrade, canUpgradeCity, queueTier, roleTime, setCityRole,
     buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,

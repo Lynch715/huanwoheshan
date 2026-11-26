@@ -306,5 +306,86 @@ var INKART = (function () {
   }
   function count(kind) { return KINDS[kind] ? KINDS[kind][0] : 0; }
   function warm() { for (const k in KINDS) for (let i = 0; i < KINDS[k][0]; i++) get(k, i); }
-  return { get, count, warm, cityArt, BOX, SR, brush, wash, rng };
+  function sceneRidge(g, r, x, foot, span, rise, near) {
+    const phase = r() * Math.PI, step = span / 24;
+    const ridge = Array.from({ length: 25 }, (_, i) => {
+      const t = i / 24;
+      const silhouette = 0.64 + 0.22 * Math.sin(14 * t + phase) + 0.11 * Math.sin(31 * t + phase) + 0.08 * r();
+      return [x - span / 2 + i * step, foot - rise * Math.pow(Math.sin(Math.PI * t), 0.55) * silhouette];
+    });
+    g.save();
+    g.beginPath();
+    g.moveTo(...ridge[0]);
+    for (let i = 1; i < ridge.length - 1; i++) {
+      const [px, py] = ridge[i], [nx, ny] = ridge[i + 1];
+      g.quadraticCurveTo(px, py, (px + nx) / 2, (py + ny) / 2);
+    }
+    g.lineTo(...ridge.at(-1));
+    g.closePath();
+    g.clip();
+    for (let i = 2; i < ridge.length - 1; i += 3) {
+      const [px, py] = ridge[i];
+      const depth = foot - py;
+      wash(g, px, py + depth * 0.19, step * 5.3, Math.max(2, depth * 0.85), near ? '53,63,53' : '104,115,104', near ? 0.49 : 0.17);
+      if (!near) continue;
+      for (let k = 0; k < 4; k++) {
+        const sx = px + (r() - 0.5) * step * 3, sy = py + depth * (0.2 + r() * 0.38);
+        const d = (r() - 0.62) * step * 3, len = depth * (0.08 + r() * 0.31);
+        brush(g, [[sx, sy], [sx + d * 0.6, sy + len * 0.47], [sx + d, sy + len]], 0.9, 0.12, ink(0.13 + r() * 0.22));
+      }
+      for (let k = 0; k < 4; k++) {
+        const sx = px + (r() - 0.5) * step * 3.5, sy = py + depth * (0.25 + 0.4 * r());
+        wash(g, sx, sy, 0.7 + r() * 1.4, 0.45 + r(), '38,52,37', 0.25 + 0.4 * r());
+      }
+    }
+    g.restore();
+  }
+  function scene(canvas) {
+    const { width, height } = canvas.getBoundingClientRect();
+    if (!width || !height) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(width * dpr), h = Math.round(height * dpr);
+    if (canvas.width === w && canvas.height === h && canvas.dataset.painted) return;
+    canvas.width = w; canvas.height = h;
+    const g = canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const r = rng(1140), unit = Math.min(height, width * 0.8);
+    for (const [x, y, span, rise, near] of [
+      [0.07, 0.73, 0.56, 0.42, false], [0.43, 0.75, 0.54, 0.34, false],
+      [0.79, 0.76, 0.56, 0.4, false], [1.02, 0.74, 0.43, 0.42, false],
+      [0.09, 0.89, 0.43, 0.53, true], [0.82, 0.86, 0.37, 0.32, true],
+      [1.02, 0.92, 0.43, 0.54, true],
+    ]) {
+      sceneRidge(g, r, width * x, height * y, width * span, unit * rise, near);
+    }
+    wash(g, width * 0.52, height * 0.84, width * 0.73, unit * 0.14, '250,243,222', 0.6);
+    for (const [start, y, span] of [[0.19, 0.88, 0.22], [0.57, 0.92, 0.25], [0.3, 0.974, 0.39]]) {
+      const x = width * start, py = height * y, len = width * span;
+      brush(g, [[x, py], [x + len * 0.25, py - 1], [x + len * 0.68, py + 0.35], [x + len, py]], 0.75, 0.12, ink(0.2));
+    }
+    for (const [x, y, s] of [[0.31, 0.93, 12], [0.54, 0.88, 9], [0.73, 0.967, 15]]) {
+      const px = width * x, py = height * y;
+      brush(g, [[px - s, py - 1], [px - s * 0.4, py + 1.5], [px + s, py - 1]], 1.3, 0.9, ink(0.74));
+      g.beginPath(); g.moveTo(px, py - s * 1.65); g.quadraticCurveTo(px + s * 0.9, py - s * 1.25, px + s * 0.68, py - 2);
+      g.lineTo(px, py - 2); g.closePath(); g.fillStyle = 'rgba(102,75,48,0.64)'; g.fill();
+      brush(g, [[px, py - s * 1.78], [px, py]], 0.55, 0.85, ink(0.74));
+    }
+    for (const [x, y, s] of [[0.07, 0.91, 23], [0.12, 0.92, 15], [0.88, 0.893, 20], [0.95, 0.912, 26]]) {
+      const px = width * x, py = height * y;
+      brush(g, [[px + 1, py], [px - 1, py - s * 0.58], [px + 2, py - s]], 1.6, 0.55, ink(0.75));
+      for (let j = 1; j <= 3; j++) {
+        const cy = py - s * (0.46 + j * 0.16), span = s * (0.72 - j * 0.1);
+        wash(g, px + (j % 2 - 0.5) * span * 0.5, cy, span * 0.55, 1.8, '39,53,44', 0.8);
+      }
+    }
+    for (const [x, y, s] of [[0.175, 0.896, 1], [0.22, 0.906, 0.8], [0.843, 0.905, 1.1]]) {
+      const px = width * x, py = height * y;
+      g.fillStyle = 'rgba(124,104,72,0.5)'; g.fillRect(px - 5 * s, py - 5 * s, 10 * s, 5 * s);
+      g.fillStyle = ink(0.68); g.fillRect(px + s, py - 4 * s, 1.6 * s, 4 * s);
+      brush(g, [[px - 8 * s, py - 4 * s], [px - s, py - 10 * s], [px + 8 * s, py - 4 * s]], 1.6, 1.2, ink(0.8));
+    }
+    canvas.dataset.painted = '1';
+  }
+
+  return { get, count, warm, cityArt, BOX, SR, brush, wash, rng, scene };
 })();

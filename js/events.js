@@ -124,28 +124,28 @@ var EVENTS = (function () {
             if (o !== 'song') { const c = nearestOwnCity('song', a.tile); const t = freeTileNear(c.tile, 3); if (t >= 0) { a.tile = t; a.path = []; } }
           }
           G().flags.qin = 'power'; G().flags.morale = -3;
-          G().pending.push({ ev: 'info', title: '御前须知', text: '和议既成，宋金暂息兵戈。陛下可趁此休养生息：兴修圩田、广设书院、开辟海路，待国力充盈，再图北伐。\n\n· 点选城池，在“内政”中营建、“军务”中征兵与组建军团。\n· 临海之城建市舶司，可与南洋、天竺、大食通商。\n· 和约未满而兴兵，则近邦与敌之盟国多有非议。\n\n十年生聚，十年教训，河山终当归我。' });
+          G().pending.push({ ev: 'info', title: '御前须知', text: '和议既成，宋金暂息兵戈。陛下可趁此休养生息：兴修圩田、广设书院、开辟海路，待国力充盈，再图北伐。\n\n· 点选城池，在「内政」中营建、「军务」中征兵与组建军团。\n· 临海之城建市舶司，可与南洋、天竺、大食通商。\n· 和约未满而兴兵，则近邦与敌之盟国多有非议。\n\n十年生聚，十年教训，河山终当归我。' });
           GAME.log('诏岳飞班师。绍兴和议成，宋金以淮水—大散关为界。', 'big');
         } },
         { t: '金牌留中不发，命岳飞乘胜北进', d: '战事继续，岳家军士气大振；主和诸臣必有反扑', fn: () => {
           for (const a of G().armies.filter(a => a.f === 'song')) a.morale = 100;
           G().flags.qin = 'angry'; G().flags.qinTurn = G().T + 2; G().flags.morale = 3;
-          G().pending.push({ ev: 'info', title: '御前须知', text: '岳家军已逼近汴京，然金兀术主力犹在，诸路金军虎视眈眈。\n\n· 点选军队，右键目标即可行军或进攻；攻城宜先以重兵扫清城外敌军。\n· 点选城池，在“内政”中营建、“军务”中征兵与组建军团。\n· 顶栏“研究”可定科技方向；“将领”中可委任知州。\n· 每三年春开科取士，史上名臣将陆续登场。\n\n愿陛下早日还我河山！' });
-          GAME.log('金牌留中不发。诏岳飞乘胜北进，直捣黄龙。岳飞上表谢恩：『臣愿提兵北上，迎还二圣，收复故疆。』', 'big');
+          G().pending.push({ ev: 'info', title: '御前须知', marchGuide: true, text: '岳家军已逼近汴京，然金兀术主力犹在，诸路金军虎视眈眈。\n\n· 点选军队，右键目标即可行军或进攻。攻城宜先以重兵扫清城外敌军。\n· 点选城池，在「内政」中营建、「军务」中征兵与组建军团。\n· 顶栏「研究」可定科技方向；「将领」中可委任知州。\n· 每三年春开科取士，史上名臣将陆续登场。\n\n愿陛下早日还我河山！' });
+          GAME.log('金牌留中不发。诏岳飞乘胜北进，直捣黄龙。岳飞上表谢恩：「臣愿提兵北上，迎还二圣，收复故疆。」', 'big');
         } },
       ],
     },
     qinhui: {
       title: '秦桧构陷',
-      text: () => '宰相秦桧连上奏章，指岳飞拥兵自重、跋扈难制，请以“莫须有”之罪下狱。主和派群臣附议，朝堂汹汹。\n\n韩世忠当廷质问：“‘莫须有’三字，何以服天下？”',
+      text: () => '宰相秦桧连上奏章，指岳飞拥兵自重、跋扈难制，请以「莫须有」之罪下狱。主和派群臣附议，朝堂汹汹。\n\n韩世忠当廷质问：「『莫须有』三字，何以服天下？」',
       choices: [
-        { t: '罢黜秦桧，一意北伐', d: '秦桧去位，主战派当政；民心大振，金国震怒。', fn: () => {
+        { t: '罢黜秦桧，一意北伐', d: '秦桧去位，主战派当政；民心大振，金国震怒', fn: () => {
           const q = genByName('秦桧'); if (q && q.status !== 'dead') { GAME.unassign(q.id); q.status = 'gone'; }
           G().flags.qin = 'gone'; G().flags.morale = 6;
           GAME.getRel('song', 'jin').op -= 20;
-          GAME.log('诏罢秦桧相位，贬居永州。朝野称快，“还我河山”之声遍于江淮。', 'big');
+          GAME.log('诏罢秦桧相位，贬居永州。朝野称快，「还我河山」之声遍于江淮。', 'big');
         } },
-        { t: '留用秦桧，以安朝局', d: '秦桧善于理财，每年额外入钱；但民心略降。', fn: () => {
+        { t: '留用秦桧，以安朝局', d: '秦桧善于理财，每年额外入钱；但民心略降', fn: () => {
           G().flags.qin = 'kept'; G().flags.morale = 0;
           GAME.log('诏留秦桧于相位，岳飞仍掌兵权。朝堂暗流涌动。', 'info');
         } },
@@ -373,8 +373,8 @@ var EVENTS = (function () {
       title: p => fac(p.from).name + '请纳土',
       text: p => `【${fac(p.from).name}】奉藩有年，今遣使携版籍至阙，愿尽纳山川城邑，编户为我朝之民。`,
       choices: [
-        { t: '准其纳土归附', d: '诸城并入我朝，计入一统。', fn: p => GAME.annexVassal(p.from) },
-        { t: '仍令奉藩如故', d: '保有其国，照旧进贡。', fn: () => {} },
+        { t: '准其纳土归附', d: '诸城并入我朝，计入一统', fn: p => GAME.annexVassal(p.from) },
+        { t: '仍令奉藩如故', d: '保有其国，照旧进贡', fn: () => {} },
       ],
     },
     marriageRequest: {
@@ -384,10 +384,10 @@ var EVENTS = (function () {
         { t: '许之', d: p => {
             const terms = GAME.marriageRequestTerms(p.from);
             const effect = terms.war ? '两军仍战，彼国议和意愿 +20' : `彼国 ${terms.protection} 季内不犯边`;
-            return `宗室女 −1，嫁妆 ${terms.cost} 贯，好感 +30。${effect}。权威 −6，朝议偏和 10，主战者忠诚 −5。${terms.enabled ? '' : '国帑不足。'}`;
+            return `宗室女 −1，嫁妆 ${terms.cost} 贯，好感 +30。${effect}。权威 −6，朝议偏和 10，主战者忠诚 −5${terms.enabled ? '' : '。国帑不足'}`;
           }, disabled: p => !GAME.marriageRequestTerms(p.from).enabled, fn: p => GAME.answerMarriageRequest(p.from, 'accept') },
-        { t: '严词拒之', d: '好感 −30，权威 +4，主战者忠诚 +5。彼国或于两季内举兵。', fn: p => GAME.answerMarriageRequest(p.from, 'refuse') },
-        { t: '以岁币代之', d: p => `季输 ${p.amt ?? GAME.marriageTribute(p.from)} 贯，凡十二季，好感 +10。`,
+        { t: '严词拒之', d: '好感 −30，权威 +4，主战者忠诚 +5。彼国或于两季内举兵', fn: p => GAME.answerMarriageRequest(p.from, 'refuse') },
+        { t: '以岁币代之', d: p => `季输 ${p.amt ?? GAME.marriageTribute(p.from)} 贯，凡十二季，好感 +10`,
           fn: p => GAME.answerMarriageRequest(p.from, 'tribute', p.amt) },
       ],
     },
@@ -395,7 +395,7 @@ var EVENTS = (function () {
       title: p => fac(p.from).name + '嗣君，宋室之甥也',
       text: p => `【${fac(p.from).name}】新君，我宗室女之子也。今奉表认亲，愿受册奉藩，岁修职贡。`,
       choices: [
-        { t: '准其奉藩', d: '册为藩属，输贡从征。', fn: p => GAME.acceptMarriageHeir(p.from) },
+        { t: '准其奉藩', d: '册为藩属，输贡从征', fn: p => GAME.acceptMarriageHeir(p.from) },
         { t: '仍叙姻亲之好', fn: () => {} },
       ],
     },
@@ -481,12 +481,12 @@ var EVENTS = (function () {
     },
     wanyanliang: {
       title: '完颜亮南侵',
-      text: () => '金主完颜亮弑君自立，迁都燕京，扬言“提兵百万西湖上，立马吴山第一峰”，尽起诸道兵马南下，号称六十万！',
+      text: () => '金主完颜亮弑君自立，迁都燕京，扬言「提兵百万西湖上，立马吴山第一峰」，尽起诸道兵马南下，号称六十万！',
       choices: [{ t: '命诸将严阵以待', d: '', fn: () => {} }],
     },
     temujin: {
       title: '铁木真称汗',
-      text: () => '漠北传来消息：乞颜部铁木真统一蒙古诸部，于斡难河源大会，被尊为“成吉思汗”。草原之上，一股前所未有的力量正在崛起。',
+      text: () => '漠北传来消息：乞颜部铁木真统一蒙古诸部，于斡难河源大会，被尊为「成吉思汗」。草原之上，一股前所未有的力量正在崛起。',
       choices: [{ t: '知道了', d: '', fn: () => {} }],
     },
     temujinSong: {
@@ -509,7 +509,7 @@ var EVENTS = (function () {
       title: p => p.title, text: p => p.text, choices: [{ t: '知道了', d: '', fn: () => {} }],
     },
     cityPromotion: {
-      title: p => `${GAME.city(p.city).name}${p.before}升为${GAME.city(p.city).name}${DATA.CITY_TIERS[p.tier].name}`,
+      title: p => GAME.cityPromotionText(GAME.city(p.city).name, p.before, p.tier),
       text: p => GAME.city(p.city).role ? '营造既毕，州府版籍已定。' : '营造既毕，请择一业，使民有所专。',
       choices: p => GAME.city(p.city).role ? [{ t: '知道了', fn: () => {} }] : Object.entries(DATA.CITY_ROLES).map(([id, role]) => ({
         t: role.name, d: role.desc, fn: () => GAME.setCityRole(p.city, id),
@@ -787,7 +787,7 @@ var EVENTS = (function () {
       const cap = GAME.city(fac('ghor').capital);
       spawnArmy('ghor', cap.tile, ['cav', 'cav', 'hcav', 'inf', 'inf', 'bow'], '阿拉丁·侯赛因');
       if (alive('ghazni')) GAME.declareWar('ghor', 'ghazni', true);
-      worldLog('古尔王朝“焚世者”阿拉丁起兵，攻伐伽色尼。', ['ghor', 'ghazni']);
+      worldLog('古尔王朝「焚世者」阿拉丁起兵，攻伐伽色尼。', ['ghor', 'ghazni']);
     } },
     { y: 1161, s: 2, fn: () => {
       if (!alive('jin')) return;
@@ -1620,7 +1620,7 @@ var EVENTS = (function () {
     ['twentyConquests', '列国归版图', '由我方攻灭二十国', f => f.conquests >= 20, 50, '外交'],
     ['thirtySites', '名迹三十访', '亲访三十处不同奇遇', f => f.visits >= 30, 25, '奇遇'],
     ['fiveTreasures', '五宝在廷', '我朝将领与府库合有五种不同宝物', f => f.treasures >= 5, 25, '奇遇'],
-    ['hardUnify', '逆势一统', '以严苛或地狱难度一统天下', f => f.unify && f.difficulty >= 2, 100, '挑战'],
+    ['hardUnify', '逆势一统', '以' + DATA.DIFFICULTY.slice(2).map(d => d.name).join('或') + '难度一统天下', f => f.unify && f.difficulty >= 2, 100, '挑战'],
     ['quickUnify', '百载定鼎', '百年之内一统天下', f => f.unify && f.elapsed <= 100, 100, '挑战'],
     ['noTribute', '不输一贯', '一统天下，未曾向外邦纳岁币', f => f.unify && !f.paidTribute, 100, '挑战'],
     ['safeCapital', '社稷无虞', '一统天下，而京师未尝陷落', f => f.unify && !f.capLost, 100, '挑战'],
@@ -2739,12 +2739,16 @@ var EVENTS = (function () {
     return !row?.person || (GAME.gen(p.gen)?.name === row.person && !!playerGeneral(p.gen));
   }
 
-  function view(p) {
+  function view(p, touch = false) {
     const d = DEFS[p.ev];
     const val = (x) => typeof x === 'function' ? x(p) : x;
     if (d.type === 'pick') return { title: val(d.title), text: val(d.text), type: 'pick', options: p.options, max: p.max };
-    return { title: val(d.title), text: val(d.text), gen: p.gen,
-      choices: val(d.choices).map(c => ({ t: val(c.t), d: val(c.d) || '', disabled: !!val(c.disabled) })) };
+    let text = val(d.text);
+    if (touch && p.ev === 'info' && (p.marchGuide || p.title === '御前须知')) {
+      text = text.replace(/点选军队，右键目标即可行军或进攻[。；]/, '点选军队，轻点目标格看路线，再点一次即出发；目标为敌则进攻。');
+    }
+    return { title: val(d.title), text, gen: p.gen,
+      choices: val(d.choices).map(c => ({ t: val(c.t), d: (val(c.d) || '').trimEnd().replace(/。$/, ''), disabled: !!val(c.disabled) })) };
   }
   function resolve(p, choice) {
     const d = DEFS[p.ev];

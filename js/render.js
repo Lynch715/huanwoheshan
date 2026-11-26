@@ -14,6 +14,7 @@ var RENDER = (function () {
   const cam = { x: 0, y: 0, z: 0.7 };
   let dirty = true, miniDirty = true, frame = null;
   let gestureUntil = 0;
+  let selectionPulseUntil = 0, touch;
   const FONT = '"Kaiti SC","STKaiti","KaiTi","楷体","BiauKai","Noto Serif CJK SC","Songti SC",serif';
   const PAPER = [236, 228, 208];
   const RUIN_INK = '#756e62';
@@ -599,16 +600,20 @@ var RENDER = (function () {
   const state = { sel: null, hover: -1, path: null, pathTurns: null, flash: null };
   function init(cv, mc) {
     canvas = cv; ctx = canvas.getContext('2d'); miniCanvas = mc;
-    if (matchMedia('(pointer: coarse)').matches) layerScale = 0.75;
+    touch = matchMedia('(pointer: coarse)');
+    if (touch.matches) layerScale = 0.75;
     resize();
     window.addEventListener('resize', resize);
+    for (const type of ['pointerdown', 'pointermove', 'keydown']) {
+      window.addEventListener(type, wakeSelection, { passive: true });
+    }
   }
   function resize() {
     canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
     clampCam(); markDirty();
   }
   function sizeBuffer() {
-    dpr = Math.min(gestureUntil ? 1.5 : 2, window.devicePixelRatio || 1);
+    dpr = Math.min(gestureUntil ? 1.25 : 2, window.devicePixelRatio || 1);
     const w = Math.floor(innerWidth * dpr), h = Math.floor(innerHeight * dpr);
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   }
@@ -622,7 +627,7 @@ var RENDER = (function () {
   function minZoom() { return Math.min(innerWidth / BW, innerHeight / BH) * 0.95; }
   function screenToWorld(sx, sy) { return [cam.x + sx / cam.z, cam.y + sy / cam.z]; }
   function tileAtScreen(sx, sy) { const [x, y] = screenToWorld(sx, sy); return pixToHex(x, y); }
-  function centerOn(i, z) { if (z) cam.z = z; cam.x = tx(i) - innerWidth / 2 / cam.z; cam.y = ty(i) - innerHeight / 2 / cam.z; clampCam(); markDirty(); }
+  function centerOn(i, z) { if (z) cam.z = z; cam.x = tx(i) - innerWidth / 2 / cam.z; cam.y = ty(i) - innerHeight / 2 / cam.z; clampCam(); wakeSelection(); markDirty(); }
   function pan(dx, dy) { cam.x -= dx / cam.z; cam.y -= dy / cam.z; clampCam(); markGesture(); }
   function zoomAt(sx, sy, f) {
     const [wx, wy] = screenToWorld(sx, sy);
@@ -633,14 +638,21 @@ var RENDER = (function () {
   let t0 = performance.now();
   function scheduleFrame() { if (frame === null) frame = requestAnimationFrame(loop); }
   function markDirty() { dirty = true; if (canvas) scheduleFrame(); }
+  function wakeSelection() {
+    if (!state.sel) return;
+    selectionPulseUntil = performance.now() + 3000;
+    if (canvas) scheduleFrame();
+  }
   function markGesture() {
     if (layerScale < 1) gestureUntil = performance.now() + 180;
+    wakeSelection();
     markDirty();
   }
-  function hasAnimation() { return state.sel || state.flash || anim || fx.floats.length || fx.stamps.length || fx.bursts.length; }
+  function hasAnimation() { return (state.sel && selectionPulseUntil) || state.flash || anim || fx.floats.length || fx.stamps.length || fx.bursts.length; }
   function loop(now) {
     frame = null;
     if (gestureUntil && now >= gestureUntil) { gestureUntil = 0; dirty = true; }
+    if (selectionPulseUntil && now >= selectionPulseUntil) { selectionPulseUntil = 0; dirty = true; }
     if (!dirty && !gestureUntil && !hasAnimation()) return;
     if (dirty || anim || fx.floats.length || now - t0 >= 50) {
       t0 = now; dirty = false;
@@ -671,7 +683,7 @@ var RENDER = (function () {
     // 选中格 / 悬停
     if (state.hover >= 0) { hexPath(ctx, tx(state.hover), ty(state.hover), HS - 1); ctx.strokeStyle = 'rgba(30,30,30,0.35)'; ctx.lineWidth = 1.5 / z + 0.5; ctx.stroke(); }
     if (state.sel && state.sel.tile != null) {
-      const pulse = 0.55 + 0.35 * Math.sin(now / 250);
+      const pulse = selectionPulseUntil ? 0.55 + 0.35 * Math.sin(now / 250) : 0.78;
       hexPath(ctx, tx(state.sel.tile), ty(state.sel.tile), HS - 1.5);
       ctx.strokeStyle = `rgba(196,150,40,${pulse})`; ctx.lineWidth = 3; ctx.stroke();
     }
@@ -683,10 +695,11 @@ var RENDER = (function () {
       ctx.drawImage(fog, sx / SC, sy / SC, (ex - sx) / SC, (ey - sy) / SC, (sx - cam.x) * z, (sy - cam.y) * z, (ex - sx) * z, (ey - sy) * z);
     }
     // 城市与军队（屏幕坐标）
-    labels = [];
+    labels = []; labelBlocks = [];
     if (opts.showSites) drawSites(S, z);
-    drawCities(S, z);
+    const cities = drawCityArt(S, z);
     drawArmies(S, z, now);
+    drawCities(S, z, cities);
     drawLabels();
     drawFx(now);
     if (anim && anim.label) {
@@ -695,7 +708,7 @@ var RENDER = (function () {
       ctx.fillStyle = 'rgba(34,30,25,0.88)'; ctx.fillRect(x - w / 2, y - 18, w, 36);
       ctx.fillStyle = anim.labelColor || '#a8302a'; ctx.fillRect(x - w / 2, y - 18, 6, 36);
       ctx.fillStyle = '#f4ecd8'; ctx.fillText(anim.label, x + 3, y + 1);
-      ctx.font = `12px ${FONT}`; ctx.fillStyle = 'rgba(244,236,216,0.7)'; ctx.fillText('点击地图或按空格跳过', x, y + 30);
+      ctx.font = `12px ${FONT}`; ctx.fillStyle = 'rgba(244,236,216,0.7)'; ctx.fillText(touch.matches ? '轻点地图跳过' : '点按地图或按空格跳过', x, y + 30);
       ctx.restore();
     }
     if (state.flash) {
@@ -786,39 +799,55 @@ var RENDER = (function () {
     hexPath(ctx, tx(last), ty(last), HS - 3); ctx.strokeStyle = 'rgba(160,35,25,0.9)'; ctx.lineWidth = 2; ctx.stroke();
     ctx.restore();
   }
-  function drawCities(S, z) {
+  function drawCityArt(S, z) {
     const sz = Math.max(9, Math.min(24, 7 + 10 * z));
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const cities = [];
     for (const c of S.cities) {
       if (!S.explored[c.tile]) continue;
       const [x, y] = w2s(tx(c.tile), ty(c.tile));
       if (!onScreen(x, y, 60)) continue;
       const f = anim?.cityF.has(c.id) ? anim.cityF.get(c.id) : c.f;
-      const F = cityFaction(f), capital = !!F && c.cap, color = F?.color || RUIN_INK;
-      const big = c.tier >= 2;
-      if (z < 0.42 && !big) { ctx.fillStyle = color; ctx.fillRect(x - 2.5, y - 2.5, 5, 5); continue; }
-      const s = capital ? sz * 1.25 : sz;
+      const F = cityFaction(f), capital = !!F && c.cap, s = capital ? sz * 1.25 : sz;
+      cities.push({ c, x, y, F, capital, s });
       if (F && z >= 0.55) {
         const box = INKART.BOX, scale = Math.min(z, 1.65);
         const img = INKART.cityArt(c.tier, c.pop);
         ctx.drawImage(img, x - box.ax * scale, y - box.ay * scale - s * 0.43, box.w * scale, box.h * scale);
       }
+    }
+    return cities;
+  }
+  function drawCities(S, z, cities) {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const { c, x, y, F, capital, s } of cities) {
+      const tier = F ? c.tier : 0, big = c.tier >= 2, color = F?.color || RUIN_INK;
+      if (z < 0.42 && !big) { ctx.fillStyle = color; ctx.fillRect(x - 2.5, y - 2.5, 5, 5); continue; }
+      const edge = s / 2 + (tier >= 2 ? 2 : 0);
+      labelBlocks.push([x - edge, y - edge, x + edge, y + edge, c]);
       // 印章
       ctx.save();
       ctx.translate(x, y);
       ctx.fillStyle = color;
       ctx.strokeStyle = 'rgba(20,18,16,0.8)'; ctx.lineWidth = 1;
-      roundRect(ctx, -s / 2, -s / 2, s, s, s * 0.14); ctx.fill(); ctx.stroke();
-      if (capital) { ctx.strokeStyle = 'rgba(245,236,214,0.9)'; ctx.lineWidth = 1.2; roundRect(ctx, -s / 2 + 2.5, -s / 2 + 2.5, s - 5, s - 5, s * 0.1); ctx.stroke(); }
+      const radius = tier === 1 ? s * 0.21 : 0;
+      roundRect(ctx, -s / 2, -s / 2, s, s, radius); ctx.fill(); ctx.stroke();
+      if (tier >= 2) {
+        ctx.strokeStyle = tier === 3 ? '#a4382e' : color;
+        ctx.strokeRect(-s / 2 - 2, -s / 2 - 2, s + 4, s + 4);
+      }
+      if (tier === 3) {
+        ctx.strokeStyle = 'rgba(245,236,214,0.9)';
+        ctx.strokeRect(-s / 2 + 2.5, -s / 2 + 2.5, s - 5, s - 5);
+      }
       ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(s * 0.68)}px ${FONT}`;
       ctx.fillText(F ? c.name[0] : '荒', 0, 1);
       ctx.restore();
       // 城名
       if (z >= 0.5 || big) {
         const fs = Math.max(11, Math.min(18, 9 + 5 * z));
-        ctx.font = `${capital ? 'bold ' : ''}${fs}px ${FONT}`;
-        const label = (F ? GAME.cityTier(c).name + ' ' : '') + c.name + (z > 0.9 ? ' ' + c.pop : '');
-        pushLabel(label, x, y + s / 2 + fs * 0.7, ctx.font, F ? 'rgba(25,22,20,0.95)' : RUIN_INK, (capital ? 90 : big ? 60 : 40) + (F?.id === S.player ? 5 : 0), 3.5);
+        const label = c.name + (F && z > 0.9 ? ' ' + c.pop + '万' : '');
+        pushLabel(label, x, y + s / 2 + fs * 0.7, fs, F ? 'rgba(25,22,20,0.95)' : RUIN_INK,
+          capital ? 115 : big ? 104 : 101, 3.5, { owner: c, bold: capital });
       }
       // 城防残损
       if (F && z > 0.7 && c.wall < GAME.maxWall(c) * 0.6) {
@@ -864,30 +893,60 @@ var RENDER = (function () {
       ctx.rotate(-Math.PI / 4);
       ctx.fillStyle = '#6a3e0e'; ctx.font = `bold ${Math.round(s * 0.78)}px ${FONT}`; ctx.fillText(T.glyph, 0, 1);
       ctx.restore();
-      if (z >= 1.0 && st.famous) pushLabel(st.name, x, y + s * 0.95 + 4, `${Math.max(10, 9 + 2 * z)}px ${FONT}`, '#6a3e0e', 20, 3);
+      if (z >= 1.0 && st.famous) pushLabel(st.name, x, y + s * 0.95 + 4, Math.max(10, 9 + 2 * z), '#6a3e0e', 20, 3);
     }
   }
   // ---------- 标签避让 ----------
-  let labels = [];
-  function pushLabel(text, x, y, font, fill, pri, sw) { labels.push({ text, x, y, font, fill, pri, sw }); }
+  let labels = [], labelBlocks = [];
+  const cityLabelOffsets = [[0, 0], [10, 0], [-10, 0]];
+  const armyLabelOffsets = [0, 11, 21].flatMap(dy => [0, 16, -16, 29, -29].map(dx => [dx, dy]));
+  const countOffsets = [[0, 0], [12, 1], [-12, 1], [0, 11], [23, 2], [-23, 2], [14, 11], [-14, 11], [0, 22]];
+  function pushLabel(text, x, y, size, fill, pri, sw, { owner, bold, count, radius } = {}) {
+    labels.push({ text, x, y, size, fill, pri, sw, owner, bold, count, radius });
+  }
   function drawLabels() {
     labels.sort((a, b) => b.pri - a.pri);
-    const placed = [];
+    const placed = labelBlocks;
+    const clear = (left, top, right, bottom, owner) => !placed.some(q =>
+      left < q[2] && right > q[0] && top < q[3] && bottom > q[1] && (owner == null || q[4] !== owner));
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const hiddenArmyLabels = [];
     for (const L of labels) {
-      const h = parseInt(L.font.match(/(\d+)px/)[1]) + 2;
-      const top = L.y - h / 2, bottom = L.y + h / 2;
-      // 中心已落入另一标签的横向范围时，有纵向交集便必然碰撞。
-      if (L.pri < 100 && placed.some(q => L.x >= q[0] && L.x <= q[2] && top < q[3] && bottom > q[1])) continue;
-      ctx.font = L.font;
+      const h = L.size + 2;
+      ctx.font = `${L.bold ? 'bold ' : ''}${L.size}px ${FONT}`;
       const w = ctx.measureText(L.text).width + 4;
-      const r = [L.x - w / 2, top, L.x + w / 2, bottom];
-      let hit = false;
-      for (const q of placed) if (r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1]) { hit = true; break; }
-      if (hit && L.pri < 100) continue;
-      placed.push(r);
-      ctx.lineWidth = L.sw; ctx.strokeStyle = 'rgba(242,234,214,0.95)'; ctx.strokeText(L.text, L.x, L.y);
-      ctx.fillStyle = L.fill; ctx.fillText(L.text, L.x, L.y);
+      const isArmy = L.count != null;
+      let offsets = isArmy ? armyLabelOffsets : L.owner ? cityLabelOffsets : [[0, 0]];
+      if (L.pri === 200) {
+        const dx = L.radius + w / 2 + 4, dy = -(L.radius + L.size / 2 + 8);
+        offsets = [...offsets, [dx, dy], [-dx, dy]];
+      }
+      const anchor = isArmy && L.x >= 0 && L.x < innerWidth ? Math.max(w / 2, Math.min(innerWidth - w / 2, L.x)) : L.x;
+      const pos = offsets.find(([dx, dy]) => {
+        const x = anchor + dx, y = L.y + dy;
+        return clear(x - w / 2, y - h / 2, x + w / 2, y + h / 2, L.owner);
+      });
+      if (!pos) {
+        if (L.count != null) hiddenArmyLabels.push(L);
+        continue;
+      }
+      const x = anchor + pos[0], y = L.y + pos[1];
+      placed.push([x - w / 2, y - h / 2, x + w / 2, y + h / 2]);
+      ctx.lineWidth = L.sw; ctx.strokeStyle = 'rgba(242,234,214,0.95)'; ctx.strokeText(L.text, x, y);
+      ctx.fillStyle = L.fill; ctx.fillText(L.text, x, y);
+    }
+    ctx.font = `bold 9px ${FONT}`;
+    for (const L of hiddenArmyLabels) {
+      const count = String(L.count), w = count.length * 5.5 + 4;
+      const [dx, dy] = countOffsets.find(([dx, dy]) => {
+        const x = L.x + dx, y = L.y - 8 + dy;
+        return clear(x - w / 2, y - 5.5, x + w / 2, y + 5.5, L.owner);
+      }) || countOffsets[0];
+      const x = L.x + dx, y = L.y - 8 + dy;
+      placed.push([x - w / 2, y - 5.5, x + w / 2, y + 5.5]);
+      ctx.fillStyle = '#f0e4cb'; ctx.fillRect(x - w / 2, y - 5.5, w, 11);
+      ctx.strokeStyle = 'rgba(73,53,32,0.7)'; ctx.lineWidth = 0.65; ctx.strokeRect(x - w / 2, y - 5.5, w, 11);
+      ctx.fillStyle = L.fill; ctx.fillText(count, x, y);
     }
     labels = [];
   }
@@ -904,10 +963,24 @@ var RENDER = (function () {
   function armyMarker(tile, wx, wy, z) {
     let [x, y] = w2s(wx, wy);
     const low = z < 0.6;
-    const radius = low ? Math.max(10, 8 + 11 * z) : Math.max(10, Math.min(19, 6 + 8 * z));
-    if (Math.abs(wx - tx(tile)) < 0.5 && Math.abs(wy - ty(tile)) < 0.5 && GAME.cityAt(tile)) {
-      x += radius * (low ? 0.75 : 1.15);
-      y -= radius * (low ? 0.55 : 0.75);
+    let radius = low ? Math.max(10, 8 + 11 * z) : Math.max(10, Math.min(19, 6 + 8 * z));
+    if (Math.abs(wx - tx(tile)) < 0.5 && Math.abs(wy - ty(tile)) < 0.5) {
+      if (GAME.cityAt(tile)) {
+        x += radius * (low ? 0.75 : 1.36);
+        y -= radius * (low ? 0.55 : 1.18);
+        if (!low) radius *= 0.75;
+      } else if (!low && z < 1.7) {
+        let dx = 0, dy = 0, near = 0;
+        for (const n of GEO.NBR[tile]) if (GAME.cityAt(n)) {
+          dx += wx - tx(n); dy += wy - ty(n); near++;
+        }
+        if (near) {
+          const len = Math.hypot(dx, dy) || 1;
+          x += dx / len * radius * 0.46;
+          y += dy / len * radius * 0.46;
+          radius *= 0.87;
+        }
+      }
     }
     return { x, y, radius };
   }
@@ -974,6 +1047,8 @@ var RENDER = (function () {
       ctx.restore(); return;
     }
     const R = radius;
+    const edge = R * 0.86;
+    labelBlocks.push([x - edge, y - edge, x + edge, y + edge, d]);
     // 小旗
     const fx0 = x + R * 0.55, fy0 = y - R * 0.55;
     ctx.strokeStyle = 'rgba(30,25,20,0.9)'; ctx.lineWidth = 1.3;
@@ -998,7 +1073,7 @@ var RENDER = (function () {
     ctx.restore();
     ctx.strokeStyle = F.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.stroke();
     ctx.strokeStyle = 'rgba(20,18,16,0.85)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, R + 1.6, 0, 7); ctx.stroke();
-    if (sel) { const pulse = 0.5 + 0.5 * Math.sin(now / 220); ctx.strokeStyle = `rgba(214,166,40,${0.6 + 0.4 * pulse})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R + 4 + pulse * 2, 0, 7); ctx.stroke(); }
+    if (sel) { const pulse = selectionPulseUntil ? 0.5 + 0.5 * Math.sin(now / 220) : 0.67; ctx.strokeStyle = `rgba(214,166,40,${0.6 + 0.4 * pulse})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R + 4 + pulse * 2, 0, 7); ctx.stroke(); }
     // 兵力条
     const bw = R * 2;
     const ratio = d.n ? Math.min(1, d.str / (d.n * 500)) : 0;
@@ -1006,10 +1081,10 @@ var RENDER = (function () {
     ctx.fillStyle = mine ? 'rgba(80,140,60,0.95)' : 'rgba(176,52,40,0.95)'; ctx.fillRect(x - R, y + R + 3, bw * ratio, 4);
     // 名牌
     const fs = Math.max(11, Math.min(14, 8 + 3.8 * z));
-    ctx.font = `bold ${fs}px ${FONT}`;
     const name = g ? g.name : '偏师';
-    const label = z >= 0.9 ? name + ' ' + fmtNum(d.str) : name;
-    pushLabel(label, x, y + R + fs * 0.75 + 9, ctx.font, mine ? 'rgba(20,18,16,1)' : 'rgba(120,30,22,1)', sel ? 200 : mine ? 100 : 80, 3.2);
+    const label = mine || z >= 0.9 ? name + ' ' + fmtNum(d.str) : name;
+    pushLabel(label, x, y + R + fs / 2 + 8, fs, mine ? 'rgba(20,18,16,1)' : 'rgba(120,30,22,1)',
+      sel ? 200 : mine ? 110 : 80, 3.2, { owner: d, bold: true, count: d.str, radius: R });
     if (mine && !anim && (d.spent || d.routed)) {
       const bx = x - R * 0.85, by = y - R * 0.85;
       ctx.fillStyle = d.spent ? 'rgba(120,115,105,0.95)' : 'rgba(168,48,42,0.95)'; ctx.beginPath(); ctx.arc(bx, by, 7, 0, 7); ctx.fill();
@@ -1268,7 +1343,7 @@ var RENDER = (function () {
   }
 
   return {
-    opts, init, buildBase, buildPolitical, buildFog, buildMini, drawOverview, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, armyAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty,
+    opts, init, buildBase, buildPolitical, buildFog, buildMini, drawOverview, cam, state, snapshot, play, skipAnim, isAnimating: () => !!anim, tileAtScreen, armyAtScreen, centerOn, pan, zoomAt, tx, ty, BW, BH, FONT, markDirty, wakeSelection,
     flash: (tile) => { state.flash = { tile, t: performance.now() }; markDirty(); }, minZoom,
   };
 })();

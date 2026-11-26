@@ -265,7 +265,7 @@ var COURT = (function () {
         a.f = to; a.path = []; g.f = to; g.status = 'army'; g.rank = 0;
         const carried = g.items?.length ? `并携${GAME.itemNames(g.items)}而去。` : '';
         GAME.log(`${g.name}积怨已久，竟率所部 ${a.units.length} 营叛投【${GAME.fac(to).name}】！${carried}`, 'war', a.tile);
-        s.pending.push({ ev: 'info', title: '将领叛逃', text: `${g.name}久怀不满，今率部众叛投【${GAME.fac(to).name}】。${carried}朝野震动。\n\n（提示：将领忠诚过低会叛逃。可在“将领”中赏赐，或在“朝堂”中任御史中丞以纠察百官。）` });
+        s.pending.push({ ev: 'info', title: '将领叛逃', text: `${g.name}久怀不满，今率部众叛投【${GAME.fac(to).name}】。${carried}朝野震动。\n\n（提示：将领忠诚过低会叛逃。可在「将领」中赏赐，或在「朝堂」中任御史中丞以纠察百官。）` });
         S().court.auth = Math.max(0, S().court.auth - 6);
         return;
       }
@@ -315,16 +315,16 @@ var COURT = (function () {
       title: p => G(p.gen).name + '拥兵自重',
       text: p => `${G(p.gen).name}久镇远方，所部颇众。台谏言军心唯知其将，请早议收兵之策。`,
       choices: [
-        { t: '诏令还朝', d: '解除兵权，忠诚 −20，奉诏则权威 +3。忠诚低于三十五者或将抗命。', fn: p => answerOvermighty(p.gen, 'recall') },
-        { t: '加官安抚', d: `费钱 ${DATA.OVERMIGHTY.comfort} 贯，忠诚 +15，日后兵力须多 ${DATA.OVERMIGHTY.raise} 人方再触发。`, fn: p => answerOvermighty(p.gen, 'comfort') },
-        { t: '暂且隐忍', d: '权威 −4，此人日后愈易恃兵。', fn: p => answerOvermighty(p.gen, 'ignore') },
+        { t: '诏令还朝', d: '解除兵权，忠诚 −20，奉诏则权威 +3。忠诚低于三十五者或将抗命', fn: p => answerOvermighty(p.gen, 'recall') },
+        { t: '加官安抚', d: `费钱 ${DATA.OVERMIGHTY.comfort} 贯，忠诚 +15，日后兵力须多 ${DATA.OVERMIGHTY.raise} 人方再触发`, fn: p => answerOvermighty(p.gen, 'comfort') },
+        { t: '暂且隐忍', d: '权威 −4，此人日后愈易恃兵', fn: p => answerOvermighty(p.gen, 'ignore') },
       ],
     },
     releaseCommand: {
       title: '杯酒释兵权',
       text: () => '有臣请援太祖杯酒释兵权之故事，宴功臣于内殿，以厚禄全君臣之义，而收诸将兵柄。',
       choices: [
-        { t: '设燕收兵柄', d: '伯及以上者解兵权，忠诚 +10，权威 +10。自此武将忠诚所趋 −3。', fn: () => {
+        { t: '设燕收兵柄', d: '伯及以上者解兵权，忠诚 +10，权威 +10。自此武将忠诚所趋 −3', fn: () => {
           for (const g of S().generals) if (serving(g) && g.rank >= 3) {
             recallCommand(g);
             g.loyalty = Math.min(100, g.loyalty + 10);
@@ -345,7 +345,7 @@ var COURT = (function () {
     },
     court_peace: {
       title: '主和派上书',
-      text: () => '连年用兵，府库空虚，主和诸臣联名上书：“兵连祸结，民不聊生。愿陛下遣使议和，与民休息。”',
+      text: () => '连年用兵，府库空虚，主和诸臣联名上书：「兵连祸结，民不聊生。愿陛下遣使议和，与民休息。」',
       choices: [
         { t: '准奏，遣使议和', d: '与最强之敌议和（需对方同意），主和派忠诚 +5', fn: () => {
           const s = S(); let best = null, bp = -1;
@@ -358,7 +358,7 @@ var COURT = (function () {
     },
     court_war: {
       title: '北伐之议',
-      text: () => '主战诸臣慷慨陈词：“中原遗民，南望王师又一年！今兵精粮足，正宜挥师北上，克复神州。”',
+      text: () => '主战诸臣慷慨陈词：「中原遗民，南望王师又一年！今兵精粮足，正宜挥师北上，克复神州。」',
       choices: [
         { t: '嘉其忠勇，厉兵秣马', d: '主战派忠诚 +6，权威 +2（不必立即开战）', fn: () => { for (const g of members().map(x => x[0])) if (g.stance === 'war') g.loyalty += 6; S().court.auth += 2; } },
         { t: '时机未到', d: '主战派忠诚 −6，朝议倾向主和', fn: () => { for (const g of members().map(x => x[0])) if (g.stance === 'war') g.loyalty -= 6; S().court.lean -= 8; } },
