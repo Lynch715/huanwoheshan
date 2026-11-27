@@ -4,6 +4,8 @@ var PORTRAIT = (function () {
   const art = new Map(), artCanvases = new Map();
   const historicalKeys = new Map((typeof DATA === 'undefined' ? [] : DATA.GEN)
     .map(([name, faction, birth]) => [name + '\n' + birth, faction + '_' + name]));
+  const campChiefs = typeof DATA === 'undefined' ? [] : [...DATA.FRONTIER.camps, ...DATA.FRONTIER.campAdditions];
+  const campKeys = new Map(campChiefs.map(([, , , , name]) => [name, 'camp_' + name]));
   const available = new Set(typeof PORTRAIT_ASSETS === 'undefined' ? [] : PORTRAIT_ASSETS);
   const SZ = 96;
   function rnd(seed) { let s = seed * 9301 + 49297; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
@@ -205,6 +207,7 @@ var PORTRAIT = (function () {
     if (!available.size || !g) return '';
     let key = g.art;
     if (!key && (!Number.isInteger(g.id) || g.id < 0)) return '';
+    if (!key && g.hist == null) key = campKeys.get(g.name);
     if (!key && g.hist) {
       key = historicalKeys.get(g.name + '\n' + g.birth);
     } else if (!key && g.hist === false) {

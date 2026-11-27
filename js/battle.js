@@ -401,7 +401,7 @@ var TACTIC = (function () {
         : (winner === 'def' ? (routed === 0 ? '来犯之敌阵脚大乱，狼狈退走！' : '敌军攻势瓦解，铩羽而归！') : winner === 'att' ? (st.retreat ? (city ? '我军弃城突围。' : '我军撤出战场。') : (city ? '守军崩溃，城池失陷！' : '我军阵线崩溃，败退而走。')) : (city ? '敌军久攻不下，城池固守无虞。' : '两军相持，各自收兵。'));
       const res = (winner === 'att') === (me === 0) ? 'win' : winner === 'none' ? (me === 1 && city ? 'win' : 'draw') : 'lose';
       setTimeout(() => {
-        overlayEnd(text, res, () => { close(); done({ manual: { r, before, wall, unitBefore }, plan: (planText ? planText + '；' : '') + '临阵指挥：' + text }); });
+        overlayEnd(text, res, () => { close(); done({ manual: { r, before, wall, unitBefore, winner }, plan: (planText ? planText + '；' : '') + '临阵指挥：' + text }); });
       }, 500);
     }
 

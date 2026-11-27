@@ -697,6 +697,7 @@ var RENDER = (function () {
     // 城市与军队（屏幕坐标）
     labels = []; labelBlocks = [];
     if (opts.showSites) drawSites(S, z);
+    drawFrontier(S, z);
     const cities = drawCityArt(S, z);
     drawArmies(S, z, now);
     drawCities(S, z, cities);
@@ -896,6 +897,34 @@ var RENDER = (function () {
       if (z >= 1.0 && st.famous) pushLabel(st.name, x, y + s * 0.95 + 4, Math.max(10, 9 + 2 * z), '#6a3e0e', 20, 3);
     }
   }
+  function drawFrontier(S, z) {
+    if (z < 0.38) return;
+    const size = Math.max(13, Math.min(26, 7 + z * 11));
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(size * 0.64)}px ${FONT}`;
+    for (const p of S.frontier) {
+      if (!S.explored[p.tile] || p.city != null || p.cleared) continue;
+      const [x, y] = w2s(tx(p.tile), ty(p.tile));
+      if (!onScreen(x, y, 44)) continue;
+      const a = GAME.armyAt(p.tile);
+      const occupied = a && (a.f === S.player || S.visible[p.tile]);
+      const camp = p.kind !== 'foundation';
+      if (camp && occupied && a.frontier === p.id) continue;
+      const mx = x + (occupied ? armyMarker(p.tile, tx(p.tile), ty(p.tile), z).radius + size * 0.5 : 0);
+      const my = y - (occupied ? size * 0.85 : 0);
+      const color = camp ? '#604336' : p.claimed ? '#854a2d' : '#65522d';
+      ctx.fillStyle = camp ? '#e8ceac' : '#f4e7c2';
+      ctx.strokeStyle = color; ctx.lineWidth = 1.8;
+      roundRect(ctx, mx - size / 2, my - size / 2, size, size, camp ? 1 : 3);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(camp ? '寨' : p.days != null ? '筑' : p.claimed ? '据' : '基', mx, my + 0.5);
+      labelBlocks.push([mx - size / 2, my - size / 2, mx + size / 2, my + size / 2, p]);
+      if (z >= 0.86) pushLabel(p.name, mx, my + size / 2 + 8, Math.max(11, 9 + z * 2), color, 32, 3);
+    }
+    ctx.restore();
+  }
   // ---------- 标签避让 ----------
   let labels = [], labelBlocks = [];
   const cityLabelOffsets = [[0, 0], [10, 0], [-10, 0]];
@@ -998,7 +1027,13 @@ var RENDER = (function () {
     }
     return hit;
   }
-  function dispOf(a, [x, y] = transitXY(a)) { return { id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units), idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0, routed: !!(a.path && a.path.length), sentry: !!a.sentry }; }
+  function dispOf(a, [x, y] = transitXY(a)) {
+    return {
+      id: a.id, f: a.f, tile: a.tile, x, y, gen: a.gen, n: a.units.length, str: GAME.sumStr(a.units),
+      idle: a.mp > 0 && !(a.path && a.path.length) && !a.sentry, spent: a.mp <= 0,
+      routed: !!(a.path && a.path.length), sentry: !!a.sentry, camp: a.frontier != null ? a.name : null,
+    };
+  }
   function drawArmies(S, z, now) {
     if (!anim) {
       for (const a of S.armies) {
@@ -1042,8 +1077,8 @@ var RENDER = (function () {
       ctx.fillStyle = F.color; ctx.fillRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
       ctx.strokeStyle = sel ? 'rgba(220,170,40,1)' : 'rgba(20,18,16,0.7)'; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
       ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(s * 0.5)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(g ? g.name[0] : '军', x + s * 0.05, y - s * 0.44);
-      if (d.sentry) drawSentryMark(x + s, y - s * 0.44);
+      ctx.fillText(d.camp ? '寨' : g ? g.name[0] : '军', x + s * 0.05, y - s * 0.44);
+      if (d.sentry && !d.camp) drawSentryMark(x + s, y - s * 0.44);
       ctx.restore(); return;
     }
     const R = radius;
@@ -1058,8 +1093,8 @@ var RENDER = (function () {
     ctx.beginPath(); ctx.moveTo(fx0, fy0 - R * 1.25); ctx.quadraticCurveTo(fx0 + R * 0.45, fy0 - R * 1.25 + wave, fx0 + R * 0.9, fy0 - R * 1.1);
     ctx.lineTo(fx0 + R * 0.8, fy0 - R * 0.62 + wave * 0.5); ctx.quadraticCurveTo(fx0 + R * 0.4, fy0 - R * 0.62, fx0, fy0 - R * 0.62); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R * 0.48)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(F.seal, fx0 + R * 0.42, fy0 - R * 0.93);
-    if (d.sentry) drawSentryMark(fx0 + R + 7, fy0 - R * 0.93);
+    ctx.fillText(d.camp ? '寨' : F.seal, fx0 + R * 0.42, fy0 - R * 0.93);
+    if (d.sentry && !d.camp) drawSentryMark(fx0 + R + 7, fy0 - R * 0.93);
     // 画像圆章
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.arc(x + 1.5, y + 2, R, 0, 7); ctx.fill();
     ctx.save();
@@ -1081,7 +1116,7 @@ var RENDER = (function () {
     ctx.fillStyle = mine ? 'rgba(80,140,60,0.95)' : 'rgba(176,52,40,0.95)'; ctx.fillRect(x - R, y + R + 3, bw * ratio, 4);
     // 名牌
     const fs = Math.max(11, Math.min(14, 8 + 3.8 * z));
-    const name = g ? g.name : '偏师';
+    const name = d.camp || g?.name || '偏师';
     const label = mine || z >= 0.9 ? name + ' ' + fmtNum(d.str) : name;
     pushLabel(label, x, y + R + fs / 2 + 8, fs, mine ? 'rgba(20,18,16,1)' : 'rgba(120,30,22,1)',
       sel ? 200 : mine ? 110 : 80, 3.2, { owner: d, bold: true, count: d.str, radius: R });
@@ -1247,7 +1282,8 @@ var RENDER = (function () {
         st.fired.stamp = 1;
         const P = GAME.S.player;
         let ch = '战', good = null;
-        if (e.af === P) { ch = e.capture ? '克' : e.win ? '捷' : '挫'; good = e.win; }
+        if (e.draw) ch = '和';
+        else if (e.af === P) { ch = e.capture ? '克' : e.win ? '捷' : '挫'; good = e.win; }
         else if (e.df === P) { ch = e.capture ? '陷' : e.win ? '败' : '守'; good = !e.win; }
         else if (e.capture) ch = '破';
         if (good !== null && !e.manual) AUDIO.play(good ? 'win' : 'lose', true);

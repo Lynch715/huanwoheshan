@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.20.1';
+  const VERSION = '0.21.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -410,14 +410,15 @@ var UI = (function () {
     if (pendingTarget >= 0) {
       const t = pendingTarget, c = GAME.cityAt(t), ea = GAME.armyAt(t);
       const enemy = (ea && ea.f !== P() && GAME.atWar(P(), ea.f)) || (c && c.f !== P() && GAME.atWar(P(), c.f));
-      const where = c ? c.name : GEO.TERRAIN[GEO.terrain[t]].name;
+      const where = c?.name || (S().explored[t] ? GAME.frontierAt(t)?.name : '') || GEO.TERRAIN[GEO.terrain[t]].name;
       const pt = RENDER.state.pathTurns || [];
       body = `<div class="ob-msg">${enemy ? '<span class="neg">进攻</span> ' : '前往 '}<b>${esc(where)}</b>　${arrivalText(t, pt)}${enemy ? '　胜面 ' + odds(a, t) : ''}</div>
         <div class="ob-btns">${S().explored[t] ? `<button class="btn" data-act="terrain" data-arg="${t}">地势</button>` : ''}<button class="btn" data-act="cancelpreview">取消</button><button class="btn red ob-go" data-act="go">${enemy ? '进攻' : '出发'}</button></div>`;
     } else {
       const routed = !!a.path?.length;
+      const foundation = GAME.frontierAt(a.tile)?.kind === 'foundation';
       body = `<div class="ob-msg note">${moveMode ? '轻点地图，择定去处' : '可轻点目标格预览路线'}</div>
-        <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}">行军</button><button class="btn" data-act="drawertoggle">详情</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
+        <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}">行军</button><button class="btn" data-act="drawertoggle">${foundation ? '地基' : '详情'}</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
     }
     bar.innerHTML = head + body;
     layoutText(bar);
@@ -649,6 +650,8 @@ var UI = (function () {
     if (own) h += `<br>${facSeal(own)} ${facName(own)}${own !== P() ? '　' + relText(own) : ''}`;
     if (c) h += `<br>${own ? '城' : '荒城'}：<b>${esc(c.name)}</b>　户口 ${c.pop} 万`;
     if (a && (a.f === P() || S().visible[t])) h += `<br>军：${esc(GAME.armyName(a))}（${a.units.length} 营，${fmt(GAME.sumStr(a.units))} 人）`;
+    const frontier = GAME.frontierAt(t);
+    if (frontier) h += `<br><b>${esc(frontier.name)}</b>　${frontier.kind === 'foundation' ? frontier.days != null ? '营筑中' : '筑城地基' : DATA.FRONTIER.guards[frontier.kind].name}`;
     const site = GAME.siteAt(t);
     if (site) { const ST = DATA.SITES[site.type]; const cd = ST.repeat === 'season' && site.cd[P()] > S().T; h += `<br><b class="skill">${site.name}</b>　${ST.desc}${cd ? '　<span class=neg>（本季已访）</span>' : ''}`; }
     // 预览路径
@@ -925,9 +928,28 @@ var UI = (function () {
   function showTileTerrain(t) {
     if (S()?.explored[t]) openModal(`<h1>${tileTerrainName(t)}</h1><div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}`, { width: '440px' });
   }
+  function frontierHTML(tile) {
+    const p = GAME.frontierAt(tile);
+    if (!p || !S().explored[tile]) return '';
+    if (p.kind !== 'foundation') {
+      return `<div class="sec">${esc(p.name)} · ${DATA.FRONTIER.guards[p.kind].name}</div>
+        <p class="note">此寨屯有强兵。遣军讨伐，破寨可得钱粮，再议招降或收缴寨藏。</p>`;
+    }
+    const info = GAME.foundationOrder(tile);
+    const { gold, food, man } = DATA.FRONTIER.cost;
+    let status = info.msg || (p.claimed ? '地基已据，可下令筑城' : '军团已至，可据此地');
+    if (p.days != null) {
+      const turns = Math.ceil(p.days / S().scale);
+      status = `筑城尚需 ${turns} ${GAME.SCALE_NAME[S().scale]}${info.blocked ? ' · 受外军或邻国所制，暂缓营筑' : ''}`;
+    }
+    return `<div class="sec">${esc(p.name)} · 筑城地基</div>
+      <p>${esc(status)}。</p><p class="note">筑城需钱 ${gold} 贯、粮 ${food}、丁口 ${man}，用时两季。</p>
+      ${!info.ok ? '' : `<button class="btn red" data-act="frontier-order" data-arg="${info.action}">${info.action === 'claim' ? '占领地基' : '下令筑城'}</button>`}`;
+  }
   function tileHTML(t) {
     const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = livingTileOwner(t);
     return `<div class="ph"><div><h2>${tr.name}</h2><div class="sub">${GEO.river[t] ? '临河 · ' : ''}${GEO.resource[t] ? '物产：' + GEO.resource[t] : '无特产'}</div></div><button class="x" data-act="desel">×</button></div>
+      ${frontierHTML(t)}
       <div class="stat"><div><b>${y.food}</b><span>粮</span></div><div><b>${y.prod}</b><span>工</span></div><div><b>${y.gold}</b><span>钱</span></div><div><b>${tr.move}</b><span>行军耗</span></div></div>
       <div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}
       ${own ? `<p>${facSeal(own)} 属【${facName(own)}】${own !== P() ? '　' + relText(own) : ''}</p>` : '<p class="note">无主之地</p>'}`;
@@ -1103,7 +1125,7 @@ var UI = (function () {
     const dismissal = GAME.dismissalReason(a);
     const locked = dismissal ? `disabled title="${esc(dismissal)}"` : '';
     let h = `<div class="ph"><div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">${a.units.length}/${GAME.armyCap(a)} 营 · ${fmt(GAME.sumStr(a.units))} 人${inOwn ? ' · 驻' + c.name : ''}</div></div><button class="x" data-act="desel">×</button></div>`;
-    h += genBlock(GAME.gen(a.gen), a.f);
+    h += frontierHTML(a.tile) + genBlock(GAME.gen(a.gen), a.f);
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, 100, a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
     h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode">行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${inOwn ? '<button class="btn" data-act="disband" title="诸营并入守军，每营每季军饷编内 0.8 贯、超编 1.6 贯">解散入城</button>' : ''}<button class="btn" data-act="dismiss-army" ${locked}>遣散全军</button></div>`;
     h += `<p class="note">${a.fortT != null ? (GAME.fortified(a) ? '已筑垒。' : '筑垒中。') : ''}${fortHint}</p>`;
@@ -1123,11 +1145,13 @@ var UI = (function () {
   }
   function foreignArmyHTML(a) {
     const g = GAME.gen(a.gen);
+    const camp = a.frontier != null && GAME.frontierAt(a.tile);
     const cnt = {}; for (const u of a.units) cnt[u.t] = (cnt[u.t] || 0) + 1;
-    return `<div class="ph">${facSeal(a.f, '')}<div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">【${facName(a.f)}】${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人</div></div><button class="x" data-act="desel">×</button></div>
+    return `<div class="ph">${facSeal(a.f, '')}<div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">【${camp ? DATA.FRONTIER.guards[camp.kind].name : facName(a.f)}】${a.units.length} 营 · ${fmt(GAME.sumStr(a.units))} 人</div></div><button class="x" data-act="desel">×</button></div>
       ${genBlock(g, a.f)}
       <div class="chips">${Object.entries(cnt).map(([t, n]) => `<span class="chip uchip">${UNITART.img(a.f, t, 22)}${unitName(a.f, t)}×${n}</span>`).join('')}</div>
-      <p>关系：${a.f === 'rebel' ? '<span class=neg>乱军</span>' : relText(a.f)}　士气 ${Math.round(a.morale)}</p>`;
+      <p>${camp ? '据寨而守' : '关系：' + (a.f === 'rebel' ? '<span class=neg>乱军</span>' : relText(a.f))}　士气 ${Math.round(a.morale)}</p>
+      ${camp ? '<p class="note">破寨可得钱粮，再议招降或收缴寨藏。</p>' : ''}`;
   }
 
   function dismissSelected(owner, indices) {
@@ -1172,6 +1196,12 @@ var UI = (function () {
       case 'maptoggle': setMini(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'drawertoggle': setDrawer(el.getAttribute('aria-expanded') !== 'true'); break;
       case 'terrain': showTileTerrain(+arg); break;
+      case 'frontier-order':
+        if (sel && GAME.orderFoundation(sel.tile, arg)) {
+          toast(arg === 'claim' ? '地基已据' : '已发钱粮营筑');
+          refreshTop(); refreshSide(); RENDER.markDirty();
+        }
+        break;
       case 'inspect-town': {
         const town = GAME.cityAt(sel?.tile);
         if (town) select({ type: 'city', id: town.id, tile: town.tile });
@@ -2304,6 +2334,9 @@ var UI = (function () {
       <h3>内政</h3><ul><li>城池按户口耕作周边地块，产出粮、工、钱、文。余粮使户口增长；工用于营建与征兵；钱用于军饷、加急；文推动科技。</li>
       <li>民心低于 25 易生民变。寺观、常平仓、知州、奢侈物产（茶丝瓷香料）可安民；战事日久则厌战。</li>
       <li>委任<b>政</b>高之臣为知州，可大增一城产出。</li></ul>
+      <h3>边地筑城与讨伐</h3><ul>
+      <li>舆图以「基」标出可筑之地。遣军抵达，在军团详情中「占领地基」，再拨付钱粮丁口下令筑城。营筑两季可立一县，受外军或邻国所制时暂缓。</li>
+      <li>「寨」为山匪、流寇与边寨守军所据。遣军进攻，破寨得钱粮，再择招降入籍、收缴寨藏其一。宝物所得可在府库查看。</li></ul>
       <h3>城池等级与定位</h3><ul>
       <li>城分县、州、府、京。舆图以方印示县、圆角方印示州、外加一道框示府、内外双框示京。户口上限依次为 ${DATA.CITY_TIERS.map(t => t.pop).join('、')} 万，建筑限 ${DATA.CITY_TIERS.slice(0, 3).map(t => t.buildings).join('、')} 处，京城不限。营造中的建筑预占一处，拆除可腾地，旧费不返。</li>
       <li>县具 ${prefecture.pop} 万户口、${prefecture.buildings} 处建筑及知州，费工 ${prefecture.prod} 可升州。州须有 ${superior.pop} 万户口、${superior.buildings} 处建筑及政务 ${superior.governor} 的知州，城墙与草市、书院、市舶司、军营之一须建成，费工 ${superior.prod} 可升府。府无亲民之官，产出减一成。</li>
@@ -2742,7 +2775,7 @@ var UI = (function () {
     const mine = r.att === P();
     const win = mine ? r.win : !r.win;
     const loot = battleLoot(r);
-    return `<tr><td>${facSeal(r.att)} ${esc(r.attName)}</td><td>${fmt(r.before.a)} → ${fmt(r.after.a)}</td><td>攻</td><td>${facSeal(r.def)} ${esc(r.defName)}${r.city ? '（' + r.city + '）' : ''}</td><td>${fmt(r.before.d)} → ${fmt(r.after.d)}</td><td class="${win ? 'pos' : 'neg'}"><b>${esc(myResult(r))}</b>${r.captured ? '<br>' + esc(r.captured) : ''}${loot ? '<br>' + esc(loot) : ''}</td></tr>`;
+    return `<tr><td>${facSeal(r.att)} ${esc(r.attName)}</td><td>${fmt(r.before.a)} → ${fmt(r.after.a)}</td><td>攻</td><td>${facSeal(r.def)} ${esc(r.defName)}${r.city ? '（' + r.city + '）' : ''}</td><td class="${r.draw ? '' : win ? 'pos' : 'neg'}"><b>${esc(myResult(r))}</b>${r.captured ? '<br>' + esc(r.captured) : ''}${loot ? '<br>' + esc(loot) : ''}</td></tr>`;
   }
   function battleLoot(r) {
     const items = Object.values(r.loot || {}).flat();
@@ -2777,7 +2810,7 @@ var UI = (function () {
         ${card('a', ga, r.att, r.attName)}<div class="vs">战</div>${card('d', gd, r.def, r.defName)}</div>
         <p class="report-loss"><span>攻方折损 ${loss('a')}</span><span>守方折损 ${loss('d')}</span></p>
         ${r.unitStrength ? `<div class="report-forces">${units('a', r.att, '攻方各营')}${units('d', r.def, '守方各营')}</div>` : ''}
-        <div class="bres ${win ? 'win' : 'lose'}">${win ? '捷' : '挫'}　${esc(myResult(r))}</div>${r.plan ? `<p class="note" style="text-align:center">${esc(r.plan)}</p>` : ''}${r.captured ? `<p style="text-align:center">${esc(r.captured)}</p>` : ''}${r.loot ? `<p style="text-align:center">${esc(battleLoot(r))}</p>` : ''}
+        <div class="bres ${r.draw ? '' : win ? 'win' : 'lose'}">${r.draw ? '和' : win ? '捷' : '挫'}　${esc(myResult(r))}</div>${r.plan ? `<p class="note" style="text-align:center">${esc(r.plan)}</p>` : ''}${r.captured ? `<p style="text-align:center">${esc(r.captured)}</p>` : ''}${r.loot ? `<p style="text-align:center">${esc(battleLoot(r))}</p>` : ''}
         <div class="choices"><button class="choice" data-act="mclose" style="text-align:center">知道了</button></div>`, { width: '640px', onClose: () => { RENDER.buildPolitical(); refreshSide(); setTimeout(processPending, 10); } });
       RENDER.flash(r.tile);
       return;

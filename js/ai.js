@@ -31,7 +31,7 @@ var AI = (function () {
     const reserve = Math.max(100, 2 * (F.income.upkeep || 0));
     let refill = null, regroup = null;
     for (const a of s.armies) {
-      if (a.f !== F.id || a.battleTurn === s.turn) continue;
+      if (a.f !== F.id || a.frontier != null || a.battleTurn === s.turn) continue;
       const groups = {};
       a.units.forEach((u, i) => {
         if (u.s >= 100) return;
@@ -240,7 +240,7 @@ var AI = (function () {
     const F = GAME.fac(f);
     const rk = richness(F);
     const atWarNow = enemies.filter(e => e !== 'rebel').length > 0;
-    const armies = S().armies.filter(a => a.f === f);
+    const armies = S().armies.filter(a => a.f === f && a.frontier == null);
     const units = armies.reduce((s, a) => s + a.units.length, 0) + cities.reduce((s, c) => s + c.garrison.length, 0);
     const targetUnits = Math.round((cities.length * (atWarNow ? 3.2 : 2) + 2 + (F.mongolBoost ? 10 : 0)) * (1 + 0.5 * rk));
     const inc = F.income || {};
@@ -408,7 +408,7 @@ var AI = (function () {
     const atWarNow = enemies.length > 0;
     const fightSong = f !== S().player && f !== 'rebel' && enemies.includes(S().player);
     const rules = f !== S().player && f !== 'rebel' ? GAME.difficultyRules().command : null;
-    let armies = S().armies.filter(a => a.f === f);
+    let armies = S().armies.filter(a => a.f === f && a.frontier == null);
     const aiWar = f !== S().player && !fightSong && enemies.some(e => e !== 'rebel');
     const maxArmies = Math.max(1, Math.round(cities.length / 3) + (atWarNow ? 1 : 0) + (aiWar ? 1 : 0) + (F.mongolBoost ? 3 : 0) +
       Math.round(2 * richness(F)) + (fightSong ? rules.armies : 0));
@@ -435,7 +435,7 @@ var AI = (function () {
       if (g && g.tong > g.zheng - 10) GAME.setArmyGeneral(a.id, g.id);
     }
     const es = new Set(enemies);
-    const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f)),
+    const ctx = { es, eCities: S().cities.filter(c => es.has(c.f)), eArmies: S().armies.filter(o => es.has(o.f) && o.frontier == null),
       frontier: undefined, rules, fightSong, focusSong: focusesOnSong(f) };
     for (const a of armies) {
       if (!S().armies.includes(a)) continue;
@@ -544,7 +544,7 @@ var AI = (function () {
       const c = site || (here && here.f === f) ? null : nearestOwnCity(a, cities);
       if (c && !GAME.armyAt(c.tile)) goal = c.tile;
       // 和平时期：多余军团解散
-      if (here && here.f === f && S().armies.filter(x => x.f === f).length > Math.max(2, cities.length / 3) && rand() < 0.05 * GAME.E()) { GAME.disband(a.id); return; }
+      if (here && here.f === f && S().armies.filter(x => x.f === f && x.frontier == null).length > Math.max(2, cities.length / 3) && rand() < 0.05 * GAME.E()) { GAME.disband(a.id); return; }
     }
     if (goal == null) return;
     if (a.aiGoal !== goal || !a.path || !a.path.length) {
@@ -574,7 +574,7 @@ var AI = (function () {
   }
 
   function rebelArmies() {
-    for (const a of S().armies.filter(x => x.f === 'rebel')) {
+    for (const a of S().armies.filter(x => x.f === 'rebel' && x.frontier == null)) {
       let tgt = null, bd = 1e9;
       for (const c of S().cities) {
         if (c.f === 'rebel') continue;

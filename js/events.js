@@ -113,6 +113,24 @@ var EVENTS = (function () {
   }
 
   const DEFS = {
+    frontierSpoils: {
+      title: '寨破善后',
+      text: p => {
+        const { name, rule } = GAME.campSpoils(p.point);
+        return `${name}已破，钱 ${rule.gold}、粮 ${rule.food}已缴入官。降众候命，寨中所藏亦待清点，请陛下裁处。`;
+      },
+      choices: [
+        { t: '招降入籍', d: p => {
+          const { g, rule } = GAME.campSpoils(p.point);
+          return `丁口 +${rule.man}${g ? '，' + g.name + '来归，可任军职' : ''}`;
+        }, fn: p => GAME.resolveCampSpoils(p.point, 'recruit') },
+        { t: '收缴寨藏', d: p => {
+          const { item } = GAME.campSpoils(p.point);
+          return item ? `【${DATA.ITEMS[item].name}】入府库 · ${DATA.ITEMS[item].desc}` :
+            `钱 +${DATA.FRONTIER.bonusGold}，铁 +${DATA.FRONTIER.bonusIron}`;
+        }, fn: p => GAME.resolveCampSpoils(p.point, 'loot') },
+      ],
+    },
     jinpai: {
       title: '十二道金牌',
       text: () => '郾城一战，金兀术拐子马、铁浮屠尽为岳家军所破，中原父老箪食壶浆以迎王师。然朝中秦桧力主和议，奏请急发十二道金字牌，催岳飞班师。\n\n岳飞北望中原，上表请乘胜北进。\n\n陛下，此诏发与不发，在此一念。',
@@ -1349,6 +1367,7 @@ var EVENTS = (function () {
   }
 
   function onBattle(rep) {
+    if (rep.draw) return;
     const player = P(), attacking = rep.att === player;
     if (!attacking && rep.def !== player) return;
     const won = attacking ? rep.win : !rep.win;
@@ -2171,7 +2190,7 @@ var EVENTS = (function () {
 
   // 冷却以季计；年度从玩家开局之日算起，换刻度不重开年度。
   const categoryWait = { local: 0.4, situation: 0.45, person: 1, court: 2, diplomacy: 1, battle: 0.5, 农事: 1.5, 灾异: 2, 风俗: 1.5, 工役: 1.5, 释道: 2, 市易: 1.5, 学术: 1.5, 乡政: 1.5, 宾客: 2 };
-  const systemEvents = new Set(['levelup', 'info', 'cityPromotion', 'leagueMuster', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
+  const systemEvents = new Set(['levelup', 'info', 'cityPromotion', 'frontierSpoils', 'leagueMuster', 'keju', 'recommend', ...Object.keys(ENDINGS), 'wanyanliang', 'temujin']);
   const registry = [];
   const elapsedDays = () => (G().year - 1140) * 360 + G().doy - 189;
   const isDecision = id => !systemEvents.has(id);
@@ -2726,6 +2745,7 @@ var EVENTS = (function () {
     ['校印式，存本于官', { gold: -25, sci: 35 }], ['延邻老作证，免其券费', { gold: -20, happy: 5 }]);
 
   function presentable(p) {
+    if (p.ev === 'frontierSpoils') return !!GAME.campSpoils(p.point);
     if (p.ev === 'cityPromotion') return owned(p.city, P())?.tier === p.tier;
     if (p.ev === 'hdjd') return !!ownedName('汴京', P());
     if (p.ev === 'offeredTreasure') return !G().itemsTaken[p.item] && !GAME.itemEquipReason(playerGeneral(p.gen), p.item);

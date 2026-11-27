@@ -1330,6 +1330,40 @@ var DATA = (function () {
     varangian: { name: '瓦兰吉长斧', desc: '武 +4，统 +1', wu: 4, tong: 1, slot: 'weapon' },
     mail: { name: '拂菻锁子甲', desc: '武 +2，全军防御 +8%', wu: 2, armor: 0.08, slot: 'armor' },
   };
+  // 边地落点按经纬度就近择地。地名与寨主均为本局虚构。
+  const FRONTIER = {
+    cost: { gold: 220, food: 260, man: 18 }, days: 180, pop: 2,
+    foundations: [
+      ['青篁', 101, 20], ['南浦', 103, 16], ['鹿溪', 97, 22], ['石津', 106, 29],
+      ['白桦原', 128, 48], ['北沙河', 111, 45], ['鸣泉', 96, 43], ['苇泽', 113, 55],
+      ['雪松谷', 87, 41], ['蒲海', 77, 46], ['柳泉', 64, 46], ['石榆津', 55, 45],
+      ['双榕', 84, 24], ['椰浦', 77, 17], ['晨湾', 101, 4], ['榆原', 123, 46],
+      ['月渠', 57, 30], ['槐井', 38, 18], ['橄榄坡', 26, 51], ['杉河', 38, 55],
+      ['白苇渡', 14, 52], ['松崖', 19, 61], ['泉石', 15, 31], ['望沙', 7, 36],
+    ],
+    camps: [
+      ['横箐寨', 101, 22, 'hill', '罗九嶷'], ['乌藤寨', 105, 17, 'local', '坎纳'], ['黑水寨', 98, 24, 'hill', '段铁岩'],
+      ['伏虎寨', 106, 32, 'hill', '许横山'], ['断石寨', 100, 35, 'rover', '孟骁'],
+      ['黑松营', 132, 47, 'local', '乌林达'], ['走马营', 114, 44, 'rover', '阿古尔'], ['啸风营', 98, 45, 'rover', '图尔岱'],
+      ['寒溪营', 108, 56, 'local', '察鲁'], ['赤崖寨', 85, 37, 'hill', '扎西洛'], ['碎石营', 72, 43, 'rover', '阿尔斯兰'],
+      ['雁回营', 65, 49, 'rover', '巴图尔'], ['雪溪寨', 71, 34, 'hill', '达乌德'], ['青旌寨', 82, 24, 'local', '毗阇耶'],
+      ['象径寨', 79, 16, 'local', '孙达罗'], ['雨谷寨', 101, 5, 'local', '拉登'], ['石门寨', 93, 35, 'hill', '索南'],
+      ['黑井营', 52, 30, 'rover', '贾法尔'], ['赤砂营', 43, 22, 'rover', '哈立德'], ['灰石寨', 29, 50, 'hill', '伊瓦尔'],
+      ['杉林营', 43, 54, 'local', '鲍里斯'], ['鸦巢寨', 10, 47, 'hill', '康拉德'], ['白崖营', 16, 60, 'local', '埃里克'],
+      ['黄沙营', 19, 31, 'rover', '阿卜杜'],
+    ],
+    campAdditions: [
+      ['朱家寨', 105, 26, 'hill', '朱志欣'],
+      ['斜星寨', 99, 28, 'hill', '王越洲'],
+      ['刘家寨', 108, 23, 'hill', '刘老大'],
+    ],
+    guards: {
+      hill: { name: '山匪', units: ['inf', 'inf', 'inf', 'inf', 'bow', 'bow'], tong: 76, wu: 84, skill: '守险', gold: 200, food: 230, man: 15, items: ['qinggang', 'mingguang', 'longquan', 'wuzijing', 'varangian'] },
+      rover: { name: '流寇', units: ['inf', 'inf', 'cav', 'cav', 'cav', 'hbow', 'bow'], tong: 82, wu: 79, skill: '铁骑', gold: 260, food: 180, man: 20, items: ['baodao', 'qixing', 'zhaoyebai', 'damascus', 'chitu'] },
+      local: { name: '边寨守军', units: ['inf', 'inf', 'inf', 'bow', 'bow', 'cav', 'bow'], tong: 86, wu: 76, skill: '神射', gold: 230, food: 280, man: 25, items: ['wuxue', 'mail', 'yuejueshu', 'hufu', 'wujing'] },
+    },
+    bonusGold: 140, bonusIron: 12,
+  };
   // ---------- 奇遇点 ----------
   const SITES = {
     battlefield: { name: '古战场', glyph: '碑', desc: '凭吊古战场，主将经验 +80（每位将领一次）', repeat: 'gen' },
@@ -1378,7 +1412,7 @@ var DATA = (function () {
 
   const HAN_NAME_INITIALS = [...NAMES.han.g].filter(ch => !NAME_INITIAL_EXCLUSIONS.has(ch)).join('');
 
-  return { HAN_NAME_INITIALS, ITEMS, ITEM_SLOTS, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
+  return { HAN_NAME_INITIALS, ITEMS, ITEM_SLOTS, FRONTIER, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
     CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, unitBase, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;
