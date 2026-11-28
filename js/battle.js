@@ -120,7 +120,7 @@ var TACTIC = (function () {
     const ok = list.filter(x => x.ok), no = list.filter(x => !x.ok);
     const btn = x => `<button class="plan ${pick === x.id ? 'on' : ''}" data-p="${x.id}" ${x.ok ? (x.hist ? 'title="' + esc(x.hist) + '"' : '') : 'disabled title="' + esc(x.hist || '') + '"'}><span class="plan-head"><b>${x.name}</b><span class="cost ${x.ok ? '' : 'plan-condition note'}">${x.ok ? Math.round(x.chance * 100) + '%' : x.why}</span></span><span class="note">${x.desc}</span></button>`;
     return `<div class="plans">${ok.length ? ok.map(btn).join('') : '<span class="note">眼下形势，无计可施。</span>'}</div>` +
-      (no.length ? `<button type="button" class="note plan-more" data-more="1" aria-expanded="${showAllPlans}">${showAllPlans ? '▾ 收起' : '▸'} 不合形势之策 ${no.length} 条</button>` + (showAllPlans ? `<div class="plans">${no.map(btn).join('')}</div>` : '') : '');
+      (no.length ? `<button type="button" class="note plan-more" data-more="1" aria-expanded="${showAllPlans}">${showAllPlans ? '收起' : '展开'} 不合形势之策 ${no.length} 条</button>` + (showAllPlans ? `<div class="plans">${no.map(btn).join('')}</div>` : '') : '');
   }
   // ---------- 战前军议 ----------
   function terrainRowsHTML(rows) {

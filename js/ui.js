@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.22.1';
+  const VERSION = '0.23.0';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -248,7 +248,7 @@ var UI = (function () {
     const limit = EVENTS.customSlots();
     openModal(`<h1>自创将领</h1><p>已录 ${drafts.length} / ${limit} 员</p>
       ${drafts.map(g => `<div class="row"><b>${esc(g.name)}</b><span>${customRoles[g.role]}</span></div>`).join('')}
-      <div class="btns"><button class="btn" data-new-custom ${drafts.length >= limit ? 'disabled' : ''}>添一员</button>
+      <div class="btns"><button class="btn" data-new-custom ${disabledBecause(drafts.length >= limit ? '已满自创名额' : '')}>添一员</button>
       <button class="btn red" data-new-start>${drafts.length ? '开局' : '跳过并开局'}</button></div>`, { width: '500px' });
     $('modal').onclick = e => {
       if (e.target.closest('[data-new-start]')) { closeModal(); startNew(drafts); }
@@ -279,7 +279,7 @@ var UI = (function () {
       <p class="neg" data-custom-error role="status"></p>
       <div class="btns"><button type="button" class="btn" data-custom-back>返回</button><button class="btn red" type="submit">${fixed ? '录用' : '录入名册'}</button></div>
       </form>`;
-    openModal(form, { width: '550px' });
+    openModal(form, { width: '550px', sheet: fixed });
     const node = $('custom-form'), err = node.querySelector('[data-custom-error]');
     function update() {
       const data = new FormData(node);
@@ -301,7 +301,11 @@ var UI = (function () {
       const img = node.querySelector('img');
       img.hidden = !draft.art;
       if (draft.art) img.src = 'portraits/' + draft.art + '.webp';
-      for (const b of node.querySelectorAll('[data-art]')) b.disabled = keys.length < 2;
+      for (const b of node.querySelectorAll('[data-art]')) {
+        b.disabled = keys.length < 2;
+        b.dataset.disabledReason = '暂无其他画像';
+      }
+      showDisabledReasons(node);
     }
     update();
     node.oninput = () => { err.textContent = ''; update(); };
@@ -323,13 +327,21 @@ var UI = (function () {
   }
   function showHire() {
     const roster = S().hireList, F = GAME.fac(P()), cost = GAME.hireCost();
-    openModal(`<h1>招贤榜</h1>${roster ? roster.map((g, i) => `<div class="row hire-candidate">
-      <img class="pimg" width="56" height="56" alt="" src="portraits/${draftArt(g)[0]}.webp">
-      <div class="grow"><b>${esc(g.name)}</b> · ${customRoles[g.role]}<br><span class="note">统 ${g.tong}　武 ${g.wu}　智 ${g.zhi}　政 ${g.zheng}</span></div>
-      <button class="btn sm" data-hire-choose="${i}">择录</button></div>`).join('') +
-      '<button class="btn" data-hire-decline>皆不录用</button>' :
-      `<p>每年一榜，三人应募，择录一员。</p><button class="btn red" data-hire-open ${S().flags.hireYear === S().year || F.gold < cost ? 'disabled' : ''}>张榜，费钱 ${cost} 贯</button>${S().flags.hireYear === S().year ? ' <span class="note">本年已张榜</span>' : ''}`}
-      <button class="btn" data-act="gens">返回名册</button>`, { width: '550px' });
+    const used = S().flags.hireYear === S().year;
+    const reason = used ? '今年已张榜，来年可再招贤。' : fundsShortfall(F.gold, cost);
+    const board = `<p>每年张榜一次，三人应募，择录一员。录用后可改其姓名与画像。</p>
+      <dl class="hire-metrics"><div><dt>张榜所费</dt><dd>${fmtAmount(cost)} 贯</dd></div>
+        <div><dt>府库现存</dt><dd class="${F.gold < cost ? 'neg' : ''}">${fmtAmount(F.gold)} 贯</dd></div>
+        <div><dt>今年榜期</dt><dd>${used ? '已张' : '未张'}</dd></div></dl>
+      <div class="sheet-primary"><button class="btn red" data-hire-open ${disabledBecause(reason)}>张榜 · ${fmtAmount(cost)} 贯</button></div>`;
+    const candidates = () => `<div class="hire-candidates">${roster.map((g, i) => `<article class="hire-candidate">
+      ${PORTRAIT.img({ ...g, art: draftArt(g)[0] }, 48, 'alt=""')}
+      <div><strong>${esc(g.name)}</strong> <span class="note">${customRoles[g.role]}</span><div class="note hire-skills">
+        ${Object.entries(GAME.STAT_NAME).map(([key, label]) => `<span>${label} ${g[key]}</span>`).join('')}</div></div>
+      <button class="btn sm red" data-hire-choose="${i}">择录</button></article>`).join('')}</div>`;
+    openModal(`<h1>招贤榜</h1>${roster ? candidates() : board}
+      <div class="sheet-links">${roster ? '<button class="btn text-action" data-hire-decline>皆不录用</button>' : ''}
+        <button class="btn text-action" data-act="gens">返回名册</button></div>`, { width: '550px', sheet: true });
     $('modal').onclick = e => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -472,26 +484,28 @@ var UI = (function () {
       const stats = [['钱', F.gold, gnet], ['粮', F.food, fnet], ['兵', F.man, inc.man], ['马', F.horse, inc.horse], ['铁', F.iron, inc.iron]];
       $('res').innerHTML = stats.map(([label, value, rate]) => `<button type="button" class="rbox resource-cell" data-act="treasury" aria-label="${label} ${fmtShort(value)}，查看府库">
         <span class="k">${label}${rate ? ` <span aria-hidden="true" class="${rate > 0 ? 'pos' : 'neg'}">${rate > 0 ? '▲' : '▼'}</span>` : ''}</span>
-        <b>${fmtShort(value)}</b></button>`).join('');
+        <b class="${label === '钱' && value <= 0 ? 'neg' : ''}">${fmtShort(value)}</b></button>`).join('');
       $('mobile-research').style.setProperty('--research-pct', pct + '%');
-      $('mobile-research').textContent = r ? `${r.name} · ${eta ? '余 ' + eta + TU() : '待计'}` : '研究未定';
+      $('mobile-research').innerHTML = r ? `<strong>${esc(r.name)}</strong><span>${eta ? '余 ' + eta + TU() : '待计'}</span>` : '研究未定';
     } else $('res').innerHTML = `
-      <button type="button" data-act="treasury" class="rbox resource-cell" title="岁入 ${inc.gold || 0}，军费、俸禄、营缮与治理 ${inc.upkeep || 0}，岁币 ${inc.trib || 0}。点按查看府库"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></button>
-      <button type="button" data-act="treasury" class="rbox resource-cell" title="诸州输粮 ${inc.food || 0}，军粮 ${inc.foodUp || 0}。点按查看府库"><span class="k">粮</span> <b>${fmt(F.food)}</b> <span class="d ${fnet >= 0 ? 'pos' : 'neg'}">${sgn(fnet)}/季</span></button>
-      <div class="rbox" title="每营需兵源 5（约五百人）；每季 +${inc.man || 0}"><span class="k">兵源</span> <b>${fmt(F.man)}</b></div>
-      <div class="rbox" title="骑兵每营耗马 3；每季 +${inc.horse || 0}"><span class="k">马</span> <b>${fmt(F.horse)}</b></div>
-      <div class="rbox" title="甲骑、火器每营耗铁 2；每季 +${inc.iron || 0}"><span class="k">铁</span> <b>${fmt(F.iron)}</b></div>
-      <div class="rbox" data-act="tech" style="cursor:pointer" title="每季文教 ${inc.sci || 0}"><span class="k">研究</span> <b style="font-size:14px">${r ? r.name : '<span class=neg>未定</span>'}</b> <span class="d">${r ? eta + TU() : ''}</span>
+      <button type="button" data-act="treasury" class="rbox resource-cell" title="岁入 ${fmtAmount(inc.gold)}，军费、俸禄、营缮与治理 ${fmtAmount(inc.upkeep)}，岁币 ${fmtAmount(inc.trib)}。点按查看府库"><span class="k">钱</span> <b>${fmt(F.gold)}</b> <span class="d ${gnet >= 0 ? 'pos' : 'neg'}">${sgn(gnet)}/季</span></button>
+      <button type="button" data-act="treasury" class="rbox resource-cell" title="诸州输粮 ${fmtAmount(inc.food)}，军粮 ${fmtAmount(inc.foodUp)}。点按查看府库"><span class="k">粮</span> <b>${fmt(F.food)}</b> <span class="d ${fnet >= 0 ? 'pos' : 'neg'}">${sgn(fnet)}/季</span></button>
+      <div class="rbox" title="每营需兵源 5（约五百人）；每季 +${fmtAmount(inc.man)}"><span class="k">兵源</span> <b>${fmt(F.man)}</b></div>
+      <div class="rbox" title="骑兵每营耗马 3；每季 +${fmtAmount(inc.horse)}"><span class="k">马</span> <b>${fmt(F.horse)}</b></div>
+      <div class="rbox" title="甲骑、火器每营耗铁 2；每季 +${fmtAmount(inc.iron)}"><span class="k">铁</span> <b>${fmt(F.iron)}</b></div>
+      <div class="rbox" data-act="tech" style="cursor:pointer" title="每季文教 ${fmtAmount(inc.sci)}"><span class="k">研究</span> <b style="font-size:14px">${r ? r.name : '<span class=neg>未定</span>'}</b> <span class="d">${r ? eta + TU() : ''}</span>
         <div class="bar"><i style="width:${pct}%"></i></div></div>
       <div class="rbox" title="攻占诸国原都城可获万国来朝"><span class="k">都城</span> <b>${capitalProgress()}</b></div>
       <div class="rbox" title="尽取有主之城即一统天下"><span class="k">城池</span> <b>${cityProgress()}</b></div>`;
     const idle = S().armies.filter(a => a.f === P() && a.mp > 0 && !(a.path && a.path.length) && !a.sentry).length;
     const routed = S().armies.filter(a => a.f === P() && a.path && a.path.length && a.mp > 0).length;
     const idleC = GAME.citiesOf(P()).filter(c => !c.queue.length).length;
-    $('idlehint').innerHTML =
-      (idleC ? `<button type="button" data-act="nextcity" title="下一座空闲城">${idleC} 城空闲<span class="keyhint">（Q）</span></button>` : '') +
-      (idle ? `<button type="button" data-act="nextidle" title="下一支待命军团">尚有 ${idle} 军待命<span class="keyhint">（Tab）</span></button>` : '') +
-      (routed ? `<button type="button" data-act="contall">${routed} 军待续 · 全军继续<span class="keyhint">（C）</span></button>` : '');
+    const reminders = [
+      idleC && `<button type="button" data-act="nextcity" title="下一座空闲城">${idleC} 城空闲<span class="keyhint">（Q）</span></button>`,
+      idle && `<button type="button" data-act="nextidle" title="下一支待命军团">${idle} 军待命<span class="keyhint">（Tab）</span></button>`,
+      routed && `<button type="button" data-act="nextrouted" title="下一支待续军团">${routed} 军待续</button>`,
+    ].filter(Boolean).join('<span class="idle-divider" aria-hidden="true">·</span>');
+    $('idlehint').innerHTML = reminders + (routed ? '<button type="button" class="continue-all" data-act="contall">全军继续<span class="keyhint">（C）</span></button>' : '');
   }
 
   // ---------- 输入 ----------
@@ -538,10 +552,11 @@ var UI = (function () {
       const routed = !!a.path?.length;
       const foundation = GAME.frontierAt(a.tile)?.kind === 'foundation';
       body = `<div class="ob-msg note">${moveMode ? '轻点地图，择定去处' : '可轻点目标格预览路线'}</div>
-        <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}" ${GAME.trainingArmy(a) ? 'disabled title="有营换装，须驻原城"' : ''}>行军</button><button class="btn" data-act="drawertoggle">${foundation ? '地基' : '详情'}</button><button class="btn" data-act="desel" aria-label="取消选择">✕</button></div>`;
+        <div class="ob-btns">${routed ? `<button class="btn red" data-act="cont" ${disabledBecause(a.mp > 0 ? '' : '本回合行军力已尽')}>继续行军</button>` : ''}<button class="btn ${routed ? '' : 'red'}" data-act="movemode" aria-pressed="${moveMode}" ${GAME.trainingArmy(a) ? 'disabled title="有营换装，须驻原城"' : ''}>行军</button><button class="btn" data-act="drawertoggle">${foundation ? '地基' : '详情'}</button><button class="btn" data-act="desel" aria-label="取消选择">×</button></div>`;
     }
     bar.innerHTML = head + body;
     layoutText(bar);
+    showDisabledReasons(bar);
     bar.classList.remove('hidden');
     requestAnimationFrame(revealSelection);
   }
@@ -572,35 +587,10 @@ var UI = (function () {
     if (sy > bottom - 30 || sy < top + 24) smoothPan((top + bottom) / 2 - sy);
   }
   function preventPageZoom() {
-    const stopZoom = e => { if (e.cancelable) e.preventDefault(); };
+    // iOS WebKit still exposes pinch as a gesture event over scrollable UI.
     for (const name of ['gesturestart', 'gesturechange', 'gestureend']) {
-      document.addEventListener(name, stopZoom, { passive: false });
+      document.addEventListener(name, e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
     }
-    document.addEventListener('touchmove', e => {
-      if (e.touches.length > 1) stopZoom(e);
-    }, { passive: false });
-
-    // 点按控件交给浏览器产生 click；地图的双指和两次轻点由 Pointer Events 处理。
-    const controls = '#map, #minimap, button, a, input, select, textarea, label, [role="button"], [data-act]';
-    let start = null, lastTap = null;
-    document.addEventListener('touchstart', e => {
-      const touch = e.touches[0];
-      start = e.touches.length === 1 && !e.target.closest(controls) ? touch : null;
-      if (!start) lastTap = null;
-    }, { passive: true });
-    document.addEventListener('touchcancel', () => { start = lastTap = null; }, { passive: true });
-    document.addEventListener('touchend', e => {
-      const from = start;
-      start = null;
-      const touch = e.changedTouches[0];
-      if (!from || e.touches.length || Math.hypot(touch.clientX - from.clientX, touch.clientY - from.clientY) > 12) {
-        lastTap = null;
-        return;
-      }
-      if (lastTap && e.timeStamp - lastTap.time < 300 &&
-          Math.hypot(touch.clientX - lastTap.x, touch.clientY - lastTap.y) <= 24) stopZoom(e);
-      lastTap = { time: e.timeStamp, x: touch.clientX, y: touch.clientY };
-    }, { passive: false });
   }
   function bindInput() {
     preventPageZoom();
@@ -755,7 +745,7 @@ var UI = (function () {
       rd.onload = async () => { let txt; try { txt = await unpackSave(String(rd.result).trim()); } catch (err) { alert('存档无法读取：' + err.message); return; } withLoading('展读旧卷……', () => { try { GAME.deserialize(txt); ensureBase(); enterGame(); centerCapital(); toast('存档已导入'); } catch (err) { alert('存档无法读取：' + err.message); } }); };
       rd.readAsText(f); e.target.value = '';
     };
-    $('modal-bg').addEventListener('mousedown', e => { if (e.target.id === 'modal-bg' && !modalLocked) closeModal(); });
+    $('modal-bg').addEventListener('click', e => { if (e.target.id === 'modal-bg' && !modalLocked) closeModal(); });
   }
 
   function hover(t, previewPath = true) {
@@ -982,8 +972,8 @@ var UI = (function () {
     refreshTop(); RENDER.markDirty();
     flushBattles(false);
   }
-  function nextIdle() {
-    const list = S().armies.filter(a => a.f === P() && a.mp > 0 && !(a.path && a.path.length) && !a.sentry);
+  function nextIdle(routed = false) {
+    const list = S().armies.filter(a => a.f === P() && a.mp > 0 && !a.sentry && !!a.path?.length === routed);
     if (!list.length) { toast('诸军皆已调遣'); return; }
     let k = sel && sel.type === 'army' ? list.findIndex(a => a.id === sel.id) : -1;
     const a = list[(k + 1) % list.length];
@@ -1012,12 +1002,12 @@ var UI = (function () {
   function refreshSide() {
     const el = $('side');
     if (!S()) return;
-    if (!sel) { el.innerHTML = overviewHTML(); layoutText(el); return; }
+    if (!sel) { el.innerHTML = overviewHTML(); layoutText(el); showDisabledReasons(el); return; }
     if (sel.type === 'city') {
       const c = GAME.city(sel.id);
       el.innerHTML = !GAME.fac(c.f)?.alive ? ruinHTML(c) : c.f === P() ? cityHTML(c) : foreignCityHTML(c);
     }
-    else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); layoutText(el); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
+    else if (sel.type === 'army') { const a = GAME.army(sel.id); if (!a) { sel = null; el.innerHTML = overviewHTML(); layoutText(el); showDisabledReasons(el); return; } el.innerHTML = a.f === P() ? armyHTML(a) : foreignArmyHTML(a); }
     else el.innerHTML = tileHTML(sel.tile);
     if (sel.type !== 'tile') {
       const stationed = GAME.armyAt(sel.tile);
@@ -1026,7 +1016,7 @@ var UI = (function () {
         sel.type === 'city' && visibleArmy ? '<button class="btn sm" data-act="inspect-army">查看驻军</button>' : '';
       el.querySelector('.ph').insertAdjacentHTML('afterend', `<button class="record-link terrain-link" data-act="terrain" data-arg="${sel.tile}">察看地势 · ${tileTerrainName(sel.tile)}</button>${switchTo}`);
     }
-    layoutText(el);
+    layoutText(el); showDisabledReasons(el);
     renderOrderBar();
   }
   function overviewHTML() {
@@ -1046,7 +1036,7 @@ var UI = (function () {
   }
   function tileTerrainName(t) { return GEO.TERRAIN[GEO.terrain[t]].name + (GEO.river[t] ? ' · 临河' : ''); }
   function showTileTerrain(t) {
-    if (S()?.explored[t]) openModal(`<h1>${tileTerrainName(t)}</h1><div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}`, { width: '440px' });
+    if (S()?.explored[t]) openModal(`<h1>${tileTerrainName(t)}</h1><div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}`, { width: '440px', sheet: true });
   }
   function frontierHTML(tile) {
     const p = GAME.frontierAt(tile);
@@ -1070,7 +1060,7 @@ var UI = (function () {
     const tr = GEO.TERRAIN[GEO.terrain[t]], y = GAME.tileYield(t), own = livingTileOwner(t);
     return `<div class="ph"><div><h2>${tr.name}</h2><div class="sub">${GEO.river[t] ? '临河 · ' : ''}${GEO.resource[t] ? '物产：' + GEO.resource[t] : '无特产'}</div></div><button class="x" data-act="desel">×</button></div>
       ${frontierHTML(t)}
-      <div class="stat"><div><b>${y.food}</b><span>粮</span></div><div><b>${y.prod}</b><span>工</span></div><div><b>${y.gold}</b><span>钱</span></div><div><b>${tr.move}</b><span>行军耗</span></div></div>
+      <div class="stat"><div><b>${y.food}</b><span>粮</span></div><div><b>${y.prod}</b><span>工</span></div><div><b>${y.gold}</b><span>钱</span></div><div><b>${fmtAmount(tr.move)}</b><span>行军耗</span></div></div>
       <div class="sec">地形修正</div>${TACTIC.terrainRowsHTML(GAME.tileTerrainRows(t))}
       ${own ? `<p>${facSeal(own)} 属【${facName(own)}】${own !== P() ? '　' + relText(own) : ''}</p>` : '<p class="note">无主之地</p>'}`;
   }
@@ -1140,13 +1130,13 @@ var UI = (function () {
       const single = canRefill ? GAME.reinforcementInfo(owner, [i]) : null;
       const refillBtn = single ? unitButton('reinforce-unit', '补', single, `data-arg="${i}" aria-label="补员第 ${i + 1} 营"`) : '';
       const training = u.training != null, rank = GAME.unitRank(u);
-      const leave = army && canRefill ? `<button class="btn sm" data-act="toCity" data-arg="${i}" ${training ? 'disabled' : ''}>留驻</button>` : '';
-      const dismiss = army ? `<button class="btn sm" data-act="dismiss-unit" data-arg="${i}" aria-label="遣散第 ${i + 1} 营" ${training ? 'disabled' : dismissalLock}>散</button>` : '';
+      const leave = army && canRefill ? `<button class="btn sm" data-act="toCity" data-arg="${i}" ${disabledBecause(training ? '此营正在换装' : '')}>留驻</button>` : '';
+      const dismiss = army ? `<button class="btn sm" data-act="dismiss-unit" data-arg="${i}" aria-label="遣散第 ${i + 1} 营" ${disabledBecause(training ? '此营正在换装' : '') || dismissalLock}>散</button>` : '';
       const upgrade = canRefill && DATA.UPGRADES[u.t] ? GAME.upgradeInfo(owner, i) : null;
       const refit = upgrade ? unitButton('refit-unit', training ? '换装中' : '换装', upgrade, `data-arg="${i}"`) : '';
       const cost = single?.ok ? refillCostText(single.cost) : u.s < 100 && single?.msg !== batch?.msg ? single?.msg : '';
       return `<div class="row unit-row${selected ? ' sel' : ''}"><button type="button" class="unit-select" data-act="${army ? 'apick' : 'gpick'}" data-arg="${i}" aria-pressed="${selected}">
-        ${UNITART.img(owner.f, u.t, 34)}<span class="grow"><span class="unit-name">${esc(unitName(owner.f, u.t))}${rank ? `<span class="chip unit-rank${rank === 2 ? ' red' : ''}" title="${rank === 2 ? '精锐，攻守加二成' : '老练，攻守加一成'}">${rank === 2 ? '精' : '老'}</span>` : ''}</span><span class="cost">约 ${fmt(u.s * 5)} 人</span><span class="meter"><i style="width:${u.s}%"></i></span>${unitCounterNotes(u.t)}</span>
+        ${UNITART.img(owner.f, u.t, 34)}<span class="grow"><span class="unit-name">${esc(unitName(owner.f, u.t))}${rank ? `<span class="chip unit-rank${rank === 2 ? ' elite' : ''}" title="${rank === 2 ? '精锐，攻守加二成' : '老练，攻守加一成'}">${rank === 2 ? '精' : '老'}</span>` : ''}</span><span class="cost">约 ${fmt(u.s * 5)} 人</span><span class="meter"><i style="width:${u.s}%"></i></span>${unitCounterNotes(u.t)}</span>
         </button><div class="unit-actions">${refillBtn}${leave}${dismiss}${refit}</div>${cost ? `<span class="note unit-order-note">${esc(cost)}</span>` : ''}</div>`;
     }).join('');
     const orders = extra + refill + combine;
@@ -1168,13 +1158,13 @@ var UI = (function () {
     const info = GAME.eliteInfo(a), k = info.k;
     return `<div class="row"><span class="grow"><b>岳家军亲兵</b><br><span class="note">岳家军系主将驻有军营之城可募；通背嵬法者亦可募，价增三成。每军至多三营。</span>
       ${info.reason && a ? '<br><span class="note">' + esc(info.reason) + '</span>' : ''}</span>
-      ${a ? `<button class="btn sm" data-act="recruit-elite" data-arg="${a.id}" ${info.reason ? 'disabled' : ''}>${k && !info.reason ? '补募背嵬 ' + k.gold + ' 贯' : '补募背嵬'}</button>` : ''}</div>`;
+      ${a ? `<button class="btn sm" data-act="recruit-elite" data-arg="${a.id}" ${disabledBecause(info.reason)}>${k && !info.reason ? '补募背嵬 ' + k.gold + ' 贯' : '补募背嵬'}</button>` : ''}</div>`;
   }
   function governorPolicy(c, g, y) {
     const neutral = GAME.cityYield(c, null);
     const change = k => neutral[k] ? Math.round((y[k] / neutral[k] - 1) * 100) + '%' : sgn(y[k] - neutral[k]);
     const { penalty, happyPenalty } = GAME.governorEffects(g);
-    const penaltyText = [penalty ? '产出 −' + +(penalty * 100).toFixed(1) + '%' : '', happyPenalty ? '民心 −' + happyPenalty : ''].filter(Boolean).join('、');
+    const penaltyText = [penalty ? '产出 −' + +(penalty * 100).toFixed(1) + '%' : '', happyPenalty ? '民心 −' + fmtAmount(happyPenalty) : ''].filter(Boolean).join('、');
     return `<div class="note" data-governor-policy>知州施政：${[['food','粮'],['prod','工'],['gold','钱'],['sci','文']].map(([k,n]) => n + ' ' + (y[k] >= neutral[k] && neutral[k] ? '+' : '') + change(k)).join('、')}、民心 ${sgn(GAME.loyaltyTarget(c) - GAME.loyaltyTarget(c, null))}</div>
       ${penaltyText ? `<div class="neg">知州不谙政务：${penaltyText}</div>` : ''}`;
   }
@@ -1184,13 +1174,13 @@ var UI = (function () {
     const wait = GAME.roleTime(c, DATA.CITY_ROLE_CHANGE.cooldown);
     let h = '<div class="sec">城池等级与定位</div>';
     if (up) {
-      h += `<div class="row"><span class="grow">${up.queued ? '升等已入营造队列' : `升为${up.name}需工 ${up.cost}`}</span><button class="btn sm" data-act="city-upgrade" ${up.ok ? '' : 'disabled'}>升为${up.name}</button></div>`;
       const missing = up.needs.filter(([met]) => !met);
+      h += `<div class="row"><span class="grow">${up.queued ? '升等已入营造队列' : `升为${up.name}需工 ${up.cost}`}</span><button class="btn sm" data-act="city-upgrade" ${disabledBecause(up.queued ? '升等已在营造之中' : missing.length ? '尚缺升等条件' : '')}>升为${up.name}</button></div>`;
       if (missing.length && !up.queued) h += '<ul class="note city-upgrade-needs">' + missing.map(([, text]) => `<li>须${text}</li>`).join('') + '</ul>';
     }
     if (c.tier === 0) return h + '<div class="note">升为州后，方可择定一业。</div>';
     h += `<div class="row"><span class="grow">定位 ${role?.name || '未定'}${pending ? ` <span class="chip red">改制中</span><br><span class="note">再历 ${pending.toFixed(2)} 季施行</span>` : role ? `<br><span class="note">${role.desc}</span>` : ''}</span>
-      <button class="btn sm" data-act="city-role-menu" ${wait || (role && GAME.fac(c.f).gold < DATA.CITY_ROLE_CHANGE.gold) ? 'disabled' : ''}>${role ? '改定位' : '选定位'}</button></div>`;
+      <button class="btn sm" data-act="city-role-menu" ${disabledBecause(wait ? `尚须 ${wait.toFixed(2)} 季方可再改` : role ? fundsShortfall(GAME.fac(c.f).gold, DATA.CITY_ROLE_CHANGE.gold) : '')}>${role ? '改定位' : '选定位'}</button></div>`;
     if (wait) h += `<div class="note">尚须 ${wait.toFixed(2)} 季方可再改。</div>`;
     else if (role) h += `<div class="note">改定位需钱 ${DATA.CITY_ROLE_CHANGE.gold} 贯。</div>`;
     return h;
@@ -1199,7 +1189,7 @@ var UI = (function () {
     const change = DATA.CITY_ROLE_CHANGE;
     const terms = c.role ? `改制费钱 ${change.gold} 贯，满 ${change.delay} 季施行，${change.cooldown} 季后方可再改。` : '初定免钱，即日施行。';
     openModal(`<h1>${esc(c.name)} · 择业</h1><p class="note">${terms}</p><div class="choices">${Object.entries(DATA.CITY_ROLES).map(([id, role]) =>
-      `<button class="choice" data-act="city-role" data-arg="${id}" ${c.role === id ? 'disabled' : ''}>${role.name}<small>${role.desc}</small></button>`).join('')}</div>`, { width: '560px' });
+      `<button class="choice" data-act="city-role" data-arg="${id}" ${disabledBecause(c.role === id ? '本城已行此业' : '')}>${role.name}<small>${role.desc}</small></button>`).join('')}</div>`, { width: '560px', sheet: true });
   }
   function cityHTML(c) {
     const y = GAME.cityYield(c), tg = GAME.loyaltyTarget(c), g = GAME.gen(c.governor);
@@ -1214,7 +1204,7 @@ var UI = (function () {
       <div class="tabs">${tabs.map(([k, n]) => `<button data-act="ctab" data-arg="${k}" class="${cityTab === k ? 'on' : ''}">${n}</button>`).join('')}</div>`;
     if (cityTab === 'gov') {
       h += cityDevelopment(c);
-      h += `<div class="sec">营造队列 ${c.queue.length ? `<span class="r"><button class="btn sm" data-act="hurry" ${GAME.fac(P()).gold < GAME.hurryCost(c) ? 'disabled' : ''}>加急 ${GAME.hurryCost(c)} 贯</button></span>` : ''}</div>`;
+      h += `<div class="sec">营造队列 ${c.queue.length ? `<span class="r"><button class="btn sm" data-act="hurry" ${disabledBecause(fundsShortfall(GAME.fac(P()).gold, GAME.hurryCost(c)))}>加急 ${GAME.hurryCost(c)} 贯</button></span>` : ''}</div>`;
       let rounds = 0;
       h += c.queue.length ? c.queue.map((q, k) => {
         const work = Math.max(0, q.cost - q.prog);
@@ -1227,8 +1217,8 @@ var UI = (function () {
         const rOk = GAME.reliefReady(c), mOk = GAME.migrateOk(c);
         const mWhy = c.cap ? '都城不须' : c.pop >= Math.min(12, tier.pop) ? '户口已足' : '两年一次';
         h += `<div class="sec">安民</div><div class="btns">
-          <button class="btn sm" data-act="relief" ${rOk && gold >= rk ? '' : 'disabled'} title="民心 +15，民变之势 −15；一年一次">赈济 ${rk} 贯${rOk ? '' : '（一年一次）'}</button>
-          <button class="btn sm" data-act="migrate" ${mOk && gold >= mk ? '' : 'disabled'} title="户口 +1 万；户口十二万以下、非都城，两年一次">移民实边 ${mk} 贯${mOk ? '' : '（' + mWhy + '）'}</button></div>`;
+          <button class="btn sm" data-act="relief" ${disabledBecause(rOk ? fundsShortfall(gold, rk) : '一年内已赈济')} title="民心 +15，民变之势 −15；一年一次">赈济 ${rk} 贯${rOk ? '' : '（一年一次）'}</button>
+          <button class="btn sm" data-act="migrate" ${disabledBecause(mOk ? fundsShortfall(gold, mk) : mWhy)} title="户口 +1 万；户口十二万以下、非都城，两年一次">移民实边 ${mk} 贯${mOk ? '' : '（' + mWhy + '）'}</button></div>`;
       }
       h += `<div class="sec">知州</div>`;
       h += g ? `<div class="row">${PORTRAIT.img(g, 34)}<span class="grow">${esc(g.name)}　政 ${g.zheng}${g.skill ? ' <span class=skill>' + g.skill + '</span>' : ''}</span>
@@ -1252,14 +1242,14 @@ var UI = (function () {
       }
       for (const id of works) {
         const work = DATA.GREAT_WORKS[id], seasons = Math.max(1, Math.ceil(GAME.workCost(c, id) / Math.max(1, y.prod)));
-        h += `<div class="row"><span class="grow"><b>${work.name}</b><br><span class="note">${work.desc} · 约 ${seasons} 季</span></span><button class="btn sm" data-act="great-work" data-arg="${id}" ${GAME.fac(P()).gold < work.gold ? 'disabled' : ''}>修造 ${work.gold} 贯</button></div>`;
+        h += `<div class="row"><span class="grow"><b>${work.name}</b><br><span class="note">${work.desc} · 约 ${seasons} 季</span></span><button class="btn sm" data-act="great-work" data-arg="${id}" ${disabledBecause(fundsShortfall(GAME.fac(P()).gold, work.gold))}>修造 ${work.gold} 贯</button></div>`;
       }
     } else if (cityTab === 'mil') {
       const cap = c.garrison.length;
       const gcap = GAME.garrisonCap(c);
       h += `<div class="sec">守军（${cap}/${gcap} 营）${cap > gcap ? '<span class="neg">超编，可遣散</span>' : ''}</div>`;
       const picked = selectedUnits(c).length;
-      const actions = `<button class="btn sm red" data-act="form">组建军团${picked ? '（' + picked + '）' : ''}</button><button class="btn sm" data-act="dismiss-garrison" ${picked ? '' : 'disabled'}>遣散所选</button>`;
+      const actions = `<button class="btn sm red" data-act="form">组建军团${picked ? '（' + picked + '）' : ''}</button><button class="btn sm" data-act="dismiss-garrison" ${disabledBecause(picked ? '' : '须先择营')}>遣散所选</button>`;
       h += unitPanel(c, actions);
       if (cap) h += `<div class="note">点选守军营后组建军团（不选则全选）。围城时守军停补，平时每季休整 +${DATA.UNIT_RECOVERY.garrison}，耗用丁口。</div>`;
       const a = GAME.armyAt(c.tile);
@@ -1278,11 +1268,11 @@ var UI = (function () {
       else if (!slots) h += '<div class="note">需建<b>市舶司</b>方可开辟海贸航线。</div>';
       else {
         h += `<div class="sec">航线 ${Math.min(c.trade.length, slots)}/${slots}</div>`;
-        h += c.trade.map((t, i) => { const b = GAME.city(t); return `<div class="row">${facSeal(b.f)}<span class="grow">${b.name}（${facName(b.f)}）</span><span class="cost">${i < slots ? '+' + GAME.routeValue(c, b) + ' 贯' : '暂歇'}</span><button class="btn sm" data-act="cutroute" data-arg="${t}">罢</button></div>`; }).join('') || '<div class="note">尚无航线。</div>';
+        h += c.trade.map((t, i) => { const b = GAME.city(t); return `<div class="row">${facSeal(b.f)}<span class="grow">${b.name}（${facName(b.f)}）</span><span class="cost">${i < slots ? '+' + fmtAmount(GAME.routeValue(c, b)) + ' 贯' : '暂歇'}</span><button class="btn sm" data-act="cutroute" data-arg="${t}">罢</button></div>`; }).join('') || '<div class="note">尚无航线。</div>';
         if (c.trade.length < slots) {
           const tg2 = GAME.routeTargets(c).slice(0, 10);
           h += `<div class="sec">可通商之港</div>`;
-          h += tg2.map(b => `<div class="row click" data-act="route" data-arg="${b.id}">${facSeal(b.f)}<span class="grow">${b.name}（${facName(b.f)}）<br><span class="note">相距 ${GEO.dist(c.tile, b.tile)} 程</span></span><span class="cost">+${GAME.routeValue(c, b)} 贯/季</span></div>`).join('') || '<div class="note">无可达之港（需同一海域、已结识且不在交战；未习远洋则不过 48 程）。</div>';
+          h += tg2.map(b => `<div class="row click" data-act="route" data-arg="${b.id}">${facSeal(b.f)}<span class="grow">${b.name}（${facName(b.f)}）<br><span class="note">相距 ${GEO.dist(c.tile, b.tile)} 程</span></span><span class="cost">+${fmtAmount(GAME.routeValue(c, b))} 贯/季</span></div>`).join('') || '<div class="note">无可达之港（需同一海域、已结识且不在交战；未习远洋则不过 48 程）。</div>';
         }
       }
       const inb = S().cities.filter(o => o.trade.includes(c.id) && o.trade.indexOf(c.id) < GAME.tradeSlots(o));
@@ -1300,7 +1290,7 @@ var UI = (function () {
   }
   function genBlock(g, f) {
     if (!g) return `<div class="row"><span class="gseal" style="background:#777">军</span><span class="grow">偏师（无主将）<br><span class="note">统兵上限 4 营，战力 -10%</span></span></div>`;
-    return `<div class="row card-link" data-act="genview" data-arg="${g.id}">${PORTRAIT.img(g, 64, 'alt=""')}<div class="grow"><button class="record-link" type="button"><b>${esc(g.name)}</b></button>${g.hist ? ' <span class="chip">史</span>' : ''}${GAME.versatile(g) ? ' <span class="chip">文武兼资</span>' : ''} <span class="note">${S().year - g.birth}岁</span><br>
+    return `<div class="row card-link" data-act="genview" data-arg="${g.id}">${PORTRAIT.img(g, 64, 'alt=""')}<div class="grow"><button class="record-link" type="button"><b>${esc(g.name)}</b></button>${g.hist ? ' <span class="chip red">史</span>' : ''}${GAME.versatile(g) ? ' <span class="chip">文武兼资</span>' : ''} <span class="note">${S().year - g.birth}岁</span><br>
       <span class="gstats">统<b>${g.tong}</b> 武<b>${g.wu}</b> 智<b>${g.zhi}</b> 政<b>${g.zheng}</b></span>
       <div style="display:flex;align-items:center;gap:6px;font-size:12px">${GAME.cnNum(g.lv || 1)}级<div class="grow" style="flex:1">${meter((g.exp || 0) - 0, GAME.nextLv(g), 'gold')}</div><span class="cost">${Math.round(g.exp || 0)}/${GAME.nextLv(g)}</span></div>
       ${GAME.skillList(g).map(k => `<span class="skill" title="${esc(DATA.SKILLS[k] || '')}">【${esc(k)}】</span>`).join('')}${(g.items || []).map(i => `<span class="chip" title="${esc(DATA.ITEMS[i].desc)}">${esc(DATA.ITEMS[i].name)}</span>`).join(' ')}</div></div>`;
@@ -1317,6 +1307,7 @@ var UI = (function () {
     const fortHint = '驻守满一回合，守方战力 +10%；在本国城中，士气恢复 +50%。';
     const dismissal = GAME.dismissalReason(a);
     const training = GAME.trainingArmy(a);
+    const trainingLock = disabledBecause(training ? '有营换装，须驻原城' : '');
     const locked = dismissal ? `disabled title="${esc(dismissal)}"` : '';
     const cap = GAME.armyCap(a), over = a.units.length > cap;
     let h = `<div class="ph"><div><h2>${esc(GAME.armyName(a))}</h2><div class="sub">${over ? `<span class="neg">超编 ${a.units.length}/${cap}，不可再并</span>` : `${a.units.length}/${cap} 营`} · ${fmt(GAME.sumStr(a.units))} 人${inOwn ? ' · 驻' + c.name : ''}</div></div><button class="x" data-act="desel">×</button></div>`;
@@ -1325,7 +1316,7 @@ var UI = (function () {
     if (deputy) h += `<div class="sec">${GAME.civil(deputy) ? '参军' : '副将'}</div>` + genBlock(deputy, a.f);
     if (GAME.weakCommand(GAME.gen(a.gen)) < 1) h += '<p class="neg">主将不知兵 · 统兵限三营，士气复振减半。</p>';
     h += `<div class="row"><span>士气 ${Math.round(a.morale)}</span><div class="grow">${meter(a.morale, GAME.moraleCap(a.f), a.morale < 40 ? 'red' : '')}</div><span class="cost">行军力 ${Math.round(a.mp * 10) / 10}/${Math.round(GAME.armyMP(a) * 10) / 10}</span></div>`;
-    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode" ${training ? 'disabled' : ''}>行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${a.mp > 0 ? '' : 'disabled'}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${GAME.rewardReady(a) && GAME.fac(P()).gold >= GAME.rewardCost(a) ? '' : 'disabled'} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${a.gen != null ? '<button class="btn" data-act="deputy-pick">副将</button>' : ''}${inOwn ? `<button class="btn" data-act="disband" ${training ? 'disabled' : ''} title="诸营并入守军，每营每季军饷编内 0.8 贯、超编 1.6 贯">解散入城</button>` : ''}<button class="btn" data-act="dismiss-army" ${training ? 'disabled' : locked}>遣散全军</button></div>`;
+    h += `<div class="btns"><button class="btn ${moveMode ? 'red' : ''}" data-act="movemode" ${trainingLock}>行军${kb('M')}</button>${a.path && a.path.length ? `<button class="btn red" data-act="cont" ${disabledBecause(a.mp > 0 ? '' : '本回合行军力已尽')}>继续行军${kb('C')}</button><button class="btn" data-act="stop">取消路线</button>` : ''}<button class="btn" data-act="sentry" aria-pressed="${!!a.sentry}" title="${fortHint}">驻守（筑垒）${kb('␣')}</button><button class="btn" data-act="reward" ${disabledBecause(GAME.rewardReady(a) ? fundsShortfall(GAME.fac(P()).gold, GAME.rewardCost(a)) : '两季内已犒军')} title="士气 +30，主将经验 +15；两季一次">犒军 ${GAME.rewardCost(a)} 贯</button><button class="btn" data-act="genpick">${a.gen != null ? '换将' : '任将'}</button>${a.gen != null ? '<button class="btn" data-act="deputy-pick">副将</button>' : ''}${inOwn ? `<button class="btn" data-act="disband" ${trainingLock} title="诸营并入守军，每营每季军饷编内 0.8 贯、超编 1.6 贯">解散入城</button>` : ''}<button class="btn" data-act="dismiss-army" ${trainingLock || locked}>遣散全军</button></div>`;
     if (inOwn && a.f === 'song') h += eliteCard(a);
     if (training) h += '<p class="neg">有营换装，军团须驻原城。换装可在城池营造队列撤销。</p>';
     h += `<p class="note">${a.fortT != null ? (GAME.fortified(a) ? '已筑垒。' : '筑垒中。') : ''}${fortHint}</p>`;
@@ -1479,6 +1470,7 @@ var UI = (function () {
         if (a?.f === P() && GAME.rewardArmy(a.id)) { refreshSide(); refreshTop(); }
         else toast(a?.f !== P() ? '此军不在册' : !GAME.rewardReady(a) ? '近两季已犒此军' : '府库不足，暂不可犒军');
         break;
+      case 'donate-open': showDonation(); break;
       case 'donate': { const d = GAME.donateInfo(P()); const n = arg === 'all' ? d.left : Math.ceil(d.cap / 4); const got = GAME.donate(P(), n); if (!got) toast('本季已捐满或国库不足'); showTech(); refreshTop(); break; }
       case 'govpick':
         if (c?.f !== P()) { toast('此城不可任命知州'); break; }
@@ -1561,6 +1553,7 @@ var UI = (function () {
       case 'contall': continueAll(); break;
       case 'contall-panel': closeModal(); continueAll(); break;
       case 'nextidle': nextIdle(); break;
+      case 'nextrouted': nextIdle(true); break;
       case 'sentry': if (a?.f === P()) sentryOrder(a); else toast('此军不可下令驻守'); break;
       case 'genpick':
         if (a?.f !== P()) { toast('此军已不可任将'); break; }
@@ -1674,14 +1667,62 @@ var UI = (function () {
 
   // ---------- 弹窗 ----------
   let modalLocked = false, modalOnClose = null;
-  function openModal(html, opts) {
-    opts = opts || {};
-    if ($('modal-bg').classList.contains('hidden')) AUDIO.play('paper');
+  function fundsShortfall(gold, cost) {
+    return gold < cost ? `府库不足，尚缺 ${fmtAmount(Math.ceil(cost - gold))} 贯` : '';
+  }
+  function disabledBecause(reason) {
+    return reason ? `disabled data-disabled-reason="${esc(reason)}"` : '';
+  }
+  let disabledReasonId = 0;
+  function showDisabledReasons(root) {
+    for (const button of root.querySelectorAll('button:disabled:not([aria-describedby])')) {
+      const reason = document.createElement('small');
+      reason.className = 'disabled-reason';
+      reason.id = 'disabled-reason-' + ++disabledReasonId;
+      reason.textContent = button.dataset.disabledReason || button.title || '此项暂不可行';
+      button.setAttribute('aria-describedby', reason.id);
+      const field = document.createElement('span');
+      field.className = 'disabled-field';
+      button.replaceWith(field);
+      field.append(button, reason);
+    }
+  }
+  function openModal(html, opts = {}) {
+    const bg = $('modal-bg'), modal = $('modal');
+    if (bg.classList.contains('hidden')) AUDIO.play('paper');
     modalLocked = !!opts.lock; modalOnClose = opts.onClose || null;
-    const modal = $('modal');
     modal.onclick = null;
-    modal.innerHTML = (opts.lock ? '' : '<button class="mclose" data-act="mclose" aria-label="关闭">×</button>') + '<div class="modal-content">' + html + '</div><div class="modal-corners" aria-hidden="true"></div>';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    bg.classList.toggle('modal-sheet', !!opts.sheet);
+    modal.innerHTML = `<header class="modal-heading">
+      ${opts.sheet ? '<span class="sheet-handle" aria-hidden="true"></span>' : '<span class="heading-corner" data-decoration aria-hidden="true"></span>'}
+      ${opts.lock ? '' : '<button type="button" class="mclose" data-act="mclose" aria-label="关闭">×</button>'}</header>
+      <div class="modal-content">${html}</div>${opts.footer ? '<footer class="modal-footer">' + opts.footer + '</footer>' : ''}`;
+    const heading = modal.querySelector('.modal-heading');
+    const title = modal.querySelector('.modal-content > h1');
+    if (title) {
+      title.id = 'modal-title';
+      heading.append(title);
+      modal.setAttribute('aria-labelledby', title.id);
+      modal.removeAttribute('aria-label');
+    } else {
+      heading.classList.add('titleless');
+      modal.removeAttribute('aria-labelledby');
+      modal.setAttribute('aria-label', '结算');
+    }
+    const handle = heading.querySelector('.sheet-handle');
+    if (handle && !modalLocked) {
+      let start;
+      handle.onpointerdown = e => { start = e.clientY; handle.setPointerCapture(e.pointerId); };
+      handle.onpointercancel = () => { start = undefined; };
+      handle.onpointerup = e => {
+        if (start !== undefined && e.clientY - start >= 56) closeModal();
+        start = undefined;
+      };
+    }
     layoutText(modal);
+    showDisabledReasons(modal);
     for (const table of modal.querySelectorAll('table.t')) {
       const scroll = document.createElement('div');
       scroll.className = 'table-scroll';
@@ -1691,7 +1732,7 @@ var UI = (function () {
     modal.style.width = opts.width || '';
     $('modal-bg').classList.remove('hidden');
   }
-  const modalScroller = panel => phone.matches ? panel.closest('.modal-content') : panel;
+  const modalScroller = panel => panel.closest('.modal-content');
   function closeModal() {
     if (!$('modal-bg').classList.contains('hidden')) AUDIO.play('paper');
     $('modal-bg').classList.add('hidden'); $('modal').innerHTML = '';
@@ -1700,7 +1741,9 @@ var UI = (function () {
     else setTimeout(processPending, 10);
   }
   function confirmBox(text, yes, cancel) {
-    openModal(`<h1>请旨</h1><div class="story">${esc(text)}</div><div class="choices"><button class="choice" id="cy">准奏</button><button class="choice" id="cn">作罢</button></div>`, { width: '520px', onClose: cancel });
+    const actions = '<button class="btn" id="cn">作罢</button><button class="btn red" id="cy">准奏</button>';
+    openModal(`<h1>请旨</h1><div class="story">${esc(text)}</div>`,
+      { width: '520px', sheet: true, footer: actions, onClose: cancel });
     $('cy').onclick = () => { modalOnClose = null; closeModal(); yes(); }; $('cn').onclick = closeModal;
   }
   function pickGeneral(title, filter, sortKey, cb, allowNone) {
@@ -1756,7 +1799,6 @@ var UI = (function () {
   function showTech() {
     const F = GAME.fac(P());
     const av = new Set(GAME.availableTechs(P()));
-    const dn = GAME.donateInfo(P());
     const eras = (DATA.ERAS || ['', '中兴', '开海', '万国']).slice(1);
     const techs = Object.entries(TECH).map(([id, t]) => ({ id, t, known: !!F.techs[id], can: av.has(id), cur: F.research === id }));
     techs.sort((a, b) => a.t.cost - b.t.cost);
@@ -1790,19 +1832,26 @@ var UI = (function () {
       }).join('')}`;
     const research = TECH[F.research];
     const needed = research ? GAME.techCost(P(), F.research) : 0;
-    const donations = `<div class="tech-donation-body"><p class="note">每 ${dn.rate} 贯折文教 1，本季尚可助文教 ${dn.left}。</p>
-      <div class="tech-donations"><button type="button" class="btn sm" data-act="donate" data-arg="part" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>捐 ${Math.min(dn.left, Math.ceil(dn.cap / 4)) * dn.rate} 贯</button>
-      <button type="button" class="btn sm" data-act="donate" data-arg="all" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>尽捐 ${dn.cost} 贯</button></div></div>`;
-    const overview = phone.matches ? `<section class="research-summary"><div class="ledger-head"><strong>${research ? esc(research.name) : '尚未择学'}</strong>
-      ${research ? `<span class="ledger-state">研习中</span>` : ''}</div>
-      <div class="ledger-meta"><span>每季文教 ${F.income.sci || 0}</span><span>已积 ${Math.round(F.sci)}${research ? ' / ' + needed : ''}</span></div>
+    const overview = `<section class="research-summary"><div class="ledger-head"><strong>${research ? esc(research.name) : '尚未择学'}</strong>
+      ${research ? '<span class="chip">研习中</span>' : ''}</div>
+      <div class="ledger-meta"><span>每季文教 ${fmtAmount(F.income.sci)}</span><span>已积 ${Math.round(F.sci)}${research ? ' / ' + needed : ''}</span></div>
       ${research ? meter(F.sci, needed, 'gold') : ''}</section>
-      <details class="ledger-fold tech-donate"><summary>捐资助学</summary>${donations}</details>` :
-      `<div class="note tech-intro">每季文教 ${F.income.sci || 0}　已积 ${Math.round(F.sci)}</div><div class="note tech-intro"><b>捐资助学</b>${donations}</div>`;
+      <button type="button" class="btn text-action" data-act="donate-open">捐资助学</button>`;
     const h = `<h1>格物致知</h1><div class="tech-panel ${phone.matches ? 'ledger tech-ledger' : ''}">${overview}
       ${filterTabs('techfilter', '科技筛选', [['all', '全部'], ['available', '只看可研'], ['known', '只看已学']], filter)}
       <div class="scroll tech-tree">${phone.matches ? TECH_BRANCHES.map(mobileBranch).join('') : desktopTree()}</div></div>`;
     openModal(h, { width: '1040px' });
+  }
+
+  function showDonation() {
+    const dn = GAME.donateInfo(P()), F = GAME.fac(P());
+    const reason = dn.left ? fundsShortfall(F.gold, dn.rate) : '本季已足捐资之限。';
+    const affordable = Math.floor(Math.max(0, F.gold) / dn.rate) * dn.rate;
+    const part = Math.min(dn.left * dn.rate, Math.ceil(dn.cap / 4) * dn.rate, affordable);
+    openModal(`<h1>捐资助学</h1><p class="note">每 ${dn.rate} 贯折文教 1，本季尚可助文教 ${dn.left}。</p>
+      <div class="tech-donations"><button type="button" class="btn" data-act="donate" data-arg="part" ${disabledBecause(reason)}>捐 ${part || dn.rate} 贯</button>
+      <button type="button" class="btn red" data-act="donate" data-arg="all" ${disabledBecause(reason)}>尽捐 ${Math.min(dn.cost, affordable) || dn.rate} 贯</button></div>`,
+      { width: '520px', sheet: true, onClose: showTech });
   }
 
   const GEN_STATUSES = [['idle', '候命'], ['army', '统军'], ['gov', '知州'], ['court', '朝臣']];
@@ -1847,7 +1896,7 @@ var UI = (function () {
     return `<b>${esc(g.name)}</b>${generalBadges(g)}`;
   }
   function generalBadges(g) {
-    return `${g.hist ? ' <span class="chip">史</span>' : ''}${GAME.versatile(g) ? ' <span class="chip">文武兼资</span>' : ''}${g.wound > 0 ? ` <span class="chip red" title="余 ${+(g.wound).toFixed(2)} 季，养伤期间不可领兵">负伤</span>` : ''}${g.custom ? ' <span class="chip">自创</span>' : ''}`;
+    return `${g.hist ? ' <span class="chip red">史</span>' : ''}${GAME.versatile(g) ? ' <span class="chip">文武兼资</span>' : ''}${g.wound > 0 ? ` <span class="chip red" title="余 ${+(g.wound).toFixed(2)} 季，养伤期间不可领兵">负伤</span>` : ''}${g.custom ? ' <span class="chip">自创</span>' : ''}`;
   }
   function generalTags(g) {
     return GAME.skillList(g).map(k => `<span class="skill" title="${esc(DATA.SKILLS[k] || '')}">${esc(k)}</span>`).join(' ') +
@@ -1879,7 +1928,7 @@ var UI = (function () {
     if (readOnly || g.f !== P() || !GEN_STATUSES.some(([status]) => status === g.status)) return '';
     const rank = detail ? COURT.rankTerms(g) : null;
     return button('reward', '赏', 'aria-label="赏赐 50 贯" title="赏赐 50 贯，忠诚 +12"') +
-      (rank ? button('rank', '封爵', `title="${rank.requirements}" ${rank.reason ? 'disabled' : ''}`) : '') +
+      (rank ? button('rank', '封爵', `title="${rank.requirements}" ${disabledBecause(rank.reason)}`) : '') +
       (g.status === 'idle' ? button('gov', '任知州') + (detail ? button('assign', '任将', g.wound > 0 ? 'disabled title="负伤期间不可领兵"' : '') : '') : button('recall', '召回')) +
       (generalLocation(g) ? button('find', '寻') : '');
   }
@@ -1964,9 +2013,9 @@ var UI = (function () {
     genPage = Math.min(genPage, pages - 1);
     const cards = pages > 1 ? roster.slice(genPage * GEN_PAGE_SIZE, (genPage + 1) * GEN_PAGE_SIZE) : roster;
     const pager = pages > 1 ? `<nav class="btns" aria-label="百官分页">
-      <button type="button" class="btn sm" data-g-page="${genPage - 1}" ${genPage === 0 ? 'disabled' : ''}>上一页</button>
+      <button type="button" class="btn sm" data-g-page="${genPage - 1}" ${disabledBecause(genPage === 0 ? '已在卷首' : '')}>上一页</button>
       <span class="note">${genPage + 1} / ${pages}</span>
-      <button type="button" class="btn sm" data-g-page="${genPage + 1}" ${genPage === pages - 1 ? 'disabled' : ''}>下一页</button>
+      <button type="button" class="btn sm" data-g-page="${genPage + 1}" ${disabledBecause(genPage === pages - 1 ? '已在卷末' : '')}>下一页</button>
     </nav>` : '';
     const filters = [['all', '全部 ' + mine.length], ...GEN_STATUSES.map(([id, title]) => [id, title + ' ' + mine.filter(g => g.status === id).length])];
     const sortHead = (key, label) => `<th aria-sort="${genSort === key ? (genDir < 0 ? 'descending' : 'ascending') : 'none'}">${sortControl(key, label)}</th>`;
@@ -2048,7 +2097,7 @@ var UI = (function () {
           <form class="vault-grant" data-vault-grant="${id}">
             <select aria-label="择将受赐${esc(it.name)}" ${locked || !available ? 'disabled' : ''}>
               <option value="">择将受赐</option>${options}</select>
-            <button type="submit" class="btn sm" disabled>赐予</button>
+            <button type="submit" class="btn sm" ${disabledBecause(locked ? '此物已有归属' : '须先择将')}>赐予</button>
           </form>${locked || !available ? `<p class="note">${esc(locked || '暂无合宜人选。')}</p>` : ''}</article>`;
       }).join('')}</section>`;
     }).join('');
@@ -2076,7 +2125,7 @@ var UI = (function () {
       const rows = items.map(id => {
         const it = DATA.ITEMS[id], locked = GAME.itemMoveReason(id);
         return `<div class="equipped-item"><span>${esc(it.name)} <small class="note">${esc(it.desc)}</small></span>
-          ${canRecover ? `<button type="button" class="btn sm" data-recover-item="${id}" ${locked ? 'disabled' : ''}>收归府库</button>` : ''}</div>
+          ${canRecover ? `<button type="button" class="btn sm" data-recover-item="${id}" ${disabledBecause(locked ? '此物尚不可收回' : '')}>收归府库</button>` : ''}</div>
           ${canRecover && locked ? `<small class="note">${esc(locked)}</small>` : ''}`;
       }).join('');
       return `<div class="general-term" data-item-slot="${slot}"><b>${title}</b>${rows || ' · 无'}</div>`;
@@ -2113,7 +2162,7 @@ var UI = (function () {
       <div class="sec">战绩</div><div class="chips"><span class="chip">胜 ${g.wins || 0} 阵</span>
         ${g.rank || rank ? `<span class="chip">爵位 ${DATA.RANKS[g.rank || 0].name}</span>` : ''}
         ${service ? `<span class="chip">本纪 · 胜 ${service.wins || 0} / 败 ${service.losses || 0}</span>` : ''}</div>
-      ${rank ? `<p class="note">晋${rank.name}${rank.reason === '郡王二席已满。' ? ' · ' + rank.reason : ' · ' + rank.requirements}</p>` : ''}
+      ${rank ? `<p class="note">晋${rank.name} · ${rank.requirements}</p>` : ''}
       <p class="note">史臣曰，${esc(EVENTS.generalBio(g))}。</p>
       <div class="record-actions"><button class="btn" type="button" data-general-back>返回</button>${buttons}</div></div>`, { width: '640px' });
     $('modal').onclick = e => {
@@ -2241,7 +2290,7 @@ var UI = (function () {
   function showBribe(f, redraw, finish) {
     const officers = S().generals.filter(g => g.f === f).map(g => ({ g, terms: GAME.bribeTerms(g.id) })).filter(row => row.terms.cost != null)
       .sort((a, b) => b.terms.chance - a.terms.chance);
-    const choices = officers.map(({ g, terms }) => `<button class="choice" data-bribe="${g.id}" ${terms.ok ? '' : 'disabled'}>${esc(g.name)}
+    const choices = officers.map(({ g, terms }) => `<button class="choice" data-bribe="${g.id}" ${disabledBecause(terms.ok ? '' : fundsShortfall(GAME.fac(P()).gold, terms.cost) || terms.msg)}>${esc(g.name)}
       <small>忠诚 ${Math.round(g.loyalty)} · 费钱 ${terms.cost} 贯 · 事成约 ${Math.round(terms.chance * 100)}%${terms.ok ? '' : ' · ' + esc(terms.msg)}</small></button>`).join('');
     openModal(`<h1>收买敌将</h1><div class="scroll" style="max-height:60vh">${choices ? '<div class="choices">' + choices + '</div>' : '<p class="note">该国暂无忠诚不足五十的在任将领。</p>'}</div>`, { width: '540px', onClose: redraw });
     $('modal').onclick = e => {
@@ -2407,7 +2456,7 @@ var UI = (function () {
     const list = arr => arr.map(([g, w]) => `<button type="button" class="vm record-link" data-v-gen="${g.id}" title="${COURT.STANCE_NAME[g.stance]} · 忠诚 ${Math.round(g.loyalty)}">${PORTRAIT.img(g, 26, 'alt=""')}${esc(g.name)}${w > 1 ? '<sup>' + w + '</sup>' : ''}</button>`).join('') || '<span class="note">无</span>';
     const tot = res.sw + res.ow || 1;
     const subj = motion === 'war' ? `向【${facName(f)}】宣战` : `与【${facName(f)}】议和`;
-    let h = `<h1>廷　议</h1><div class="story" style="text-align:center;padding-bottom:4px">议题：<b>${subj}</b>${extra ? '<br><span class="note">' + extra + '</span>' : ''}</div>
+    let h = `<h1>廷议</h1><div class="story" style="text-align:center;padding-bottom:4px">议题：<b>${subj}</b>${extra ? '<br><span class="note">' + extra + '</span>' : ''}</div>
       <div class="vote-bar"><i style="width:${res.sw / tot * 100}%"></i></div>
       <div style="display:flex;justify-content:space-between;font-size:14px;margin:2px 0 10px"><span class="pos">赞成 ${res.sw}</span><span>时议偏向${res.empSide === 'war' ? '主战' : '主和'}（${res.ew} 票）</span><span class="neg">反对 ${res.ow}</span></div>
       <div class="sec">赞成</div><div class="vlist">${list(res.sup)}</div>
@@ -2439,25 +2488,30 @@ var UI = (function () {
     const fake = { id: 900000 + emp.birth, name: emp.name, f: P(), birth: emp.birth, art: emp.art, tong: 40, wu: 30, zhi: 70, zheng: 75, cul: 'han' };
     const mem = COURT.members().map(x => x[0]);
     const cnt = k => mem.filter(g => g.stance === k).length;
+    const officeEffects = {
+      zaixiang: '钱', shumi: '募兵工耗', sansi: '粮、钱', hanlin: '文教', yushi: '忠诚',
+      dianqian: '京城城防', gongbu: '营造工耗', shibo: '海贸', taiyi: '调养',
+    };
+    const occupied = COURT.OFFICES.filter(o => COURT.holder(o.id)).length;
     const offices = COURT.OFFICES.map(o => {
       const g = COURT.holder(o.id);
       const pct = Math.round(COURT.bonus(o.id) * 100);
       const score = o.stat === 'trade' ? '智政均值' : GAME.STAT_NAME[o.stat];
-      const effect = o.id === 'gongbu' ? `工耗 −${pct}%` : o.id === 'shibo' ? `海贸 +${pct}%　航线 +1` : o.id === 'taiyi' ? `调养 +${pct}%` : `+${pct}%`;
+      const effect = `${officeEffects[o.id]} ${o.id === 'gongbu' || o.id === 'shumi' ? '−' : '+'}${pct}%`;
       const title = `<b>${o.name}</b>`;
       const holder = g ? `<button type="button" class="record-link" data-court-gen="${g.id}">${PORTRAIT.img(g, 32, 'alt=""')} ${esc(g.name)}</button>` : '<span class="note">虚位以待</span>';
-      const actions = `<button type="button" class="btn sm red" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? `<button type="button" class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}`;
+      const actions = `<button type="button" class="btn sm ${g ? '' : 'red'}" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? `<button type="button" class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}`;
       if (phone.matches) {
-        if (!g) return `<article class="ledger-entry office-vacant ledger-head">${title}
-          <span class="ledger-state">空缺</span>${actions}</article>`;
+        const post = `<span class="office-post"><span class="office-name">${title}${g ? `<span class="note">${esc(g.name)}</span>` : ''}</span>
+          <span class="note office-duty">${o.desc}</span></span>`;
+        if (!g) return `<article class="ledger-entry office-vacant">${post}${actions}</article>`;
         return `<details class="ledger-entry ledger-fold" ${openOffice === o.id ? 'open' : ''}>
-          <summary class="ledger-head" data-office="${o.id}"><span class="office-name">${title}<span class="ledger-meta">${esc(g.name)}</span></span>
-            <span class="court-effect">${effect}</span></summary>
-          <div class="ledger-detail"><p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}
-            <span class="ledger-meta">看${score} ${COURT.officeScore(o, g)} · ${stanceTag(g)} · 忠诚 ${Math.round(g.loyalty)}</span></div>
+          <summary data-office="${o.id}">${post}<span class="court-effect">${effect}</span></summary>
+          <div class="office-detail"><div class="office-holder">${holder}
+            <span class="note">${score} ${fmtAmount(COURT.officeScore(o, g))} · ${COURT.STANCE_NAME[g.stance] || '中立'} · 忠诚 ${Math.round(g.loyalty)}</span></div>
             <div class="ledger-actions">${actions}</div></div></details>`;
       }
-      return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${COURT.officeScore(o, g)}</span>` : ''}</div></td>
+      return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${fmtAmount(COURT.officeScore(o, g))}</span>` : ''}</div></td>
         <td>${g ? stanceTag(g) : ''}</td><td>${g ? Math.round(g.loyalty) : ''}</td><td>${g ? effect : ''}</td>
         <td class="record-actions-cell">${actions}</td></tr>`;
     }).join('');
@@ -2466,11 +2520,11 @@ var UI = (function () {
     const reign = COURT.reignNote(emp.title, emp.note);
     const stances = `<span class="neg">主战 ${cnt('war')}</span><span>中立 ${cnt('mid')}</span><span class="pos">主和 ${cnt('peace')}</span>`;
     const tip = '权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受时议、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。';
-    const portrait = PORTRAIT.img(fake, phone.matches ? 44 : 80, 'alt=""');
+    const portrait = PORTRAIT.img(fake, phone.matches ? 56 : 80, 'alt=""');
     const overview = phone.matches ? `<section class="reign-summary"><div class="ledger-head">${portrait}<div class="grow"><strong>${esc(emp.title)} ${esc(emp.name)}</strong>
-      <div class="ledger-meta"><span>权威 ${Math.round(C.auth)}</span><span>朝议 ${sgn(Math.round(C.lean))}</span></div></div></div>
-      <div class="ledger-meta court-stance-line">${stances}</div>
-      <details class="ledger-fold"><summary>时议与宗室</summary><p class="note">${esc(reign)}</p><p class="note">宗室可下嫁 ${C.clan.brides} 人</p><p class="note">${tip}</p></details></section>` :
+      <div class="ledger-meta"><span>权威 ${Math.round(C.auth)}</span><span>朝议 ${sgn(Math.round(C.lean))}</span></div>
+      <div class="ledger-meta court-stance-line">${stances}</div></div></div>
+      <details class="ledger-fold"><summary class="text-action">时议</summary><div class="reign-details"><p class="note">${esc(reign)}</p><p class="note">宗室可下嫁 ${C.clan.brides} 人</p><p class="note">${tip}</p></div></details></section>` :
       `<div class="court-top"><div class="court-emperor">${portrait}<h2>当今天子</h2>
         <div class="note">${esc(emp.title)} ${esc(emp.name)} · ${S().year - emp.birth}岁<br>时议：${esc(reign)}</div></div>
         <div class="court-stats">
@@ -2478,9 +2532,9 @@ var UI = (function () {
           <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
           <p class="note">${tip}</p><div class="chips court-stances">${stances}<span class="chip" title="每六季增一人，最多三人">宗室可下嫁 ${C.clan.brides} 人</span></div>
         </div></div>`;
-    const h = `<h1>朝　堂</h1><div class="scroll court-page ${phone.matches ? 'ledger' : ''}" style="max-height:74vh">${overview}
+    const h = `<h1>朝堂</h1><div class="scroll court-page ${phone.matches ? 'ledger' : ''}" style="max-height:74vh">${overview}
       ${regent ? `<div class="row">${PORTRAIT.img(regent, 56, 'alt=""')}<div><b>${esc(regent.title)} ${esc(regent.name)}</b><div class="note">${C.regency ? '垂帘听政' : '太后在朝'}</div></div></div>` : ''}
-      <div class="sec">百官</div>
+      <div class="sec office-section">百官 <span class="note">九职 · 在任 ${occupied} · 空缺 ${COURT.OFFICES.length - occupied}</span></div>
       ${phone.matches ? `<div class="office-list">${offices}</div>` :
         `<table class="t court-table"><tr><th>官职</th><th>职掌</th><th>现任</th><th>立场</th><th>忠诚</th><th>效果</th><th></th></tr>${offices}</table>`}
       <div class="sec">近日朝堂</div><div class="loglist court-log">${logs || '<div class="note">无事</div>'}</div></div>`;
@@ -2510,7 +2564,7 @@ var UI = (function () {
       ? row(label, `<button type="button" class="settings-switch" role="switch" aria-label="${label}" aria-checked="${SET[key]}" data-set="${key}" data-v="${!SET[key]}"><span>${SET[key] ? '显示' : '隐藏'}</span></button>`)
       : opt(key, !SET[key], (SET[key] ? '隐藏' : '显示') + label));
     const group = (title, contents) => `<section class="settings-group"><h2 class="ledger-heading">${title}</h2>${contents}</section>`;
-    const h = `<h1>设　置</h1><div class="settings-body ${phone.matches ? 'ledger' : ''}">
+    const h = `<h1>设置</h1><div class="settings-body ${phone.matches ? 'ledger' : ''}">
       ${group('战斗与回合', row('回合动画', [0, 1, 2].map(v => `<button type="button" class="btn sm ${animSpeed === v ? 'red' : ''}" aria-pressed="${animSpeed === v}" data-anim="${v}">${['关闭', '常速', '快速'][v]}</button>`).join('')) +
         row('敌军来犯', opt('defend', 'all', '逐战过问') + opt('defend', 'city', '仅守城时过问') + opt('defend', 'off', '皆交守将')) +
         row('敌方回合镜头', opt('follow', true, '跟随') + opt('follow', false, '不跟随')))}
@@ -2521,7 +2575,7 @@ var UI = (function () {
         row('新手引导', `<button class="btn sm" data-guide="1">${S()?.guide?.off ? '重新显示' : '隐藏'}</button>`))}
       ${group('声音', volume('master', '总音量') + volume('music', '音乐') + volume('effects', '音效') +
         row('静音', `<button type="button" class="btn sm" data-act="sound" data-sound-switch aria-label="静音" aria-pressed="${audio.muted}">${audio.muted ? '已静音' : '静音'}</button>`))}
-      ${group('终局', `<button class="btn" data-act="retire" ${S().settlement ? 'disabled' : ''}>禅位·盖棺定论</button>`)}
+      ${group('终局', `<button class="btn" data-act="retire" ${disabledBecause(S().settlement ? '此卷已封存' : '')}>禅位·盖棺定论</button>`)}
       <p class="note">设置保存在本浏览器中。</p>
       <section class="settings-about" aria-labelledby="about-title">
         <h2 id="about-title" class="sec">关于</h2>
@@ -2582,39 +2636,52 @@ var UI = (function () {
       GUIDE.map(([k, t]) => `<div class="row" style="padding:2px 4px">${g[k] ? '<span class="pos">已</span>' : '<span class="note">未</span>'}<span class="${g[k] ? 'note' : ''}">${t}</span></div>`).join('');
   }
   function showCities() {
-    const cs = GAME.citiesOf(P()).filter(c => cityFilter === 'all' || c.tier === +cityFilter)
+    const own = GAME.citiesOf(P());
+    const cities = own.filter(c => cityFilter === 'all' || c.tier === +cityFilter)
       .sort((a, b) => (citySort === 'tier' ? b.tier - a.tier : 0) || b.pop - a.pop);
-    const controls = (items, action, selected) => items.map(([value, label]) =>
-      `<button type="button" class="btn sm ${selected === value ? 'red' : ''}" data-act="${action}" data-arg="${value}" aria-pressed="${selected === value}">${label}</button>`).join('');
-    const tiers = controls([['all', '全境'], ...DATA.CITY_TIERS.map((tier, i) => [String(i), tier.name])], 'city-filter', cityFilter);
-    const orders = controls([['pop', '按户口排序'], ['tier', '按级别排序']], 'city-sort', citySort);
-    const delegation = '<button type="button" class="btn sm" data-act="delegate-all" data-arg="on">诸州委政</button><button type="button" class="btn sm" data-act="delegate-all" data-arg="off">诸州收回委政</button>';
-    const mobile = phone.matches;
-    const items = cs.map(c => {
-      const y = GAME.cityYield(c), q = c.queue[0], g = GAME.gen(c.governor);
-      const queue = q ? cityQueueName(c, q) : '营造空闲';
-      const food = sgn(y.food - y.foodNeed);
-      const loyalty = Math.round(c.loyalty);
-      if (mobile) return `<details class="ledger-entry ledger-fold" data-city-row="${c.id}">
-        <summary><span class="ledger-head"><span><strong>${esc(c.name)}</strong> <small class="city-tier">${GAME.cityTier(c).name}</small></span>
-          <span class="ledger-state ${c.delegated ? 'pos' : ''}">${c.delegated ? '已委政' : '未委政'}</span></span>
-          <span class="ledger-meta"><span>${queue}</span><span>${g ? '知州 ' + esc(g.name) : '知州空缺'}</span></span>
-          <span class="ledger-meta"><span>${c.pop} 万户</span><span class="${loyalty < 30 ? 'neg' : ''}">民心 ${loyalty}</span></span></summary>
-        <div class="ledger-detail"><p class="ledger-meta"><span>余粮 ${food}</span><span>工 ${y.prod}</span><span>钱 ${y.gold}</span><span>文 ${y.sci}</span><span>守军 ${c.garrison.length} 营</span></p>
-        <button type="button" class="btn sm" data-act="goto" data-arg="c:${c.id}">查看城池</button></div></details>`;
-      return `<tr class="click" data-act="goto" data-arg="c:${c.id}" style="cursor:pointer"><td><b>${cityTitle(c)}</b></td><td>${c.pop}</td>
-        <td class="${loyalty < 30 ? 'neg' : ''}">${loyalty}</td><td>${food}</td><td>${y.prod}</td><td>${y.gold}</td><td>${y.sci}</td><td>${c.garrison.length}</td>
-        <td>${q ? queue : '<span class=neg>空闲</span>'}</td><td>${g ? esc(g.name) : ''}</td><td>${c.delegated ? '已委' : '未委'}</td></tr>`;
-    }).join('');
+    const tiers = filterTabs('city-filter', '按级别筛选', [['all', '全境'],
+      ...DATA.CITY_TIERS.map((tier, i) => [String(i), tier.name])], cityFilter);
+    const orders = filterTabs('city-sort', '排序', [['pop', '按户口排序'], ['tier', '按级别排序']], citySort);
+    const delegation = '<button type="button" class="btn red" data-act="delegate-all" data-arg="on">诸州委政</button><button type="button" class="btn" data-act="delegate-all" data-arg="off">诸州收回委政</button>';
     const empty = '<p class="note">境内暂无此等城池。</p>';
-    const rows = mobile ? items || empty : `<table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>粮</th><th>工</th><th>钱</th><th>文</th><th>守军（营）</th><th>营造</th><th>知州</th><th>委政</th></tr>
-      ${items || '<tr><td colspan="11">' + empty + '</td></tr>'}</table>`;
-    openModal(`<h1>州府一览</h1><div class="city-overview ${mobile ? 'ledger' : ''}">
-      <div class="btns ledger-tabs" aria-label="按级别筛选">${tiers}</div>
-      ${mobile ? `<details class="ledger-fold ledger-tools"><summary>排序与委政 <small>${citySort === 'tier' ? '按级别' : '按户口'}</small></summary>
-        <div class="ledger-actions" aria-label="排序">${orders}</div><div class="ledger-actions" aria-label="批量委政">${delegation}</div></details>` :
-        `<div class="btns" aria-label="排序">${orders}</div><div class="btns">${delegation}</div>`}
-      <div class="scroll" style="max-height:60vh">${rows}</div></div>`, { width: '900px' });
+    let list;
+    if (phone.matches) {
+      const issue = c => {
+        if (GAME.enemyAdjacent(c.tile, P())) return { text: '敌军压境', rank: 0 };
+        if (c.loyalty < 45) return { text: `民心 ${Math.round(c.loyalty)} · 恐生民变`, rank: 1 };
+        if (!c.queue.length && c.governor == null && c.tier >= 2) {
+          return { text: '营造空闲 · 知州空缺', rank: 2 };
+        }
+        return null;
+      };
+      const pending = new Map(cities.map(c => [c, issue(c)]).filter(([, reason]) => reason));
+      const row = c => {
+        const tier = GAME.cityTier(c).name;
+        const status = c.delegated ? '委政' : c.governor == null ? '缺知州' : c.queue.length ? '营造中' : '闲';
+        const details = pending.get(c);
+        return `<button type="button" class="city-ledger-row ${details ? 'city-pending' : ''}" data-act="goto" data-arg="c:${c.id}" data-city-row="${c.id}" data-city-tier="${tier}">
+          <span class="city-imprint" aria-hidden="true">${esc(c.name[0])}</span><strong>${esc(c.name)}</strong>
+          ${details ? `<span class="city-issue">${details.text}</span>` : `<span class="city-status"><span class="city-tier chip">${tier}</span><span class="chip">${status}</span></span>`}
+          <span class="city-pop">${fmtAmount(c.pop)} 万</span><span class="city-next" aria-hidden="true"></span></button>`;
+      };
+      const needs = [...pending.keys()].sort((a, b) => pending.get(a).rank - pending.get(b).rank);
+      const normal = cities.filter(c => !pending.has(c)).map(row).join('');
+      list = `<div class="city-list-toolbar"><span class="note">${cities.length <= 99 ? GAME.cnNum(cities.length) : cities.length}城 · 待办 ${needs.length} · 委政 ${cities.filter(c => c.delegated).length}</span>
+        <details class="city-order"><summary class="text-action">排序 · ${citySort === 'tier' ? '级别' : '户口'}</summary>${orders}</details></div>
+        ${needs.length ? `<section class="city-tasks"><h2>待办</h2>${needs.map(row).join('')}</section>` : ''}
+        ${normal ? `<section class="city-other"><h2>诸城</h2>${normal}</section>` : ''}${cities.length ? '' : empty}`;
+    } else {
+      const rows = cities.map(c => {
+        const y = GAME.cityYield(c), q = c.queue[0], g = GAME.gen(c.governor);
+        const loyalty = Math.round(c.loyalty);
+        return `<tr class="click" data-act="goto" data-arg="c:${c.id}" style="cursor:pointer"><td><b>${cityTitle(c)}</b></td><td>${fmtAmount(c.pop)}</td>
+          <td class="${loyalty < 30 ? 'neg' : ''}">${loyalty}</td><td>${sgn(y.food - y.foodNeed)}</td><td>${fmtAmount(y.prod)}</td><td>${fmtAmount(y.gold)}</td><td>${fmtAmount(y.sci)}</td><td>${c.garrison.length}</td>
+          <td>${q ? cityQueueName(c, q) : '<span class="neg">空闲</span>'}</td><td>${g ? esc(g.name) : ''}</td><td>${c.delegated ? '已委' : '未委'}</td></tr>`;
+      }).join('');
+      list = `${orders}<table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>粮</th><th>工</th><th>钱</th><th>文</th><th>守军（营）</th><th>营造</th><th>知州</th><th>委政</th></tr>
+        ${rows || '<tr><td colspan="11">' + empty + '</td></tr>'}</table>`;
+    }
+    openModal(`<h1>州府一览</h1><div class="city-overview">${tiers}${list}</div>`, { width: '900px', footer: delegation });
   }
   function showArmies(sort) {
     const rows = S().armies.filter(a => a.f === P()).map(a => ({ a, upkeep: GAME.armyUpkeep(a) }));
@@ -2724,7 +2791,7 @@ var UI = (function () {
   }
   function showSave(fromTitle) {
     const slots = ['auto', '1', '2', '3', '4', '5'];
-    let h = `<h1>${fromTitle ? '读取存档' : '存档'}</h1><div class="scroll" style="max-height:65vh;min-width:520px">`;
+    let h = `<h1>${fromTitle ? '读取存档' : '存档'}</h1><div class="scroll save-slots">`;
     for (const k of slots) {
       const m = slotMeta(k);
       h += `<div class="slot"><span class="seal sm" style="background:${k === 'auto' ? '#555' : 'var(--red)'}">${k === 'auto' ? '自' : k}</span><div style="flex:1">${m ? `<b>${m.date}</b>（${m.year}）　州府 ${m.cities}<br><span class="note">${m.at}${m.kb ? '　' + m.kb + ' KB' : ''}</span>` : '<span class="note">空</span>'}</div>
@@ -3151,7 +3218,7 @@ var UI = (function () {
       <div class="record-actions">
         <button type="button" class="btn" data-settlement="title">再开天下</button>
         ${ending.type === 'unify' ? '<button type="button" class="btn" data-settlement="continue">继续经营</button>' : ''}
-        <button type="button" class="btn" data-settlement="record" ${ending.recorded ? 'disabled' : ''}>${ending.recorded ? '已录入功业榜' : '录入功业榜'}</button>
+        <button type="button" class="btn" data-settlement="record" ${disabledBecause(ending.recorded ? '此卷已录' : '')}>${ending.recorded ? '已录入功业榜' : '录入功业榜'}</button>
         ${canvas ? '<button type="button" class="btn red" data-settlement="save">保存长卷</button>' : ''}
       </div><p class="note settlement-feedback" role="status"></p>`, { width: '820px', lock: true });
     if (canvas) $('modal').querySelector('.settlement-page').append(canvas);
@@ -3245,7 +3312,7 @@ var UI = (function () {
     }
     const pg = v.gen != null ? GAME.gen(v.gen) : null;
     let h = `<h1>${esc(v.title)}</h1>${pg ? `<div style="text-align:center">${PORTRAIT.img(pg, 84)}</div>` : ''}<div class="story">${eventStory(v.text)}</div><div class="choices">`;
-    v.choices.forEach((c, i) => { h += `<button class="choice" data-ch="${i}"${c.disabled ? ' disabled' : ''}>${esc(c.t)}${c.d ? `<small>${esc(c.d)}</small>` : ''}</button>`; });
+    v.choices.forEach((c, i) => { h += `<button class="choice" data-ch="${i}" ${disabledBecause(c.disabled ? c.d || '此议尚不可行' : '')}>${esc(c.t)}${c.d && !c.disabled ? `<small>${esc(c.d)}</small>` : ''}</button>`; });
     h += `</div>`;
     openModal(h, { lock: true, width: '700px' });
     $('modal').onclick = e => {
@@ -3409,4 +3476,4 @@ var UI = (function () {
 
   return { boot, select, toast, processPending, engage, showSettlement, layoutText };
 })();
-window.addEventListener('load', () => UI.boot());
+window.addEventListener('DOMContentLoaded', () => UI.boot(), { once: true });

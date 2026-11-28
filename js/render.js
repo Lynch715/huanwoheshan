@@ -15,7 +15,9 @@ var RENDER = (function () {
   let dirty = true, miniDirty = true, frame = null;
   let gestureUntil = 0;
   let selectionPulseUntil = 0, touch;
-  const FONT = '"Kaiti SC","STKaiti","KaiTi","楷体","BiauKai","Noto Serif CJK SC","Songti SC",serif';
+  const FONT = '"WenKai","Kaiti SC","STKaiti","KaiTi",serif';
+  const labelWidths = new Map();
+  let awaitingFont = false, unletteredBase = null;
   const PAPER = [236, 228, 208];
   const RUIN_INK = '#756e62';
 
@@ -133,6 +135,10 @@ var RENDER = (function () {
     prepRivers();
     assignArt();
     chunkCache.clear(); chunkPixels = 0;
+    if (awaitingFont) {
+      unletteredBase = mkCanvas(base.width, base.height);
+      unletteredBase.getContext('2d').drawImage(base, 0, 0);
+    }
     drawSeaLabels(b);
     drawCartouche(b);
     miniDirty = true; markDirty();
@@ -604,6 +610,32 @@ var RENDER = (function () {
     if (touch.matches) layerScale = 0.75;
     resize();
     window.addEventListener('resize', resize);
+    if (document.fonts) {
+      awaitingFont = true;
+      document.fonts.load('16px WenKai').then(() => {
+        labelWidths.clear();
+        if (unletteredBase) {
+          const b = base.getContext('2d');
+          b.save();
+          b.resetTransform();
+          b.drawImage(unletteredBase, 0, 0);
+          b.restore();
+          drawSeaLabels(b);
+          drawCartouche(b);
+          chunkCache.clear();
+          chunkPixels = 0;
+        }
+        if (GAME.S && polit) {
+          politicalInput = null;
+          buildPolitical();
+        }
+        miniDirty = true;
+        markDirty();
+      }).catch(() => {}).finally(() => {
+        awaitingFont = false;
+        unletteredBase = null;
+      });
+    }
     for (const type of ['pointerdown', 'pointermove', 'keydown']) {
       window.addEventListener(type, wakeSelection, { passive: true });
     }
@@ -846,7 +878,7 @@ var RENDER = (function () {
       // 城名
       if (z >= 0.5 || big) {
         const fs = Math.max(11, Math.min(18, 9 + 5 * z));
-        const label = c.name + (F && z > 0.9 ? ' ' + c.pop + '万' : '');
+        const label = c.name + (F && z > 0.9 ? ' ' + Math.round(c.pop) + '万' : '');
         pushLabel(label, x, y + s / 2 + fs * 0.7, fs, F ? 'rgba(25,22,20,0.95)' : RUIN_INK,
           capital ? 115 : big ? 104 : 101, 3.5, { owner: c, bold: capital });
       }
@@ -928,10 +960,19 @@ var RENDER = (function () {
   // ---------- 标签避让 ----------
   let labels = [], labelBlocks = [];
   const cityLabelOffsets = [[0, 0], [10, 0], [-10, 0]];
-  const armyLabelOffsets = [0, 11, 21].flatMap(dy => [0, 16, -16, 29, -29].map(dx => [dx, dy]));
+  const armyLabelOffsets = [0, 11, 21, 33].flatMap(dy => [0, 16, -16, 29, -29, 42, -42].map(dx => [dx, dy]));
   const countOffsets = [[0, 0], [12, 1], [-12, 1], [0, 11], [23, 2], [-23, 2], [14, 11], [-14, 11], [0, 22]];
   function pushLabel(text, x, y, size, fill, pri, sw, { owner, bold, count, radius } = {}) {
     labels.push({ text, x, y, size, fill, pri, sw, owner, bold, count, radius });
+  }
+  function labelWidth(font, text) {
+    const key = font + ':' + text;
+    if (!labelWidths.has(key)) {
+      if (labelWidths.size >= 2048) labelWidths.clear();
+      ctx.font = font;
+      labelWidths.set(key, ctx.measureText(text).width);
+    }
+    return labelWidths.get(key);
   }
   function drawLabels() {
     labels.sort((a, b) => b.pri - a.pri);
@@ -941,43 +982,71 @@ var RENDER = (function () {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const hiddenArmyLabels = [];
     for (const L of labels) {
-      const h = L.size + 2;
-      ctx.font = `${L.bold ? 'bold ' : ''}${L.size}px ${FONT}`;
-      const w = ctx.measureText(L.text).width + 4;
       const isArmy = L.count != null;
+      const h = L.size + (isArmy ? 5 : 3);
+      const font = `${L.bold ? 'bold ' : ''}${L.size}px ${FONT}`;
+      const countFont = `${Math.max(10, L.size - 2)}px ${FONT}`;
+      const count = isArmy ? fmtNum(L.count) : '';
+      const nameWidth = labelWidth(font, L.text);
+      const countWidth = isArmy ? labelWidth(countFont, count) + 5 : 0;
+      const w = nameWidth + countWidth + (isArmy ? 9 : 4);
       let offsets = isArmy ? armyLabelOffsets : L.owner ? cityLabelOffsets : [[0, 0]];
-      if (L.pri === 200) {
-        const dx = L.radius + w / 2 + 4, dy = -(L.radius + L.size / 2 + 8);
-        offsets = [...offsets, [dx, dy], [-dx, dy]];
+      if (isArmy) {
+        const sideX = L.radius + w / 2 + 3, sideY = -(L.radius + L.size / 2 + 8);
+        const aboveY = sideY - L.radius - h / 2 - 3;
+        offsets = [...offsets, [sideX, sideY], [-sideX, sideY], [0, aboveY], [16, aboveY], [-16, aboveY]];
       }
-      const anchor = isArmy && L.x >= 0 && L.x < innerWidth ? Math.max(w / 2, Math.min(innerWidth - w / 2, L.x)) : L.x;
-      const pos = offsets.find(([dx, dy]) => {
-        const x = anchor + dx, y = L.y + dy;
+      const labelX = dx => {
+        const x = L.x + dx;
+        return isArmy && L.x >= -L.radius && L.x < innerWidth + L.radius
+          ? Math.max(w / 2, Math.min(innerWidth - w / 2, x)) : x;
+      };
+      const pos = w <= innerWidth && offsets.find(([dx, dy]) => {
+        const x = labelX(dx), y = L.y + dy;
         return clear(x - w / 2, y - h / 2, x + w / 2, y + h / 2, L.owner);
       });
       if (!pos) {
-        if (L.count != null) hiddenArmyLabels.push(L);
+        if (isArmy) hiddenArmyLabels.push(L);
         continue;
       }
-      const x = anchor + pos[0], y = L.y + pos[1];
+      const x = labelX(pos[0]), y = L.y + pos[1];
       placed.push([x - w / 2, y - h / 2, x + w / 2, y + h / 2]);
-      ctx.lineWidth = L.sw; ctx.strokeStyle = 'rgba(242,234,214,0.95)'; ctx.strokeText(L.text, x, y);
-      ctx.fillStyle = L.fill; ctx.fillText(L.text, x, y);
+      ctx.font = font;
+      if (isArmy) {
+        drawArmySign(x, y, w, h);
+        ctx.fillStyle = L.fill;
+        ctx.fillText(L.text, x - countWidth / 2, y);
+        ctx.font = countFont;
+        ctx.fillStyle = '#6b5f4f';
+        ctx.fillText(count, x + nameWidth / 2 + 2.5, y);
+      } else {
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = L.sw + 1.8; ctx.strokeStyle = 'rgba(230,219,191,0.65)'; ctx.strokeText(L.text, x, y);
+        ctx.lineWidth = L.sw; ctx.strokeStyle = '#f6f0df'; ctx.strokeText(L.text, x, y);
+        ctx.fillStyle = L.fill; ctx.fillText(L.text, x, y);
+      }
     }
-    ctx.font = `bold 9px ${FONT}`;
+    const compactFont = `10px ${FONT}`;
     for (const L of hiddenArmyLabels) {
-      const count = String(L.count), w = count.length * 5.5 + 4;
-      const [dx, dy] = countOffsets.find(([dx, dy]) => {
-        const x = L.x + dx, y = L.y - 8 + dy;
-        return clear(x - w / 2, y - 5.5, x + w / 2, y + 5.5, L.owner);
-      }) || countOffsets[0];
-      const x = L.x + dx, y = L.y - 8 + dy;
-      placed.push([x - w / 2, y - 5.5, x + w / 2, y + 5.5]);
-      ctx.fillStyle = '#f0e4cb'; ctx.fillRect(x - w / 2, y - 5.5, w, 11);
-      ctx.strokeStyle = 'rgba(73,53,32,0.7)'; ctx.lineWidth = 0.65; ctx.strokeRect(x - w / 2, y - 5.5, w, 11);
-      ctx.fillStyle = L.fill; ctx.fillText(count, x, y);
+      const count = fmtNum(L.count), w = labelWidth(compactFont, count) + 8, h = 14;
+      const labelX = dx => Math.max(w / 2, Math.min(innerWidth - w / 2, L.x + dx));
+      const pos = countOffsets.find(([dx, dy]) => {
+        const x = labelX(dx), y = L.y - 8 + dy;
+        return clear(x - w / 2, y - h / 2, x + w / 2, y + h / 2, L.owner);
+      });
+      if (!pos) continue;
+      const x = labelX(pos[0]), y = L.y - 8 + pos[1];
+      placed.push([x - w / 2, y - h / 2, x + w / 2, y + h / 2]);
+      drawArmySign(x, y, w, h);
+      ctx.font = compactFont;
+      ctx.fillStyle = '#6b5f4f'; ctx.fillText(count, x, y);
     }
     labels = [];
+  }
+  function drawArmySign(x, y, w, h) {
+    roundRect(ctx, x - w / 2, y - h / 2, w, h, Math.min(9, h / 2));
+    ctx.fillStyle = '#f6f0df'; ctx.fill();
+    ctx.strokeStyle = 'rgba(74,66,56,.5)'; ctx.lineWidth = 1; ctx.stroke();
   }
   function roundRect(c, x, y, w, h, r) {
     c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
@@ -992,7 +1061,7 @@ var RENDER = (function () {
   function armyMarker(tile, wx, wy, z) {
     let [x, y] = w2s(wx, wy);
     const low = z < 0.6;
-    let radius = low ? Math.max(10, 8 + 11 * z) : Math.max(10, Math.min(19, 6 + 8 * z));
+    let radius = low ? Math.max(10, 8 + 11 * z) : Math.max(10, Math.min(19, 6 + 9 * z));
     if (Math.abs(wx - tx(tile)) < 0.5 && Math.abs(wy - ty(tile)) < 0.5) {
       if (GAME.cityAt(tile)) {
         x += radius * (low ? 0.75 : 1.36);
@@ -1064,6 +1133,7 @@ var RENDER = (function () {
     let { x, y, radius } = armyMarker(d.tile, d.x, d.y, z);
     if (!onScreen(x, y, 60)) return;
     const F = GAME.fac(d.f);
+    const factionColor = d.f === 'song' ? '#a8302a' : d.f === 'jin' ? '#3d5a8a' : F.color;
     const g = GAME.gen(d.gen);
     const sel = state.sel && state.sel.army === d.id;
     const mine = d.f === S.player;
@@ -1074,7 +1144,7 @@ var RENDER = (function () {
       const s = radius;
       ctx.strokeStyle = 'rgba(30,25,20,0.95)'; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(x - s * 0.45, y + s * 0.6); ctx.lineTo(x - s * 0.45, y - s * 0.75); ctx.stroke();
-      ctx.fillStyle = F.color; ctx.fillRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
+      ctx.fillStyle = factionColor; ctx.fillRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
       ctx.strokeStyle = sel ? 'rgba(220,170,40,1)' : 'rgba(20,18,16,0.7)'; ctx.lineWidth = sel ? 2 : 1; ctx.strokeRect(x - s * 0.45, y - s * 0.75, s, s * 0.62);
       ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(s * 0.5)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(d.camp ? '寨' : g ? g.name[0] : '军', x + s * 0.05, y - s * 0.44);
@@ -1089,7 +1159,7 @@ var RENDER = (function () {
     ctx.strokeStyle = 'rgba(30,25,20,0.9)'; ctx.lineWidth = 1.3;
     ctx.beginPath(); ctx.moveTo(fx0, fy0); ctx.lineTo(fx0, fy0 - R * 1.25); ctx.stroke();
     const wave = Math.sin(now / 280 + d.id) * 1.5;
-    ctx.fillStyle = F.color;
+    ctx.fillStyle = factionColor;
     ctx.beginPath(); ctx.moveTo(fx0, fy0 - R * 1.25); ctx.quadraticCurveTo(fx0 + R * 0.45, fy0 - R * 1.25 + wave, fx0 + R * 0.9, fy0 - R * 1.1);
     ctx.lineTo(fx0 + R * 0.8, fy0 - R * 0.62 + wave * 0.5); ctx.quadraticCurveTo(fx0 + R * 0.4, fy0 - R * 0.62, fx0, fy0 - R * 0.62); ctx.closePath(); ctx.fill();
     ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R * 0.48)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1104,21 +1174,20 @@ var RENDER = (function () {
       if (portrait.width === 64) ctx.drawImage(portrait, x - R, y - R, R * 2, R * 2);
       else ctx.drawImage(portrait, 8, 4, 80, 80, x - R, y - R, R * 2, R * 2);
     }
-    else { ctx.fillStyle = F.color; ctx.fillRect(x - R, y - R, R * 2, R * 2); ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R)}px ${FONT}`; ctx.fillText('军', x, y + 1); }
+    else { ctx.fillStyle = factionColor; ctx.fillRect(x - R, y - R, R * 2, R * 2); ctx.fillStyle = '#f6eedb'; ctx.font = `bold ${Math.round(R)}px ${FONT}`; ctx.fillText('军', x, y + 1); }
     ctx.restore();
-    ctx.strokeStyle = F.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = factionColor; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.stroke();
     ctx.strokeStyle = 'rgba(20,18,16,0.85)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, R + 1.6, 0, 7); ctx.stroke();
     if (sel) { const pulse = selectionPulseUntil ? 0.5 + 0.5 * Math.sin(now / 220) : 0.67; ctx.strokeStyle = `rgba(214,166,40,${0.6 + 0.4 * pulse})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, R + 4 + pulse * 2, 0, 7); ctx.stroke(); }
     // 兵力条
-    const bw = R * 2;
+    const bw = 30;
     const ratio = d.n ? Math.min(1, d.str / (d.n * 500)) : 0;
-    ctx.fillStyle = 'rgba(20,18,16,0.6)'; ctx.fillRect(x - R, y + R + 3, bw, 4);
-    ctx.fillStyle = mine ? 'rgba(80,140,60,0.95)' : 'rgba(176,52,40,0.95)'; ctx.fillRect(x - R, y + R + 3, bw * ratio, 4);
+    ctx.fillStyle = 'rgba(20,18,16,0.6)'; ctx.fillRect(x - bw / 2, y + R + 3, bw, 4);
+    ctx.fillStyle = mine ? 'rgba(80,140,60,0.95)' : 'rgba(176,52,40,0.95)'; ctx.fillRect(x - bw / 2, y + R + 3, bw * ratio, 4);
     // 名牌
     const fs = Math.max(11, Math.min(14, 8 + 3.8 * z));
     const name = d.camp || g?.name || '偏师';
-    const label = mine || z >= 0.9 ? name + ' ' + fmtNum(d.str) : name;
-    pushLabel(label, x, y + R + fs / 2 + 8, fs, mine ? 'rgba(20,18,16,1)' : 'rgba(120,30,22,1)',
+    pushLabel(name, x, y + R + fs / 2 + 8, fs, mine ? 'rgba(20,18,16,1)' : 'rgba(120,30,22,1)',
       sel ? 200 : mine ? 110 : 80, 3.2, { owner: d, bold: true, count: d.str, radius: R });
     if (mine && !anim && (d.spent || d.routed)) {
       const bx = x - R * 0.85, by = y - R * 0.85;
