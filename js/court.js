@@ -11,7 +11,11 @@ var COURT = (function () {
     { id: 'hanlin', name: '翰林学士', stat: 'zhi', desc: '掌制诰文教：全国文 +' },
     { id: 'yushi', name: '御史中丞', stat: 'zhi', desc: '纠察百官：将领忠诚 +，权臣难起' },
     { id: 'dianqian', name: '殿前都指挥使', stat: 'tong', desc: '宿卫京师：都城城防 +，权威 +' },
+    { id: 'gongbu', name: '工部尚书', stat: 'zheng', desc: '掌土木营缮，减营建与升等工耗，加快修城', divisor: 250, cap: 0.20 },
+    { id: 'shibo', name: '提举市舶司', stat: 'trade', desc: '总舶务，增海贸收益，全国可多开一条航线', divisor: 200, cap: 0.25 },
+    { id: 'taiyi', name: '太医局令', stat: 'zhi', desc: '调理伤病，疫疠损失减半，本国将领延寿两年' },
   ];
+  const gong = { name: '赵㬎', title: '宋恭帝', birth: 1271, start: 1274, end: 1277, lean: -15, note: '天子冲龄，寿和太后与群臣共议社稷' };
   const EMPERORS = [
     { name: '赵构', art: 'emperor_赵构', title: '宋高宗', birth: 1107, start: 1127, end: 1162, lean: -35, note: '南渡未久，朝中和议之声甚盛' },
     { name: '赵昚', art: 'emperor_赵昚', title: '宋孝宗', birth: 1127, start: 1162, end: 1189, lean: 30, note: '朝野思奋，恢复之议复起' },
@@ -27,13 +31,13 @@ var COURT = (function () {
   const AMB = { '秦桧': 95, '韩侂胄': 82, '史弥远': 88, '贾似道': 92, '张俊': 60, '吴曦': 90, '刘整': 70, '吕文焕': 55, '范文虎': 65 };
   const STANCE_NAME = { war: '主战', peace: '主和', mid: '中立' };
   const serving = g => g?.f === P() && ['idle', 'army', 'gov', 'court'].includes(g.status);
-  const military = g => g.tong + g.wu >= g.zhi + g.zheng;
+  const regent = { id: -21, name: '谢道清', title: '寿和太后', birth: 1210, female: true, f: 'song', art: 'emperor_谢道清', zhi: 81, zheng: 86, tong: 40, wu: 30 };
 
   function init() {
     const s = S();
     const clan = { brides: 2, t: s.T };
-    if (s.court) { s.court.clan ??= clan; return; }
-    s.court = { auth: 55, lean: -20, offices: {}, emp: 0, wins: 0, losses: 0, lastEv: -9, log: [], commandReleased: false, clan };
+    if (s.court) { s.court.clan ??= clan; s.court.regency ??= false; return; }
+    s.court = { auth: 55, lean: -20, offices: {}, emp: 0, wins: 0, losses: 0, lastEv: -9, log: [], commandReleased: false, regency: false, clan };
     // 开局朝臣
     const byName = n => s.generals.find(g => g.name === n && g.f === P() && g.status === 'idle');
     const put = (o, n) => { const g = byName(n); if (g) assign(o, g.id); };
@@ -45,7 +49,7 @@ var COURT = (function () {
     if (WAR.includes(g.name)) g.stance = 'war';
     else if (PEACE.includes(g.name)) g.stance = 'peace';
     else {
-      const mil = military(g);
+      const mil = !GAME.civil(g);
       const r = GEO.hash(g.id, 17, 5);
       g.stance = mil ? (r < 0.55 ? 'war' : r < 0.9 ? 'mid' : 'peace') : (r < 0.25 ? 'war' : r < 0.6 ? 'mid' : 'peace');
     }
@@ -57,6 +61,7 @@ var COURT = (function () {
   function emperor() {
     const s = S(); const c = s.court;
     if (c.emp < EMPERORS.length) return EMPERORS[c.emp];
+    if (!c.genEmp && s.year >= gong.start && s.year < gong.end) return gong;
     if (!c.genEmp) c.genEmp = { name: '赵' + GAME.pick(['昕', '昶', '昱', '昉', '晟', '暄', '曜', '曦']), title: '宋' + GAME.pick(['世宗', '显宗', '睿宗', '宪宗', '昭宗', '宣宗']), birth: s.year - 22, start: s.year, end: s.year + 25 + Math.floor(rnd() * 15), lean: Math.round(rnd() * 60 - 25), note: LATE_REIGN_NOTE };
     updateEmperorArt(c.genEmp, s.year);
     return c.genEmp;
@@ -92,8 +97,13 @@ var COURT = (function () {
     if (!S() || !S().court) return 0;
     const g = holder(k); if (!g) return 0;
     const O = OFFICES.find(o => o.id === k);
-    return Math.max(0, (g[O.stat] - 45) / 220);
+    const civil = O.stat !== 'tong' && GAME.civil(g) ? 1.2 : 1;
+    if (k === 'taiyi') return 0.25 + Math.max(0, (g.zhi - 50) / 200) * civil;
+    if (O.divisor) return Math.min(O.cap, Math.max(0, (officeScore(O, g) - 50) / O.divisor) * civil);
+    return Math.max(0, (officeScore(O, g) - 45) / 220) * civil;
   }
+  function officeScore(o, g) { return o.stat === 'trade' ? (g.zhi + g.zheng) / 2 : g[o.stat]; }
+  function regency() { return S().year >= 1264 && S().year <= 1276 ? regent : null; }
 
   // ---------- 廷议 ----------
   // motion: 'war' | 'peace'
@@ -171,7 +181,6 @@ var COURT = (function () {
     return { g, armies, troops };
   }
   function recallCommand(g) {
-    for (const a of S().armies) if (a.gen === g.id) a.gen = null;
     if (g.status === 'army') GAME.unassign(g.id);
   }
   function commandEvents() {
@@ -226,6 +235,12 @@ var COURT = (function () {
       c.auth = Math.round(50 + (c.auth - 50) / 2);
       if (!EVENTS.offer({ ev: 'court_newemp', old: old.title, name: nw.title, nm: nw.name, note: nw.note }, 'succession')) GAME.log(nw.title + '即位，百司奉诏如常。', 'big');
     }
+    // 度宗朝以太后在朝；恭帝即位后始垂帘听政。
+    if (!c.regency && s.year >= 1274 && s.year <= 1276) {
+      c.regency = true;
+      s.pending.push({ ev: 'info', title: '寿和太后听政', text: '度宗晏驾，恭帝践阼。寿和太后谢道清垂帘听政，与群臣共议社稷。' });
+    }
+    if (c.regency && s.year > 1276) c.regency = false;
     // 朝议倾向随时议与群臣立场变化
     let st = 0, n = 0;
     for (const k in c.offices) { const g = GAME.gen(c.offices[k]); if (g) { ensure(g); st += g.stance === 'war' ? 1 : g.stance === 'peace' ? -1 : 0; n++; } }
@@ -247,7 +262,7 @@ var COURT = (function () {
       if (g.stance === 'peace' && c.lean > 30) t -= 10;
       if (g.amb > 70) t -= (g.amb - 70) / 2;
       if (g.loyal) t = Math.max(t, 80);
-      t += 2 * g.rank - (c.commandReleased && military(g) ? 3 : 0);
+      t += 2 * g.rank - (c.commandReleased && !GAME.civil(g) ? 3 : 0);
       g.loyalty += Math.max(-3 * e * 4, Math.min(3 * e * 4, t - g.loyalty));
       g.loyalty = Math.max(0, Math.min(100, g.loyalty));
       // 叛逃 / 辞官
@@ -260,8 +275,9 @@ var COURT = (function () {
     if (g.status === 'army') {
       const a = GAME.army(g.loc);
       let to = null, bd = 9;
-      if (a) for (const o of s.cities) if (o.f !== P() && o.f !== 'rebel' && GAME.atWar(P(), o.f)) { const d = GEO.dist(o.tile, a.tile); if (d < bd) { bd = d; to = o.f; } }
+      if (a?.gen === g.id) for (const o of s.cities) if (o.f !== P() && o.f !== 'rebel' && GAME.atWar(P(), o.f)) { const d = GEO.dist(o.tile, a.tile); if (d < bd) { bd = d; to = o.f; } }
       if (a && to) {
+        GAME.setDeputy(a.id, null);
         a.f = to; a.path = []; g.f = to; g.status = 'army'; g.rank = 0;
         const carried = g.items?.length ? `并携${GAME.itemNames(g.items)}而去。` : '';
         GAME.log(`${g.name}积怨已久，竟率所部 ${a.units.length} 营叛投【${GAME.fac(to).name}】！${carried}`, 'war', a.tile);
@@ -403,7 +419,7 @@ var COURT = (function () {
   };
   function register() { if (typeof EVENTS !== 'undefined') Object.assign(EVENTS.DEFS, DEFS); }
   register();
-  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, updateEmperorArt, reignNote, holder, assign, vacate, bonus, officeOf,
+  return { candidates, OFFICES, EMPERORS, STANCE_NAME, init, ensure, emperor, regency, updateEmperorArt, reignNote, holder, assign, vacate, bonus, officeOf, officeScore,
     vote, applyVote, turn, onWin, onLoss, reward, members, rankTerms, grantRank, powerBase, marriageDecree };
 })();
 if (typeof module !== 'undefined') module.exports = COURT;

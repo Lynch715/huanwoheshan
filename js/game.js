@@ -42,9 +42,30 @@ var GAME = (function () {
   const SCALE_NAME = { 7: '周', 10: '旬', 30: '月', 90: '季' };
   function unitName() { return SCALE_NAME[S.scale] || '回合'; }
   function E() { return (S.scale || 90) / 90; }
+  function seasonPulses(rate) {
+    const days = Math.round(S.T * 90);
+    return Math.ceil((days + S.scale) * rate / 90) - Math.ceil(days * rate / 90);
+  }
+  function seasonPulseTime(rate, step) {
+    return (Math.ceil(Math.round(S.T * 90) * rate / 90) + step) / rate;
+  }
   function mpFactor() { return { 7: 0.5, 10: 0.7, 30: 1, 90: 1 }[S.scale] || 1; }
   let ANIM = [];
-  function rec(e) { ANIM.push(e); return e; }
+  let battleCache;
+  function rec(e) {
+    ANIM.push(e);
+    if (battleCache) {
+      if (e.k === 'bt') {
+        battleCache.armies.delete(e.aid);
+        battleCache.armies.delete(e.did);
+        battleCache.cities.delete(e.city);
+      } else if (e.k === 'die' || e.k === 'new' || e.k === 'gain') {
+        if (e.id != null) battleCache.armies.delete(e.id);
+        if (e.city != null) battleCache.cities.delete(e.city);
+      } else if (e.k === 'cap') battleCache.cities.delete(e.city);
+    }
+    return e;
+  }
   function takeAnim() { const a = ANIM; ANIM = []; return a; }
   const rnd = (a, b) => a + Math.random() * (b - a);
   const ri = (a, b) => Math.floor(rnd(a, b + 1));
@@ -70,7 +91,7 @@ var GAME = (function () {
       v: 2, turn: 0, year: 1140, season: 2, doy: 189, scale: opts.scale || 7, T: 0, player: 'song', factions: {}, cities: [], armies: [], generals: [],
       tileCity: new Int32Array(N).fill(-1), explored: new Uint8Array(N), visible: new Uint8Array(N),
       rel: {}, flags: { coalition: {}, league: null, leagueWave: null, broken: [], songDefeats: [], releaseCommandOffered: false, recommendYear: null }, log: [], nextArmy: 1, difficulty: DATA.DIFFICULTY[opts.difficulty] ? +opts.difficulty : 1, victory: false, pending: [],
-      settlement: null, vault: [], itemsTaken: {}, itemMoved: {}, itemFirst: {},
+      settlement: null, vault: [], itemsTaken: {}, itemMoved: {}, itemFirst: {}, delegationReserve: 500, nextUpgrade: 1,
     };
     S.flags.marriageDefeats = {};
     S.flags.marriageAskedFrom = {};
@@ -81,7 +102,7 @@ var GAME = (function () {
     for (const d of DATA.FACTIONS) {
       S.factions[d.id] = {
         id: d.id, name: d.name, seal: d.seal, color: d.color, culture: d.culture, aggr: d.aggr,
-        gold: 150, food: 200, man: 40, horse: 10, iron: 10, sci: 0, research: null, techs: {}, alive: true,
+        gold: 150, food: 200, man: 40, horse: 10, iron: 10, sci: 0, research: null, techs: {}, techLessons: {}, alive: true,
         warWeary: 0, met: {}, capital: -1, lastWar: -99, score: 0, income: {},
       };
       for (const t of (DATA.START_TECH[d.id] || [])) S.factions[d.id].techs[t] = 1;
@@ -116,8 +137,10 @@ var GAME = (function () {
     getRel('jin', 'xia').op = 30;
     getRel('song', 'dali').op = 25; getRel('song', 'goryeo').op = 20;
     setupStartArmies();
+    distributeStartSurplus();
     generateSites();
     ensureFrontier();
+    for (const draft of opts.custom || []) createCustom(draft);
     if (typeof COURT !== 'undefined') COURT.init();
     // 初始已知
     const knownF = ['song', 'jin', 'xia', 'dali', 'tubo', 'goryeo', 'japan', 'daviet', 'champa', 'khmer', 'pagan', 'mayi'];
@@ -138,7 +161,7 @@ var GAME = (function () {
   function addRebelFaction() {
     S.factions.rebel = {
       id: 'rebel', name: '义军', seal: '义', color: '#6b5a48', culture: 'han', aggr: 1, gold: 0, food: 0, man: 0, horse: 0, iron: 0, sci: 0, research: null,
-      techs: {}, alive: true, warWeary: 0, met: {}, capital: -1, lastWar: 0, score: 0, income: {}, rebel: true,
+      techs: {}, techLessons: {}, alive: true, warWeary: 0, met: {}, capital: -1, lastWar: 0, score: 0, income: {}, rebel: true,
     };
   }
 
@@ -161,7 +184,7 @@ var GAME = (function () {
   function addCity(name, f, tile, pop, cap = false) {
     const c = {
       id: S.cities.length, name, f, origF: f, tile, pop, store: 0, loyalty: 70, unrest: 0,
-      buildings: {}, queue: [], garrison: [], wall: 0, governor: null, cap, origCap: cap, trade: [], recentCapture: null, lastSiege: null,
+      buildings: {}, queue: [], garrison: [], wall: 0, governor: null, delegated: false, cap, origCap: cap, trade: [], recentCapture: null, lastSiege: null,
       port: GEO.coastal(tile), seas: [...GEO.seaBodiesOf(tile)], culture: fac(f).culture, battleTurn: null,
     };
     S.cities.push(c);
@@ -194,7 +217,14 @@ var GAME = (function () {
     }
     c.loyalty = 65 + (c.cap ? 10 : 0);
   }
-  function mkUnit(t, s) { return { t, s: s || 100, refT: null }; }
+  function mkUnit(t, s) { return { t, s: s || 100, refT: null, xp: 0 }; }
+  function unitRank(u) { return u.xp >= 8 ? 2 : u.xp >= 3 ? 1 : 0; }
+  function measureXP(xp) { return Math.round(xp * 100) / 100; }
+  function refillUnit(u, strength) {
+    if (strength <= u.s) return;
+    u.xp = measureXP((u.xp || 0) * u.s / strength);
+    u.s = strength;
+  }
 
   function addGeneral(o) {
     const g = Object.assign({ id: S.generals.length, loc: null, loyalty: 80, exp: 0, wins: 0, rank: 0, powerGuard: 0, powerIgnored: 0 }, o);
@@ -203,7 +233,7 @@ var GAME = (function () {
     return g;
   }
   function addHistorical([name, f, birth, tong, wu, zhi, zheng, skill, avail = birth + 20]) {
-    const g = addGeneral({ name, f, birth, tong, wu, zhi, zheng, skill, hist: true, avail, status: 'future' });
+    const g = addGeneral({ name, f, birth, tong, wu, zhi, zheng, skill, hist: true, female: DATA.FEMALE.has(name), avail, status: 'future' });
     if (avail <= S.year) enterService(g);
     return g;
   }
@@ -215,23 +245,43 @@ var GAME = (function () {
     }
     g.status = 'idle';
   }
-  function genName(culture) {
+  function civil(g) { return !!g && g.zhi + g.zheng >= g.tong + g.wu; }
+  function versatile(g) { return !!g && Object.keys(STAT_NAME).every(k => g[k] >= 70); }
+  function genName(culture, female = false) {
     const N = DATA.NAMES[culture] || DATA.NAMES.han;
-    const s = typeof N.s === 'string' ? N.s[ri(0, N.s.length - 1)] : pick(N.s);
+    let s;
+    if (N === DATA.NAMES.han) {
+      const roll = Math.random(), compoundRate = 0.025;
+      const compound = roll < compoundRate;
+      const names = compound ? DATA.HAN_COMPOUND_SURNAMES : DATA.HAN_SURNAMES;
+      const within = compound ? roll / compoundRate : (roll - compoundRate) / (1 - compoundRate);
+      s = names[Math.min(names.length - 1, Math.floor(within * names.length))];
+    } else {
+      s = typeof N.s === 'string' ? N.s[ri(0, N.s.length - 1)] : pick(N.s);
+    }
+    if (female) return ['han', 'bai', 'korean', 'japanese', 'viet'].includes(culture) ? s + pick(N.female) : pick(N.female);
     let g;
     if (typeof N.g === 'string') {
       const initials = N === DATA.NAMES.han ? DATA.HAN_NAME_INITIALS : N.g;
       g = initials[ri(0, initials.length - 1)];
-      if (Math.random() < 0.6) g += N.g[ri(0, N.g.length - 1)];
+      if (Math.random() < 0.6) {
+        const index = ri(0, N.g.length - 1);
+        g += N.g[index] === g ? N.g[(index + 1) % N.g.length] : N.g[index];
+      }
     }
-    else g = pick(N.g);
+    else {
+      const index = ri(0, N.g.length - 1);
+      g = N.g[index];
+      if (g.length === 2 && g[0] === g[1]) g = N.g[(index + 1) % N.g.length];
+    }
     return s + g;
   }
   function randomGeneral(f, type, q, culture) {
     q = q || 45;
     const st = () => clamp(Math.round(q + rnd(-12, 22)), 20, 92);
     const cul = culture || (f === 'rebel' ? 'han' : fac(f).culture);
-    let g = { name: genName(cul), f, cul, birth: S.year - ri(22, 40), tong: st(), wu: st(), zhi: st(), zheng: st(), skill: '', hist: false, status: 'idle' };
+    const female = Math.random() < 0.06;
+    let g = { name: genName(cul, female), f, cul, female, birth: S.year - ri(22, 40), tong: st(), wu: st(), zhi: st(), zheng: st(), skill: '', hist: false, status: 'idle' };
     if (type === 'civil') { g.tong = clamp(g.tong - 20, 15, 80); g.wu = clamp(g.wu - 25, 10, 80); g.zheng = clamp(g.zheng + 12, 30, 95); g.zhi = clamp(g.zhi + 8, 30, 95); }
     if (type === 'mil') { g.zheng = clamp(g.zheng - 15, 15, 80); g.tong += 5; g.wu += 6; g.tong = Math.min(g.tong, 95); g.wu = Math.min(g.wu, 96); }
     if (Math.random() < 0.3) {
@@ -240,12 +290,81 @@ var GAME = (function () {
     }
     return addGeneral(g);
   }
+  const civilSkills = ['运筹', '治世', '理财', '劝农', '教化'];
+  function customSkills(role) {
+    return Object.keys(DATA.SKILLS).filter(k => role === 'both' || (role === 'civil' ? civilSkills.includes(k) :
+      k === '运筹' || !civilSkills.includes(k)));
+  }
+  function customName(value, ignoreRoster = false) {
+    const name = String(value ?? '').normalize('NFC').trim();
+    if (!/^[\p{L}\p{M}· ]{1,14}$/u.test(name)) return { reason: '姓名须为一至十四字，仅收文字与间点' };
+    if (DATA.GEN.some(row => row[0] === name)) return { reason: '此名与史实人物相重' };
+    if (!ignoreRoster && S?.generals.some(g => g.name === name && !g.hist)) return { reason: '此名已经入册' };
+    return { name };
+  }
+  function customInfo(draft, opening = false) {
+    const named = customName(draft.name);
+    if (named.reason) return named;
+    const { tong, wu, zhi, zheng, home, age, female, skill, role, art } = draft;
+    const stats = [tong, wu, zhi, zheng];
+    const c = opening ? S.cities.find(c => c.name === home && c.origF === 'song') : city(home);
+    if (!c || (opening ? c.origF !== 'song' : c.f !== S.player)) return { reason: '须选宋境州县为籍' };
+    if (!stats.every(n => Number.isInteger(n) && n >= 30 && n <= 90) ||
+        (opening && stats.reduce((sum, n) => sum + n, 0) !== 260)) return { reason: '四维各须三十至九十，开局合计二百六十' };
+    if (!['civil', 'military', 'both'].includes(role) || !customSkills(role).includes(skill)) return { reason: '特技须与所选文武相合' };
+    if (opening && role !== 'both' && civil(draft) !== (role === 'civil')) return { reason: '所配四维须与文武相合' };
+    const profile = { ...named, f: S.player, cul: fac(S.player).culture, home: c.id, female: !!female, tong, wu, zhi, zheng, skill, hist: false, custom: true,
+      birth: S.year - ([24, 40, 55].includes(age) ? age : 24), status: 'idle' };
+    if (art && /^generic\/[a-z_]+[1-4]$/.test(art)) profile.art = art;
+    return { profile };
+  }
+  function createCustom(draft) {
+    const { profile } = customInfo(draft, true);
+    return profile ? addGeneral(profile) : null;
+  }
+  function hireCost() { return S.difficulty === 0 ? 200 : 300; }
+  function openHire() {
+    if (S.hireList) return true;
+    const F = fac(S.player), owned = citiesOf(S.player), cost = hireCost();
+    const songSeats = owned.filter(c => c.origF === S.player);
+    const seats = songSeats.length ? songSeats : owned;
+    if (S.flags.hireYear === S.year || F.gold < cost || !seats.length) return false;
+    F.gold -= cost;
+    S.flags.hireYear = S.year;
+    const offered = new Set();
+    S.hireList = Array.from({ length: 3 }, () => {
+      const c = pick(seats), female = Math.random() < 0.5, role = pick(['civil', 'military']);
+      const rolls = [30, 30, 30, 30];
+      for (let n = ri(220, 270) - 120; n > 0; n--) {
+        const i = pick([0, 1, 2, 3].filter(i => rolls[i] < 90));
+        rolls[i]++;
+      }
+      rolls.sort((a, b) => b - a);
+      const [tong, wu, zhi, zheng] = role === 'civil' ? [rolls[2], rolls[3], rolls[0], rolls[1]] : rolls;
+      const type = civil({ tong, wu, zhi, zheng }) ? 'civil' : 'military';
+      let name;
+      do { name = genName(F.culture, female); } while (offered.has(name) || customName(name).reason);
+      offered.add(name);
+      return { name, home: c.id, female, role: type, age: pick([24, 40]), skill: pick(customSkills(type)), tong, wu, zhi, zheng };
+    });
+    return true;
+  }
+  function acceptHire(index, name, art) {
+    const draft = S.hireList?.[index];
+    if (!draft) return null;
+    const { profile } = customInfo({ ...draft, name, art });
+    if (!profile) return null;
+    const g = addGeneral(profile);
+    S.hireList = null;
+    log(`${g.name}应榜入仕，听候差遣。`, 'big', city(g.home).tile);
+    return g;
+  }
 
   function setupStartArmies() {
     const H = (lon, lat) => { const [c, r] = GEO.nearestHex(lon, lat); return GEO.idx(c, r); };
-    const G = n => S.generals.find(g => g.name === n);
-    const mk = (f, gname, tile, units, name) => {
-      const g = gname ? G(gname) : null;
+    const G = (n, f) => S.generals.find(g => g.name === n && g.f === f && g.status === 'idle');
+    const mk = (f, commander, tile, units, name) => {
+      const g = typeof commander === 'string' ? G(commander, f) : commander;
       const free = x => !GEO.isWater(x) && !armyAt(x) && (!cityAt(x) || cityAt(x).f === f);
       if (!free(tile)) tile = GEO.ring(tile, 3).find(free);
       if (tile == null) return null;
@@ -259,8 +378,10 @@ var GAME = (function () {
     };
     mk('song', '岳飞', H(114.0, 33.6), ['elite', 'elite', 'cav', 'cav', 'inf', 'inf', 'inf', 'bow', 'bow'], '岳家军');
     mk('song', '张宪', H(113.6, 34.3), ['cav', 'inf', 'inf', 'bow'], '');
-    mk('song', '韩世忠', city(S.cities.find(c => c.name === '楚州').id).tile, ['inf', 'inf', 'inf', 'bow', 'bow', 'navy', 'navy'], '韩家军');
-    mk('song', '刘锜', H(115.8, 33.0), ['inf', 'inf', 'inf', 'bow', 'bow', 'bow'], '八字军');
+    const han = mk('song', '韩世忠', city(S.cities.find(c => c.name === '楚州').id).tile, ['inf', 'inf', 'inf', 'bow', 'bow', 'navy', 'navy'], '韩家军');
+    const liang = G('梁红玉', 'song');
+    if (han && liang) setDeputy(han.id, liang.id);
+    mk('song', '刘锜', H(115.8, 33.0), ['song_bazi', 'song_bazi', 'song_bazi', 'bow', 'bow', 'bow'], '八字军');
     mk('song', '吴璘', S.cities.find(c => c.name === '兴元').tile, ['inf', 'inf', 'inf', 'bow', 'bow', 'cav'], '吴家军');
     mk('song', '张俊', S.cities.find(c => c.name === '庐州').tile, ['inf', 'inf', 'inf', 'bow', 'bow', 'cav'], '');
     mk('song', '杨沂中', S.cities.find(c => c.name === '临安').tile, ['inf', 'inf', 'bow', 'bow', 'cav'], '殿前司');
@@ -282,7 +403,43 @@ var GAME = (function () {
       const gg = gens.sort((a, b) => b.tong - a.tong)[0] || randomGeneral(f, 'mil', 50);
       const units = [];
       for (let i = 0; i < size; i++) units.push(nomad ? (i % 2 ? 'hbow' : 'cav') : (i % 3 === 0 ? 'bow' : (i === 1 && F.techs.jiaqi ? 'hcav' : (i % 4 === 3 ? 'cav' : 'inf'))));
-      mk(f, gg.name, cap.tile, units, '');
+      mk(f, gg, cap.tile, units, '');
+    }
+    const extra = difficultyRules().command.northHosts || 0;
+    if (!extra) return;
+    const song = citiesOf('song');
+    const distance = c => Math.min(...song.map(s => GEO.dist(c.tile, s.tile)));
+    const bases = citiesOf('jin').concat(citiesOf('xia')).sort((a, b) => distance(a) - distance(b));
+    for (const c of bases.slice(0, extra)) {
+      const g = S.generals.filter(g => g.f === c.f && g.status === 'idle' && !civil(g))
+        .sort((a, b) => b.tong - a.tong)[0] || randomGeneral(c.f, 'mil', 65);
+      const types = [fac(c.f).techs.jiaqi ? 'hcav' : 'cav', 'cav', 'inf', 'bow', 'inf', 'siege', 'bow', 'cav'];
+      mk(c.f, g, c.tile, types.slice(0, capFor(g.id)), '边军');
+    }
+  }
+
+  function distributeStartSurplus() {
+    for (const a of S.armies) {
+      const excess = a.units.splice(armyCap(a));
+      if (!excess.length) continue;
+      for (const ally of S.armies) {
+        if (!excess.length) break;
+        if (ally.f !== a.f || !GEO.NBR[a.tile].includes(ally.tile)) continue;
+        const indices = mergeIndices(ally, excess);
+        if (!indices.length) continue;
+        moveMergeUnits(ally, excess, indices);
+        ally.mp = armyMP(ally);
+        recordUnits(ally);
+      }
+      if (excess.length) {
+        const local = cityAt(a.tile) || city(S.tileCity[a.tile]);
+        const home = local?.f === a.f ? local : citiesOf(a.f).reduce((nearest, c) =>
+          !nearest || GEO.dist(a.tile, c.tile) < GEO.dist(a.tile, nearest.tile) ? c : nearest, null);
+        home.garrison.push(...excess);
+        recordUnits(home);
+      }
+      a.mp = armyMP(a);
+      recordUnits(a);
     }
   }
 
@@ -365,6 +522,7 @@ var GAME = (function () {
     }
   }
   function declareWar(a, b, quiet) {
+    if (b === S.player && mongolCampaign(a) && S.year < DATA.MONGOL_RISE.songWarYear) return;
     if (a === b || atWar(a, b) || (b === S.player && marriageProtects(a))) return;
     const r = getRel(a, b);
     const cause = casusBelli(a, b), broken = r.truce > 0;
@@ -476,6 +634,7 @@ var GAME = (function () {
     return S._playerThreat = { turn: S.turn, power, rank, share, score, active, border, parts, level };
   }
   function coalitionCandidate(f, opinion = Infinity) {
+    if (mongolCampaign(f) && S.year < DATA.MONGOL_RISE.songWarYear) return false;
     const p = S.player, F = fac(f);
     if (!F?.alive || F.warWeary >= 70 || vassalLord(f)) return false;
     const r = getRel(f, p);
@@ -698,7 +857,7 @@ var GAME = (function () {
   };
   const LEGACY_BLD = {
     walls: { wall: 40 }, farm: { food: 3, riverFood: 2 }, granary: { food: 2, happy: 5, noFamine: true },
-    market: { goldPct: 0.25 }, shibosi: { gold: 3, tradeSlot: 1 }, smithy: { prod: 3, iron: 1 },
+    market: { goldPct: 0.325 }, shibosi: { gold: 3.9, tradeSlot: 1 }, smithy: { prod: 3, iron: 1 },
     academy: { sci: 3, happy: 2, keju: 1 }, barracks: { recruitCost: 0.25 }, temple: { happy: 8 },
     dock: { dock: true }, stable: { horse: 2 }, workshop: { gold: 4, tradePct: 0.2 },
   };
@@ -725,9 +884,11 @@ var GAME = (function () {
   }
   // 城池建筑效果汇总（缓存在 c._bfx）
   function bldFx(c) {
-    const bd = c.buildings, key = Object.keys(bd).filter(k => bd[k]).join(',');
+    const bd = c.buildings, works = Object.keys(c.works || {});
+    const key = Object.keys(bd).filter(k => bd[k]).join(',') + '|' + works.join(',');
     if (c._bfx && c._bfx.k === key) return c._bfx.v;
     const v = {}; for (const id in bd) if (bd[id]) mergeEff(v, bldEff(id));
+    for (const id of works) mergeEff(v, DATA.GREAT_WORKS[id].eff);
     c._bfx = { k: key, v };
     return v;
   }
@@ -811,13 +972,29 @@ var GAME = (function () {
     workTileCache.set(owned, result);
     return result;
   }
-  function cityYield(c) {
+  function governorEffects(g) {
+    if (!g) return { food: 0, prod: 0, gold: 0, sci: 0, happy: 0, penalty: 0, happyPenalty: 0, unrest: 0 };
+    const scholar = civil(g), weak = Math.max(0, 60 - g.zheng), k = scholar ? 1.15 : 1;
+    const martialPenalty = !scholar && !versatile(g) ? 0.1 : 0;
+    const happyPenalty = weak / 2;
+    const teaching = scholar && g.zheng >= 60 ? g.zhi / 40 * Math.min(1, (g.zheng - 60) / 20) + (hasSkill(g, '教化') ? 3 : 0) : 0;
+    const b = clamp((g.zheng - 45) / 110, 0, 0.45) * (hasSkill(g, '治世') ? 1.5 : 1) * 0.6;
+    return {
+      food: (b + (hasSkill(g, '劝农') ? 0.3 : 0)) * k, prod: b * k,
+      gold: (b + (hasSkill(g, '理财') ? 0.3 : 0)) * k,
+      sci: teaching,
+      happy: ((g.zheng - 50) / 8 + (hasSkill(g, '教化') ? 10 : 0)) * k - happyPenalty,
+      penalty: 1 - (1 - Math.min(0.35, weak / 80)) * (1 - martialPenalty), happyPenalty, unrest: weak / 200,
+    };
+  }
+  function cityYield(c, governor = gen(c.governor)) {
     const f = c.f, { center: cy, yields: ys } = workTileYields(c);
     let food = 3, prod = 2, gold = 2, sci = 1 + c.pop * 0.25;
     food += cy.food; prod += cy.prod; gold += cy.gold;
     const n = Math.min(ys.length, c.pop + 1);
     for (let i = 0; i < n; i++) { food += ys[i].food; prod += ys[i].prod; gold += ys[i].gold; }
     gold += c.pop * 0.6;
+    if (f === 'song') gold += (2 + c.pop * 0.6) * DATA.STATE_ECONOMY.songTax;
     const bx = bldFx(c), tx = techFx(f);
     food += (bx.food || 0) + (bx.riverFood && GEO.river[c.tile] ? bx.riverFood : 0) + (bx.coastFood && c.port ? bx.coastFood : 0);
     prod += bx.prod || 0; gold += (bx.gold || 0) + (bx.coastGold && c.port ? bx.coastGold : 0); sci += bx.sci || 0;
@@ -825,25 +1002,19 @@ var GAME = (function () {
     food *= 1 + (bx.foodPct || 0); prod *= 1 + (bx.prodPct || 0); sci *= 1 + (bx.sciPct || 0);
     let fm = 1 + (tx.foodPct || 0), pm = 1 + (tx.prodPct || 0), gm = 1 + (tx.goldPct || 0), sm = 1 + (tx.sciPct || 0);
     if (f === S.player && typeof COURT !== 'undefined' && S.court) { gm += COURT.bonus('zaixiang') * 0.7 + COURT.bonus('sansi') * 0.5; fm += COURT.bonus('sansi'); sm += COURT.bonus('hanlin') * 1.2; }
-    const g = gen(c.governor);
-    if (g) {
-      let b = clamp((g.zheng - 45) / 110, 0, 0.45) * (hasSkill(g, '治世') ? 1.5 : 1);
-      fm += b * 0.6; pm += b * 0.6; gm += b * 0.6;
-      if (hasSkill(g, '理财')) gm += 0.3;
-      if (hasSkill(g, '劝农')) fm += 0.3;
-      if (hasSkill(g, '教化')) sci += 3;
-      sci += g.zhi / 40;
-    }
+    const g = governor, gov = governorEffects(g);
+    fm += gov.food; pm += gov.prod; gm += gov.gold; sci += gov.sci;
     const lm = clamp(0.45 + c.loyalty / 110, 0.5, 1.15);
     const tier = cityTier(c), role = cityRoleFx(c);
-    const tierMul = (1 + tier.yieldPct) * (g ? 1 : 1 + (tier.vacantPct || 0));
-    const trade = tradeIncome(c);
+    const tierMul = (1 + tier.yieldPct) * (g ? 1 - gov.penalty : 1 + (tier.vacantPct || 0));
+    const trade = tradeIncome(c) * (1 - gov.penalty);
+    const borderTrade = c.buildings.quechang && borderMarketOpen(c) ? DATA.STATE_ECONOMY.borderMarketGold : 0;
     const res = {
       food: Math.round(food * fm * tierMul * (1 + (role.foodPct || 0))),
       prod: Math.round(prod * pm * lm * tierMul * (1 + (role.prodPct || 0))),
-      gold: Math.round(gold * gm * lm * tierMul * (1 + (role.goldPct || 0)) + trade),
+      gold: Math.round(gold * gm * lm * tierMul * (1 + (role.goldPct || 0)) + trade + borderTrade),
       sci: Math.round(sci * sm * lm * tierMul * (1 + (role.sciPct || 0)) * 10) / 10,
-      trade,
+      trade: Math.round(trade),
     };
     if (f !== S.player && f !== 'rebel') {
       const k = difficultyRules().aiYield;
@@ -860,13 +1031,12 @@ var GAME = (function () {
     res.foodNeed = Math.round(c.pop * 1.6);
     return res;
   }
-  function loyaltyTarget(c) {
+  function loyaltyTarget(c, governor = gen(c.governor)) {
     const F = fac(c.f);
     let t = 58;
     t += (bldFx(c).happy || 0) + (techFx(c.f).happy || 0);
     t += cityRoleFx(c).happy || 0;
-    const g = gen(c.governor);
-    if (g) { t += (g.zheng - 50) / 8; if (hasSkill(g, '教化')) t += 10; }
+    t += governorEffects(governor).happy;
     t += Math.min(10, luxuryCount(c.f) * 2);
     t -= Math.min(20, F.warWeary / 8);
     t -= c.unrest;
@@ -928,9 +1098,21 @@ var GAME = (function () {
   }
 
   // ---------- 海贸 ----------
-  function tradeSlots(c) {
+  function officeBonus(f, office) {
+    return f === S.player && S.court && typeof COURT !== 'undefined' ? COURT.bonus(office) : 0;
+  }
+  function hasOffice(f, office) {
+    return f === S.player && S.court && typeof COURT !== 'undefined' && !!COURT.holder(office);
+  }
+  function baseTradeSlots(c) {
     const n = bldFx(c).tradeSlot || 0;
     return n ? n + (techFx(c.f).tradeSlot || 0) : 0;
+  }
+  function tradeSlots(c) {
+    const n = baseTradeSlots(c);
+    if (!n || !hasOffice(c.f, 'shibo')) return n;
+    const extra = S.cities.find(o => o.f === c.f && o.trade.length && o.trade.length > baseTradeSlots(o));
+    return n + Number(!extra || extra === c);
   }
   function routeValue(a, b) {
     const d = GEO.dist(a.tile, b.tile);
@@ -938,32 +1120,40 @@ var GAME = (function () {
     v *= 1 + (bldFx(a).tradePct || 0);
     v *= 1 + (techFx(a.f).tradePct || 0);
     v *= 1 + (cityRoleFx(a).tradePct || 0);
+    v *= 1 + officeBonus(a.f, 'shibo');
     return Math.round(v);
   }
   function tradeIncome(c) {
     let s = 0;
-    for (const tid of c.trade) s += routeValue(c, city(tid));
+    const slots = c.trade.length ? tradeSlots(c) : 0;
+    for (let i = 0; i < Math.min(c.trade.length, slots); i++) s += routeValue(c, city(c.trade[i]));
     // 他国航线带来的收入
     if (c._inbound) s += Math.min(15, c._inbound);
     return s;
   }
-  function canRoute(a, b) {
-    if (!a.port || !b.port || a.f === b.f || atWar(a.f, b.f) || b.f === 'rebel') return false;
-    if (!fac(a.f).met[b.f]) return false;
-    if (a.trade.includes(b.id)) return false;
-    if (!a.seas.some(s => b.seas.includes(s))) return false;
-    if (!techFx(a.f).tradeRange && GEO.dist(a.tile, b.tile) > 48) return false;
-    return true;
+  function routeReason(a, b) {
+    if (!a?.port || !b?.port || !fac(a.f)?.alive || !fac(b.f)?.alive) return '须择两座有主港口';
+    if (a.f === b.f) return '两港同国，毋须开互市海路';
+    if (b.f === 'rebel' || atWar(a.f, b.f)) return '交兵之国不可通商';
+    if (!fac(a.f).met[b.f]) return '两国尚未通使';
+    if (a.trade.includes(b.id)) return '此海路早已通航';
+    if (!a.seas.some(s => b.seas.includes(s))) return '两港不在同一海域';
+    if (!techFx(a.f).tradeRange && GEO.dist(a.tile, b.tile) > 48) return '海路逾四十八程，须先习远洋之术';
+    return '';
   }
+  function canRoute(a, b) { return !routeReason(a, b); }
   function routeTargets(a) { return S.cities.filter(b => canRoute(a, b)).sort((x, y) => routeValue(a, y) - routeValue(a, x)); }
   function openRoute(aid, bid) {
     const a = city(aid), b = city(bid);
-    if (a.trade.length >= tradeSlots(a) || !canRoute(a, b)) return false;
+    const reason = routeReason(a, b);
+    if (reason) return { ok: false, msg: reason };
+    const slots = tradeSlots(a);
+    if (a.trade.length >= slots) return { ok: false, msg: slots ? `海路已满（${a.trade.length}/${slots} 条）` : '此港尚无可开的海路' };
     a.trade.push(bid);
     getRel(a.f, b.f).op += 5;
     if (a.f === S.player) log(`${a.name}市舶司开辟至【${fac(b.f).name}】${b.name}的海路。`, 'eco');
     if (b.f === S.player) log(`【${fac(a.f).name}】商船自${a.name}抵达${b.name}，互市开通。`, 'eco');
-    return true;
+    return { ok: true, msg: '海路已通' };
   }
   function breakRoutesBetween(fa, fb) {
     for (const c of S.cities) {
@@ -973,10 +1163,24 @@ var GAME = (function () {
   }
   function computeInbound() {
     for (const c of S.cities) c._inbound = 0;
-    for (const c of S.cities) for (const t of c.trade) { const b = city(t); b._inbound += Math.round(routeValue(c, b) * 0.5); }
+    for (const c of S.cities) if (c.trade.length) {
+      const slots = tradeSlots(c);
+      for (let i = 0; i < Math.min(c.trade.length, slots); i++) {
+        const b = city(c.trade[i]);
+        b._inbound += Math.round(routeValue(c, b) * 0.5);
+      }
+    }
   }
 
   // ---------- 生产 ----------
+  function borderMarketOpen(c) {
+    return cityTiles(c).some(t => GEO.NBR[t].some(n => {
+      const f = tileOwner(n);
+      if (!f || f === c.f || f === 'rebel') return false;
+      const rel = S.rel[relKey(c.f, f)];
+      return !!rel && !rel.war && rel.truce > 0;
+    }));
+  }
   function buildOptions(c) {
     if (buildingFull(c)) return [];
     const out = [];
@@ -990,6 +1194,7 @@ var GAME = (function () {
       if (b.needB && ![].concat(b.needB).every(x => c.buildings[x])) continue;
       if (b.only && ![].concat(b.only).includes(c.f)) continue;
       if (b.capital && !c.cap) continue;
+      if (id === 'quechang' && !borderMarketOpen(c)) continue;
       if (c.queue.some(q => q.kind === 'b' && q.id === id)) continue;
       out.push(id);
     }
@@ -1000,9 +1205,9 @@ var GAME = (function () {
     const F = fac(c.f);
     for (const id in U) {
       const u = U[id];
-      if (u.home && (c.origF ?? c.f) !== u.home) continue;
+      if (u.home && (c.origF ?? c.f) !== u.home && !(id === 'mongol_keshig' && mongolCampaign(c.f))) continue;
       if (u.tech && !hasTech(c.f, u.tech)) continue;
-      if (id === 'elite' && c.f !== 'song') continue;
+      if (id === 'elite' || u.upgradeOnly || (u.only && c.f !== u.only)) continue;
       if (u.nomad && !DATA.NOMAD[F.culture]) continue;
       if (u.needDock && !bldFx(c).dock) continue;
       out.push(id);
@@ -1022,12 +1227,89 @@ var GAME = (function () {
   }
   function queueUnit(cid, id) {
     const c = city(cid), F = fac(c.f);
-    if (!U[id] || (U[id].home && !unitOptions(c).includes(id))) return false;
+    if (id === 'elite' || !U[id] || U[id].upgradeOnly || (U[id].home && !unitOptions(c).includes(id))) return false;
     if (!canAffordUnit(c, id)) return false;
     const k = unitCost(c, id);
     F.gold -= k.gold; F.man -= k.man; F.horse -= k.horse; F.iron -= k.iron;
     c.queue.push({ kind: 'u', id, prog: 0, cost: k.prod });
     return true;
+  }
+  function eliteOrder(a) {
+    const c = a && cityAt(a.tile), g = a && gen(a.gen);
+    if (!c || c.f !== 'song' || a.f !== c.f || !c.buildings.barracks || !g) return { reason: '须宋将领军驻于本国有军营之城' };
+    const kin = g.hist && DATA.YUE_GUARD.has(g.name);
+    if (!kin && !hasTech(c.f, 'beiwei')) return { reason: '主将须属岳家军系，或已研成背嵬法' };
+    const k = unitCost(c, 'elite');
+    if (!kin) for (const key of Object.keys(k)) k[key] = Math.ceil(k[key] * 1.3);
+    return { c, k };
+  }
+  function eliteInfo(a) {
+    const info = eliteOrder(a);
+    if (info.reason) return info;
+    const { c, k } = info, F = fac(c.f), booked = c.queue.filter(q => q.kind === 'elite' && q.army === a.id).length;
+    const refitted = c.queue.filter(q => q.kind === 'change' && q.id === 'elite' && q.army === a.id).length;
+    if (a.units.filter(u => eliteUnit(u.t)).length + booked + refitted >= 3) return { ...info, reason: '本军已有三营背嵬或已募足' };
+    if (a.units.length + booked >= armyCap(a)) return { ...info, reason: '军团编制已满' };
+    if (c.pop < 2 || ['gold', 'man', 'horse', 'iron'].some(key => F[key] < k[key])) return { ...info, reason: '户口或钱粮军资不足' };
+    return info;
+  }
+  function eliteUnit(type) { return DATA.unitBase(type) === 'elite'; }
+  function guardRefitReady(owner) {
+    const g = owner?.units && gen(owner.gen);
+    return !!(g && owner.f === 'song' && hasTech('song', 'beiwei') && (versatile(g) || g.hist && DATA.YUE_GUARD.has(g.name)));
+  }
+  function remainingElite(a) {
+    const orders = cityAt(a.tile)?.queue.filter(q => ['elite', 'change'].includes(q.kind) && q.id === 'elite' && q.army === a.id).length || 0;
+    return 3 - orders - a.units.filter(u => eliteUnit(u.t)).length;
+  }
+  function queueElite(aid) {
+    const a = army(aid), info = eliteInfo(a);
+    if (info.reason) return false;
+    const { c, k } = info, F = fac(c.f);
+    for (const key of ['gold', 'man', 'horse', 'iron']) F[key] -= k[key];
+    c.queue.push({ kind: 'elite', id: 'elite', army: aid, prog: 0, cost: k.prod, paid: k });
+    return true;
+  }
+  function trainingArmy(a) { return a.units.some(u => u.training != null); }
+  function upgradeInfo(owner, index, automated = false) {
+    const u = checkedUnits(owner, automated)?.[index], id = DATA.UPGRADES[u?.t];
+    if (!u || !id) return { msg: '此营无可换之装' };
+    if (u.training != null) return { id, msg: '此营正在换装' };
+    const c = owner.units ? cityAt(owner.tile) : owner;
+    if (!c || c.f !== owner.f || !c.buildings.barracks) return { id, msg: '须驻本国有军营之城' };
+    if (owner.battleTurn === S.turn || enemyAdjacent(c.tile, c.f)) return { id, msg: '临敌不及换装' };
+    const F = fac(c.f), tech = U[id].tech;
+    let next = unitCost(c, id);
+    if (id === 'beiwei_guard' && !guardRefitReady(owner)) return { id, msg: '须通背嵬法，并由岳家军系或文武兼资的宋将领军' };
+    if (id === 'elite') {
+      if (c.f !== 'song') return { id, msg: '背嵬军仅宋可练' };
+      const eligible = owner.units ? eliteOrder(owner) : null;
+      if (eligible?.reason || (!owner.units && !hasTech(c.f, tech))) return { id, msg: eligible?.reason || '须先通背嵬法' };
+      const ordered = c.queue.filter(q => ['elite', 'change'].includes(q.kind) && q.id === 'elite' && q.army === owner.id).length;
+      if (owner.units && owner.units.filter(x => eliteUnit(x.t)).length + ordered >= 3) return { id, msg: '本军背嵬已足三营' };
+      next = eligible?.k || Object.fromEntries(Object.entries(next).map(([key, value]) => [key, Math.ceil(value * 1.3)]));
+    } else if (!hasTech(c.f, tech)) return { id, msg: '须先通' + TECH[tech].name };
+    const previous = unitCost(c, u.t);
+    const cost = Object.fromEntries(['gold','man','horse','iron'].map(k => [k, Math.ceil(Math.max(0, next[k] - previous[k]) * 1.2)]));
+    const work = Math.max(1, next.prod - previous.prod);
+    if (Object.keys(cost).some(k => F[k] < cost[k])) return { id, cost, work, msg: '军资未足' };
+    return { ok: true, id, cost, work, c, u };
+  }
+  function queueUpgrade(owner, index, automated = false) {
+    const info = upgradeInfo(owner, index, automated);
+    if (!info.ok) return info;
+    const { c, u, id, cost, work } = info, F = fac(c.f);
+    for (const [key, value] of Object.entries(cost)) F[key] -= value;
+    const job = S.nextUpgrade++;
+    u.training = job;
+    c.queue.push({ kind: 'change', id, job, army: owner.units ? owner.id : null, prog: 0, cost: work, paid: cost });
+    if (owner.units) { owner.path = []; owner.prog = 0; owner.progTo = null; owner.progFrac = 0; }
+    return info;
+  }
+  function upgradeSubject(c, order) {
+    const owner = order.army == null ? c : army(order.army);
+    const u = (owner?.units || owner?.garrison)?.find(u => u.training === order.job);
+    return { owner, u };
   }
   function queueBuilding(cid, id) {
     const c = city(cid);
@@ -1035,7 +1317,19 @@ var GAME = (function () {
     c.queue.push({ kind: 'b', id, prog: 0, cost: buildingCost(c, id) });
     return true;
   }
-  function buildingCost(c, id) { return Math.round(B[id].prod * (1 - (cityRoleFx(c).buildCost || 0))); }
+  function buildingCost(c, id) { return Math.round(B[id].prod * (1 - (cityRoleFx(c).buildCost || 0)) * (1 - officeBonus(c.f, 'gongbu'))); }
+  function workOptions(c) {
+    if (c.tier < 2) return [];
+    return Object.keys(DATA.GREAT_WORKS).filter(id => !c.works?.[id] && !c.queue.some(q => q.kind === 'work' && q.id === id));
+  }
+  function workCost(c, id) { return Math.round(DATA.GREAT_WORKS[id].work * (1 - officeBonus(c.f, 'gongbu'))); }
+  function queueWork(cid, id) {
+    const c = city(cid), work = DATA.GREAT_WORKS[id];
+    if (!c || !work || !workOptions(c).includes(id) || fac(c.f).gold < work.gold) return false;
+    fac(c.f).gold -= work.gold;
+    c.queue.push({ kind: 'work', id, prog: 0, cost: workCost(c, id), paid: work.gold });
+    return true;
+  }
   function demolishBuilding(cid, id) {
     const c = city(cid);
     if (!c?.buildings[id] || !Object.hasOwn(B, id)) return false;
@@ -1074,19 +1368,27 @@ var GAME = (function () {
     if (u.need) needs.push([TIER_CHECKS[3](c, u), `已建${B[u.need].name}`]);
     if (u.anyOf) needs.push([TIER_CHECKS[4](c, u), `已建${u.anyOf.map(b => B[b].name).join('、')}之一`]);
     const queued = hasTierOrder(c);
-    return { id, name: next.name, needs, queued, cost: u.prod, ok: !queued && needs.every(([met]) => met) };
+    return { id, name: next.name, needs, queued, cost: Math.round(u.prod * (1 - officeBonus(c.f, 'gongbu'))), ok: !queued && needs.every(([met]) => met) };
   }
-  function queueTier(cid) {
+  function queueTier(cid, delegated = false) {
     const c = city(cid);
     if (!c || !canUpgradeCity(c)) return false;
     const id = c.tier + 1;
-    c.queue.push({ kind: 'tier', id, prog: 0, cost: TIERS[id].upgrade.prod });
+    c.queue.push({ kind: 'tier', id, prog: 0, cost: tierUpgrade(c).cost, ...(delegated ? { delegated } : {}) });
     return true;
   }
   function dequeue(cid, k) {
     const c = city(cid), q = c.queue[k];
     if (!q) return;
-    if (q.kind === 'u') { const F = fac(c.f), uc = unitCost(c, q.id); F.gold += uc.gold; F.man += uc.man; F.horse += uc.horse; F.iron += uc.iron; }
+    if (['u', 'elite', 'change'].includes(q.kind)) {
+      const F = fac(c.f), uc = q.paid || unitCost(c, q.id);
+      for (const key of ['gold','man','horse','iron']) F[key] += uc[key];
+    }
+    if (q.kind === 'change') {
+      const { u } = upgradeSubject(c, q);
+      if (u) delete u.training;
+    }
+    if (q.kind === 'work') fac(c.f).gold += Math.floor(q.paid * (1 - clamp(q.prog / q.cost, 0, 1)));
     c.queue.splice(k, 1);
   }
   // ---------- 用钱之道：捐资助学、赈济、犒军、移民实边 ----------
@@ -1110,11 +1412,11 @@ var GAME = (function () {
   }
   function reliefCost(c) { return Math.round(30 + c.pop * 12); }
   function reliefReady(c) { return !(c.reliefT != null && S.T - c.reliefT < 4); }
-  function relief(cid) {
+  function relief(cid, quiet = false) {
     const c = city(cid), F = fac(c.f), k = reliefCost(c);
     if (!reliefReady(c) || F.gold < k) return false;
     F.gold -= k; c.loyalty = Math.min(100, c.loyalty + 15); c.unrest = Math.max(0, c.unrest - 15); c.reliefT = S.T;
-    if (c.f === S.player) log(`开仓赈济${c.name}，耗钱 ${k} 贯，民心大悦。`, 'eco', c.tile);
+    if (c.f === S.player && !quiet) log(`开仓赈济${c.name}，耗钱 ${k} 贯，民心大悦。`, 'eco', c.tile);
     return true;
   }
   function rewardCost(a) { return 20 + a.units.length * 12; }
@@ -1123,10 +1425,26 @@ var GAME = (function () {
     const a = army(aid); if (!a) return false;
     const F = fac(a.f), k = rewardCost(a);
     if (!rewardReady(a) || F.gold < k) return false;
-    F.gold -= k; a.morale = Math.min(100, a.morale + 30); a.rewT = S.T;
+    F.gold -= k; a.morale = Math.min(moraleCap(a.f), a.morale + 30); a.rewT = S.T;
     if (a.gen != null) gainExp(a.gen, 15);
     if (a.f === S.player) log(`犒赏${armyName(a)}，耗钱 ${k} 贯，将士欢跃。`, 'mil', a.tile);
     return true;
+  }
+  function hostReward(f = S.player, execute = false) {
+    const F = fac(f);
+    const armies = S.armies.filter(a => a.f === f && a.frontier == null);
+    const troops = armies.reduce((sum, a) => sum + sumStr(a.units), 0);
+    const cost = Math.ceil(troops / DATA.STATE_ECONOMY.rewardTroopsPerGold);
+    if (!troops) return { cost, msg: '无军可犒' };
+    if (F.rewardYear === S.year) return { cost, msg: '今年已犒赏三军' };
+    if (F.gold < cost) return { cost, msg: '府库不足' };
+    if (execute) {
+      F.gold -= cost;
+      F.rewardYear = S.year;
+      for (const a of armies) a.morale = Math.min(moraleCap(f), a.morale + 20);
+      if (f === S.player) log(`诏犒三军，发钱 ${cost} 贯，将士振奋。`, 'mil');
+    }
+    return { ok: true, cost, msg: '三军已受犒赏' };
   }
   function migrateCost(c) { return 120 + c.pop * 30; }
   function migrateOk(c) { return c.pop < Math.min(12, cityTier(c).pop) && !c.cap && !(c.migT != null && S.T - c.migT < 8); }
@@ -1157,8 +1475,20 @@ var GAME = (function () {
     a.prog = 0; a.progTo = null; a.progFrac = 0;
   }
   function clearSentry(a) { a.sentry = false; a.fortT = null; }
+  function mongolCampaign(f) {
+    return f === 'mongol' && fac(f)?.alive && fac(f).mongolBoost && S.year >= DATA.MONGOL_RISE.start && S.year <= DATA.MONGOL_RISE.end;
+  }
+  function moraleCap(f) { return 100 + (mongolCampaign(f) ? DATA.MONGOL_RISE.morale : 0); }
+  function siegeDamage(f) { return 1 + (mongolCampaign(f) ? DATA.MONGOL_RISE.wallDamage : 0); }
+  function campaignOffense(f) { return mongolCampaign(f) ? difficultyRules().mongolOffense : 1; }
+  function steppeProtected(c) {
+    const rule = DATA.MONGOL_RISE;
+    return S.year < rule.start && !!c && (rule.tribes.includes(c.origF) && rule.tribes.includes(c.f) ||
+      c.name === '兴庆' && c.f === 'xia');
+  }
   function createArmyRaw(f, tile, units, genId, name, record = true) {
-    const a = { id: S.nextArmy++, f, tile, units, gen: genId, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null,
+    if (gen(genId)?.wound > 0) genId = null;
+    const a = { id: S.nextArmy++, f, tile, units, gen: genId, deputy: null, morale: 75, path: [], mp: 0, name: name || '', sentry: false, fortT: null,
       expeditionWarned: false, battleTurn: null };
     S.armies.push(a);
     if (genId != null) { const g = gen(genId); g.status = 'army'; g.loc = a.id; }
@@ -1166,8 +1496,32 @@ var GAME = (function () {
     if (record) rec({ k: 'new', id: a.id, f, tile, gen: genId, n: units.length, str: sumStr(units) });
     return a;
   }
-  function armyCap(a) { const g = gen(a.gen); return Math.min(10, g ? 4 + Math.floor(g.tong / 20) : 4); }
-  function capFor(genId) { const g = gen(genId); return Math.min(10, g ? 4 + Math.floor(g.tong / 20) : 4); }
+  function armyCap(a) { return capFor(a.gen); }
+  function capFor(genId) { const g = gen(genId); return g ? g.tong < 50 ? 3 : Math.min(10, 4 + Math.floor(g.tong / 20)) : 4; }
+  function weakCommand(g) { return g && g.tong < 50 ? 1 - (50 - g.tong) / 200 : 1; }
+  const commandBattleSkills = new Set(['撼山', '大汗', '骁勇', '坚守', '守险', '攻城', '水战', '铁骑', '神射']);
+  function battleCommand(side, role, terrain) {
+    const chief = gen(side.gen), deputy = gen(side.deputy);
+    if (!chief || !deputy) return chief;
+    const skills = skillList(chief).slice();
+    let best = null, gain = 0;
+    for (const skill of skillList(deputy)) {
+      if (skills.includes(skill) || !commandBattleSkills.has(skill)) continue;
+      const candidate = { ...chief, skills: [...skills, skill] };
+      const value = side.units.reduce((sum, u) => sum + u.s *
+        (terrainPower(u.t, role, role, terrain, candidate) * skillMult(candidate, u, terrain, role) -
+          terrainPower(u.t, role, role, terrain, chief) * skillMult(chief, u, terrain, role)), 0);
+      if (value > gain) { gain = value; best = skill; }
+    }
+    if (best) skills.push(best);
+    else if (hasSkill(deputy, '运筹') && !skills.includes('运筹')) skills.push('运筹');
+    const bonus = k => chief[k] + Math.max(0, deputy[k] - chief[k]) * 0.3;
+    return { ...chief, skills, tong: bonus('tong'), wu: bonus('wu'), zhi: bonus('zhi') };
+  }
+  function adviserBonus(side) {
+    const deputy = gen(side.deputy);
+    return civil(deputy) ? Math.min(0.2, (deputy.zhi - 50) / 200) : 0;
+  }
   function armyName(a) {
     if (a.name) return a.name;
     const g = gen(a.gen);
@@ -1175,13 +1529,19 @@ var GAME = (function () {
   }
   function canSail(a) {
     const nav = a.units.filter(u => DATA.unitBase(u.t) === 'navy').length;
-    return nav > 0 && nav * 3 >= a.units.length - nav;
+    return nav > 0 && nav * 3 >= a.units.length - nav || !!difficultyRules().command.transports &&
+      a.f !== S.player && a.f !== 'rebel' && atWar(a.f, S.player);
   }
   function armyMP(a, onWater) {
     let mv = 99;
     for (const u of a.units) if (DATA.unitBase(u.t) !== 'navy') mv = Math.min(mv, U[u.t].mv);
+    if (mv !== 99 && mongolCampaign(a.f) && a.f !== S.player) mv += DATA.MONGOL_RISE.march;
     if (mv === 99) mv = 6;
     mv += techFx(a.f).landMP || 0;
+    if (northStart(a.f)) {
+      const { northMarch, northMarchEnd } = difficultyRules().command;
+      if (northMarch && S.T < northMarchEnd && atWar(a.f, S.player)) mv += northMarch;
+    }
     const g = gen(a.gen);
     if (g) { if (hasSkill(g, '疾行')) mv += 2; if (hasSkill(g, '运筹') || hasSkill(g, '大汗')) mv += 1; mv += itemSum(g, 'mv'); }
     return mv * mpFactor();
@@ -1212,7 +1572,7 @@ var GAME = (function () {
       const to = route[i], o = armyAt(to);
       const valid = GEO.NBR[from]?.includes(to);
       const foe = valid && marchFoe(f, to, o);
-      if (foe && !passing && atWar(f, foe)) return { kind: 'attack', to, foe };
+      if (foe && !passing && atWar(f, foe) && (f === S.player || !steppeProtected(cityAt(to)))) return { kind: 'attack', to, foe };
       if (!valid || foe || !canEnter(f, to, a)) return { kind: passing ? 'wait' : 'blocked' };
       cost += moveCost(a, from, to);
       if (!o || o === a) return { kind: passing ? 'pass' : 'move', to, end: i, cost };
@@ -1222,39 +1582,76 @@ var GAME = (function () {
     return { kind: 'wait' };
   }
   // A* 寻路；目标可为敌方单位/城市所在格
+  const pathTileCount = GEO.W * GEO.H;
+  const pathMarks = new Uint8Array(pathTileCount), pathPass = new Uint8Array(pathTileCount);
+  const pathOccupants = new Uint8Array(pathTileCount), pathScores = new Float64Array(pathTileCount);
   function findPath(a, goal, maxIter) {
     if (a.tile === goal) return [];
+    if (trainingArmy(a)) return null;
     maxIter = maxIter || 6000;
     const f = a.f;
-    const occ = new Set(), friendly = new Set();
+    // 单次同步搜索复用定长地图缓存，读写顺序沿用原有候选顺序。
+    pathMarks.fill(0); pathPass.fill(0); pathOccupants.fill(0);
     let target = null;
     for (const o of S.armies) {
       if (o.tile === goal) target = o;
-      (o.f === f ? friendly : occ).add(o.tile);
+      pathOccupants[o.tile] |= o.f === f ? 1 : 2;
     }
     if (target && (target.f === f || !atWar(f, target.f))) return null;
     // 本次搜索内军队、邦交与地形均不变。仍用行军入口的规则求值，随后复用结果。
-    const passage = new Map(), stepCosts = [[], []];
+    const passage = new Map(), stepCosts = [[], []], foes = [];
     const terrain = GEO.terrain;
     function passable(n, tt) {
+      if (pathPass[n]) return pathPass[n] === 1;
       const key = tt === T.SEA || tt === T.LAKE ? tt : tileOwner(n);
       let allowed = passage.get(key);
       if (allowed === undefined) { allowed = canEnter(f, n, a); passage.set(key, allowed); }
+      pathPass[n] = allowed ? 1 : 2;
       return allowed;
     }
     // 从空格展开。优先选择足以走完的穿营段，只有窄路时也可先定路线，待前军挪开再走。
     const maxMarch = Math.max(a.mp, armyMP(a));
-    const gS = new Map(), came = new Map();
+    const came = new Map();
     // 二叉堆
     const hk = [], hv = [];
     const push = (k, v) => { hk.push(k); hv.push(v); let i = hk.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (hv[p] <= hv[i]) break; [hk[p], hk[i]] = [hk[i], hk[p]]; [hv[p], hv[i]] = [hv[i], hv[p]]; i = p; } };
     const pop = () => { const k = hk[0]; const lk = hk.pop(), lv = hv.pop(); if (hk.length) { hk[0] = lk; hv[0] = lv; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < hk.length && hv[l] < hv[m]) m = l; if (r < hk.length && hv[r] < hv[m]) m = r; if (m === i) break; [hk[m], hk[i]] = [hk[i], hk[m]]; [hv[m], hv[i]] = [hv[i], hv[m]]; i = m; } } return k; };
-    gS.set(a.tile, 0); push(a.tile, GEO.dist(a.tile, goal));
-    const closed = new Set();
-    let it = 0;
+    pathMarks[a.tile] = 1; pathScores[a.tile] = 0; push(a.tile, GEO.dist(a.tile, goal));
+    let it = 0, cur, gc, bestPass;
+    const offer = (n, stepCost, via) => {
+      const ng = gc + stepCost;
+      if (pathMarks[n] === 0 || ng < pathScores[n]) {
+        pathMarks[n] = 1;
+        pathScores[n] = ng;
+        came.set(n, { from: cur, tiles: [...via, n] });
+        push(n, ng + GEO.dist(n, goal));
+      }
+    };
+    const branch = (from, used, via) => {
+      const costs = stepCosts[GEO.isWater(from) ? 1 : 0], passing = via.length > 0;
+      for (const n of GEO.NBR[from]) {
+        const tt = terrain[n], occupant = pathOccupants[n];
+        if (pathMarks[n] === 2 || !passable(n, tt)) continue;
+        if ((occupant & 2) && (n !== goal || passing)) continue;
+        if (foes[n] === undefined) foes[n] = marchFoe(f, n, n === goal ? target : null);
+        const foe = foes[n];
+        if (foe && (n !== goal || passing || !atWar(f, foe))) continue;
+        const nextCost = used + (costs[tt] ??= moveCost(a, from, n));
+        if (occupant & 1) {
+          bestPass ||= new Map();
+          if (nextCost >= (bestPass.get(n) ?? Infinity)) continue;
+          bestPass.set(n, nextCost);
+          branch(n, nextCost, [...via, n]);
+        } else {
+          const wait = passing && nextCost > maxMarch + 1e-9 ? GEO.NBR.length : 0;
+          // 等长时优先空地，以免队列变动后耽搁行军。
+          offer(n, nextCost + wait + via.length * 0.001, via);
+        }
+      }
+    };
     while (hk.length && it++ < maxIter) {
-      const cur = pop();
-      if (closed.has(cur)) continue;
+      cur = pop();
+      if (pathMarks[cur] === 2) continue;
       if (cur === goal) {
         const parts = [];
         let t = cur;
@@ -1265,41 +1662,9 @@ var GAME = (function () {
         }
         return parts.reverse().flat();
       }
-      closed.add(cur);
-      const gc = gS.get(cur);
-      const offer = (n, stepCost, via) => {
-        const ng = gc + stepCost;
-        const old = gS.get(n);
-        if (old === undefined || ng < old) {
-          gS.set(n, ng);
-          came.set(n, { from: cur, tiles: [...via, n] });
-          push(n, ng + GEO.dist(n, goal));
-        }
-      };
-      let bestPass = null;
-      const branch = (from, used, via) => {
-        const costs = stepCosts[GEO.isWater(from) ? 1 : 0];
-        for (const n of GEO.NBR[from]) {
-          const tt = terrain[n];
-          if (closed.has(n) || !passable(n, tt)) continue;
-          const passing = via.length > 0;
-          if (occ.has(n) && (n !== goal || passing)) continue;
-          const foe = marchFoe(f, n, n === goal ? target : null);
-          if (foe && (n !== goal || passing || !atWar(f, foe))) continue;
-          const nextCost = used + (costs[tt] ??= moveCost(a, from, n));
-          const occupied = friendly.has(n);
-          if (occupied) {
-            bestPass ||= new Map();
-            if (nextCost >= (bestPass.get(n) ?? Infinity)) continue;
-            bestPass.set(n, nextCost);
-            branch(n, nextCost, [...via, n]);
-          } else {
-            const wait = passing && nextCost > maxMarch + 1e-9 ? GEO.NBR.length : 0;
-            // 等长时优先空地，以免队列变动后耽搁行军。
-            offer(n, nextCost + wait + via.length * 0.001, via);
-          }
-        }
-      };
+      pathMarks[cur] = 2;
+      gc = pathScores[cur];
+      bestPass = null;
       branch(cur, 0, []);
     }
     return null;
@@ -1307,6 +1672,7 @@ var GAME = (function () {
   // 沿路径行进；遇敌即战。返回事件列表
   function advance(a, allowAttack) {
     const out = [];
+    if (trainingArmy(a)) return out;
     const origin = a.tile;
     if (a.path && a.path.length && a.sentry) clearSentry(a);
     while (a.path && a.path.length && a.mp > 0) {
@@ -1365,6 +1731,7 @@ var GAME = (function () {
   function moveArmyTo(aid, goal) {
     const a = army(aid);
     if (!a) return { ok: false };
+    if (trainingArmy(a)) return { ok: false, msg: '有营换装，须驻原城' };
     const p = findPath(a, goal, a.f === S.player ? Infinity : undefined);
     if (!p) return { ok: false, msg: '无路可达' };
     a.path = p;
@@ -1419,7 +1786,7 @@ var GAME = (function () {
     for (const [role, side] of [['att', B.A], ['def', B.D]]) {
       const groups = new Set(side.units.filter(u => u.s > 0).map(u => TC.groups[u.t]));
       if (!groups.size) continue;
-      const g = gen(side.gen), hasLand = [...groups].some(t => t !== 'navy');
+      const g = battleCommand(side, role, ctx), hasLand = [...groups].some(t => t !== 'navy');
       for (const group of groups) {
         const mult = unitTerrainMult(group, role, ctx);
         if (mult !== 1) add(role, terrainGroupName[group] + terrainAction[ctx.tt], mult);
@@ -1474,28 +1841,43 @@ var GAME = (function () {
     if (H('神射') && ['bow', 'hbow'].includes(DATA.unitBase(u.t))) m *= 1.3;
     return m;
   }
-  function sidePower(side, enemy, role, ctx) {
-    const counts = {}; let tot = 0;
-    for (const u of enemy.units) { counts[u.t] = (counts[u.t] || 0) + u.s; tot += u.s; }
+  const COMBAT = DATA.COMBAT;
+  function battleStrength(units) {
+    const counts = [], indices = [];
+    let total = 0;
+    for (const u of units) {
+      const index = COMBAT.index[u.t];
+      if (counts[index] === undefined) indices.push(index);
+      counts[index] = (counts[index] || 0) + u.s;
+      total += u.s;
+    }
+    return { counts, indices, total };
+  }
+  function sidePower(side, enemy, role, ctx, strength = battleStrength(enemy.units), tech = techFx(side.f), morale = side.morale,
+    g = battleCommand(side, role, ctx)) {
     let p = 0, siegeP = 0;
-    const f = side.f, g = gen(side.gen), tech = techFx(f);
+    const f = side.f;
     // 一侧同种各营的敌情、地势与主将均相同，兵力仍逐营按原顺序结算。
-    const perUnit = {};
+    const perUnit = [];
     for (const u of side.units) {
-      if (perUnit[u.t] === undefined) {
+      const index = COMBAT.index[u.t];
+      if (perUnit[index] === undefined) {
         let m = 1;
-        if (tot > 0) {
-          for (const e of DATA.BEATS[u.t] || []) if (counts[e]) m += 0.4 * counts[e] / tot;
-          for (const et in counts) if ((DATA.BEATS[et] || []).includes(u.t)) m -= 0.3 * counts[et] / tot;
-        }
+        // 攻守两侧各施加一半的倍率，使一对一的战力比与临阵一致。
+        const weights = COMBAT.weights[index];
+        if (strength.total > 0) for (const enemyIndex of strength.indices) m += weights[enemyIndex] * strength.counts[enemyIndex] / strength.total;
         const base = DATA.unitBase(u.t);
         m *= (1 + (tech.unit[base] || 0)) * (1 + (tech.unit.all || 0));
         if (base === 'bow' && g) m *= 1 + itemSum(g, 'bow');
         m *= skillMult(g, u, ctx, role);
-        perUnit[u.t] = terrainPower(u.t, role, role, ctx, g) * m;
+        perUnit[index] = terrainPower(u.t, role, role, ctx, g) * m;
       }
-      let v = perUnit[u.t] * u.s / 100;
-      if (u.t === 'siege' && role === 'att' && ctx.city) { const sv = v * U.siege.siege * (1 + (tech.siegePct || 0)); siegeP += sv; v = sv * 0.5; }
+      let v = perUnit[index] * u.s / 100 * (1 + 0.1 * unitRank(u));
+      if (U[u.t].siege && role === 'att' && ctx.city) {
+        const sv = v * U[u.t].siege * (1 + (tech.siegePct || 0));
+        siegeP += sv;
+        if (u.t === 'siege') v = sv * 0.5;
+      }
       p += v;
     }
     if (g) {
@@ -1503,30 +1885,35 @@ var GAME = (function () {
       else p *= 1 + (g.tong - 50) / 180 + (g.zhi - 50) / 300;
     } else p *= 0.9;
     if (g && role === 'def') p *= 1 + itemSum(g, 'armor');
-    p *= 0.55 + 0.45 * clamp(side.morale, 0, 100) / 100;
+    p *= (0.55 + 0.45 * clamp(morale, 0, moraleCap(f)) / 100) * weakCommand(gen(side.gen));
     if (f !== S.player && f !== 'rebel') p *= difficultyRules().aiBattle;
+    if (role === 'att') p *= campaignOffense(f);
     return { p, siegeP };
   }
   // 双方战力（不含随机、不修改状态）
-  function battleSides(a, tile, M, originTile = a.tile) {
-    const defArmy = armyAt(tile);
-    const c = cityAt(tile);
+  function battleSides(a, tile, M, originTile = a.tile, defArmy = armyAt(tile), c = cityAt(tile), defUnits) {
     const ctx = battleTerrain(originTile, tile, !!(c && c.f !== a.f));
     const defF = defArmy ? defArmy.f : c.f;
-    const D = { f: defF, units: [], gen: null, morale: 70 };
-    if (defArmy) { D.units.push(...defArmy.units); D.gen = defArmy.gen; D.morale = defArmy.morale; }
-    if (c && c.f === defF) { D.units.push(...c.garrison); if (D.gen == null) D.gen = c.governor; }
-    const A = { f: a.f, units: a.units, gen: a.gen, morale: a.morale };
+    const D = { f: defF, units: defUnits || [], gen: null, morale: 70 };
+    if (defArmy) {
+      if (!defUnits) D.units.push(...defArmy.units);
+      D.gen = defArmy.gen; D.deputy = defArmy.deputy; D.morale = defArmy.morale;
+    }
+    if (c && c.f === defF) {
+      if (!defUnits) D.units.push(...c.garrison);
+      if (D.gen == null) D.gen = c.governor;
+    }
+    const A = { f: a.f, units: a.units, gen: a.gen, deputy: a.deputy, morale: a.morale };
     const fortMult = fortified(defArmy) ? FORT_BONUS : 1;
     return { defArmy, c, water: ctx.water, tt: ctx.tt, ctx, defF, D, A, fortMult };
   }
-  function battlePowers(B, M, wall = B.c?.wall) {
+  function battlePowers(B, M, wall = B.c?.wall, cached) {
     M = M || {};
     const { A, D, ctx, c, defF } = B;
-    const A2 = Object.assign({}, A, { morale: clamp(A.morale + (M.aMorale || 0), 5, 100) });
-    const D2 = Object.assign({}, D, { morale: clamp(D.morale + (M.dMorale || 0), 5, 100) });
-    const pa = sidePower(A2, D, 'att', ctx);
-    const pd = sidePower(D2, A, 'def', ctx);
+    const aMorale = clamp(A.morale + (M.aMorale || 0), 5, moraleCap(A.f));
+    const dMorale = clamp(D.morale + (M.dMorale || 0), 5, moraleCap(D.f));
+    const pa = sidePower(A, D, 'att', ctx, cached?.dStrength, cached?.aTech, aMorale, cached?.aCommand);
+    const pd = sidePower(D, A, 'def', ctx, cached?.aStrength, cached?.dTech, dMorale, cached?.dCommand);
     let Pd = pd.p * terrainDefense(ctx, M.noTerrain);
     if (c && c.f === defF && !M.noWall) Pd = Pd * 1.2 + wall * 0.6 + 4;
     else if (c && c.f === defF) Pd += 4;
@@ -1542,12 +1929,89 @@ var GAME = (function () {
     for (let i = 0; i < n; i++) { const u = lo + (hi - lo) * (i + 0.5) / n; p += clamp((k * u - lo) / (hi - lo), 0, 1); }
     return p / n;
   }
-  function previewBattle(a, tile, M, originTile = a.tile) {
+  const sameValues = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
+  const noValues = [];
+  const emptyRoster = { units: noValues, strength: { counts: [], indices: [], total: 0 } };
+  function cachedRoster(index, owner, units) {
+    const prev = index.get(owner.id);
+    if (prev?.units === units && prev.snapshot.length === units.length && units.every((u, i) => {
+      const [type, strength, xp] = prev.snapshot[i];
+      return type === u.t && strength === u.s && xp === u.xp;
+    })) return prev;
+    const next = { units, snapshot: units.map(u => [u.t, u.s, u.xp]), strength: battleStrength(units), garrisons: new WeakMap() };
+    index.set(owner.id, next);
+    return next;
+  }
+  function combinedRoster(armyRoster, cityRoster) {
+    if (!armyRoster || !cityRoster) return armyRoster || cityRoster || emptyRoster;
+    let joined = armyRoster.garrisons.get(cityRoster);
+    if (!joined) {
+      // 两军按原来的逐营顺序相加，避免合并小计改变浮点舍入。
+      const units = armyRoster.units.concat(cityRoster.units);
+      joined = { units, strength: battleStrength(units) };
+      armyRoster.garrisons.set(cityRoster, joined);
+    }
+    return joined;
+  }
+  function cachedBattleCommand(roster, side, role, terrain, chief, deputy) {
+    if (!chief || !deputy) return gen(side.gen) || null;
+    const key = (terrain.tt << 8) | (role === 'def' ? 1 : 0) | (terrain.city ? 2 : 0) |
+      (terrain.water ? 4 : 0) | (terrain.river ? 8 : 0) | (terrain.rough ? 16 : 0) |
+      (terrain.downhill ? 32 : 0) | (terrain.crossing ? 64 : 0) | (terrain.landing ? 128 : 0);
+    const commands = roster.commands ||= new Map();
+    const prev = commands.get(key);
+    if (prev?.chief === chief && prev.deputy === deputy) return prev.value;
+    const value = battleCommand(side, role, terrain);
+    commands.set(key, { chief, deputy, value });
+    return value;
+  }
+  function cachedCommander(index, id) {
+    const g = gen(id);
+    if (!g) return null;
+    const prev = index.get(g), skills = g.skills || noValues, items = g.items || noValues;
+    if (prev && prev.wu === g.wu && prev.tong === g.tong && prev.zhi === g.zhi && prev.skill === g.skill &&
+        sameValues(prev.skills, skills) && sameValues(prev.items, items)) return prev;
+    const next = { wu: g.wu, tong: g.tong, zhi: g.zhi, skill: g.skill, skills: skills.slice(), items: items.slice() };
+    index.set(g, next);
+    return next;
+  }
+  function previewOdds(a, tile, origin) {
+    if (battleCache?.state !== S || battleCache.turn !== S.turn) {
+      battleCache = { state: S, turn: S.turn, armies: new Map(), cities: new Map(), commanders: new WeakMap(), odds: new WeakMap() };
+    }
+    const { armies, cities, commanders, odds } = battleCache;
+    const d = armyAt(tile), c = cityAt(tile), f = d ? d.f : c.f;
+    const defended = c?.f === f;
+    const ar = cachedRoster(armies, a, a.units);
+    const dr = d && cachedRoster(armies, d, d.units);
+    const cr = defended && cachedRoster(cities, c, c.garrison);
+    const aTech = techFx(a.f), dTech = techFx(f);
+    const aChief = cachedCommander(commanders, a.gen), aDeputy = cachedCommander(commanders, a.deputy);
+    const dChief = cachedCommander(commanders, d?.gen ?? (defended ? c.governor : null)), dDeputy = cachedCommander(commanders, d?.deputy);
+    const inputs = [ar, dr, cr, a.f, f, a.morale, d?.morale, c?.f, c?.wall, S.difficulty, S.player,
+      mongolCampaign(a.f), mongolCampaign(f), fortified(d), GEO.terrain[tile], GEO.terrain[origin], GEO.river[tile], GEO.river[origin],
+      aTech, dTech, aChief, aDeputy, dChief, dDeputy];
+    let byTile = odds.get(a);
+    if (!byTile) { byTile = new Map(); odds.set(a, byTile); }
+    const key = tile * GEO.W * GEO.H + origin;
+    const prev = byTile.get(key);
+    if (prev && sameValues(prev.inputs, inputs)) return prev.result;
+    const defenders = combinedRoster(dr, cr);
+    const B = battleSides(a, tile, undefined, origin, d || null, c || null, defenders.units);
+    const aCommand = cachedBattleCommand(ar, B.A, 'att', B.ctx, aChief, aDeputy);
+    const dCommand = cachedBattleCommand(defenders, B.D, 'def', B.ctx, dChief, dDeputy);
+    const { Pa, Pd } = battlePowers(B, undefined, c?.wall, { aTech, dTech, aCommand, dCommand, aStrength: ar.strength, dStrength: defenders.strength });
+    const result = { Pa, Pd };
+    byTile.set(key, { inputs, result });
+    return result;
+  }
+  function previewBattle(a, tile, M, originTile = a.tile, oddsOnly = false) {
+    if (oddsOnly && !M) return previewOdds(a, tile, originTile);
     M = M || {};
     const B = battleSides(a, tile, M, originTile);
     const sd = M.preD ? 1 - M.preD : 1, sa = M.preA ? 1 - M.preA : 1;
     const c = B.c;
-    const wall = c && M.wallHit ? Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit)) : c?.wall;
+    const wall = c && M.wallHit ? Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit * siegeDamage(a.f))) : c?.wall;
     let { Pa, Pd } = battlePowers(B, M, wall);
     Pa *= sa; Pd *= sd;
     const r = Pa / (Pa + Pd + 0.001);
@@ -1559,13 +2023,48 @@ var GAME = (function () {
     for (const u of units) if (u.s >= minimum) counts[u.t] = (counts[u.t] || 0) + u.s;
     return counts;
   }
+  function primaryType(counts) {
+    return Object.keys(counts).reduce((best, type) => best == null || counts[type] > counts[best] ? type : best, null);
+  }
+  function learnCapturedTech(f, lost, tile) {
+    const F = fac(f);
+    if (!F?.alive || f === 'rebel') return;
+    const counts = {};
+    for (const u of lost) counts[u.t] = (counts[u.t] || 0) + 1;
+    const learned = new Set();
+    for (const [t, count] of Object.entries(counts)) {
+      const tech = U[t].tech;
+      if (count >= 3 && tech && !hasTech(f, tech) && (F.techLessons[tech] || 0) < 2) learned.add(tech);
+    }
+    for (const tech of learned) {
+      F.techLessons[tech] = (F.techLessons[tech] || 0) + 1;
+      if (f === S.player) log(`战中缴得军械，参悟${TECH[tech].name}，所需文教永减二成。`, 'mil', tile);
+    }
+  }
+  function battleProgress(rep, entrants, attended, counterWins, survivors, foes, manual) {
+    for (const [i, key, enemy] of [[0, 'a', 'd'], [1, 'd', 'a']]) {
+      const f = i === 0 ? rep.att : rep.def;
+      const forces = new Set(survivors[i]), opposing = new Set(survivors[1 - i]);
+      const wins = !rep.draw && (!manual || manual.winner !== 'none') && (i === 0 ? rep.win : !rep.win);
+      const main = manual ? null : primaryType(foes[enemy]);
+      learnCapturedTech(f, entrants[1 - i].filter(u => !opposing.has(u)), rep.tile);
+      for (const u of attended[i]) if (forces.has(u)) {
+        const counterWin = manual ? counterWins.has(u) : COMBAT.matches[COMBAT.index[u.t]][COMBAT.index[main]] > 0;
+        const gain = 1 + Number(wins && rep.before[key] < rep.before[enemy]) + Number(wins && counterWin);
+        u.xp = measureXP((u.xp || 0) + gain);
+      }
+    }
+  }
   function attack(a, tile, opts) {
     opts = opts || {};
+    if (a.f !== S.player && steppeProtected(cityAt(tile))) return null;
     if (a.sentry) clearSentry(a);
     const M = opts.mods || {};
     const B = battleSides(a, tile, M);
     const { defArmy, c, tt, defF, D, A } = B;
     meet(a.f, defF);
+    const entrants = [A.units.slice(), D.units.slice()];
+    const foes = opts.manual?.unitBefore || { a: strengthByType(A.units), d: strengthByType(D.units) };
     a.battleTurn = S.turn;
     if (defArmy) defArmy.battleTurn = S.turn;
     if (c?.f === defF) c.battleTurn = S.turn;
@@ -1576,11 +2075,11 @@ var GAME = (function () {
     const fullWall = a.f === S.player && c?.f === defF && before.wall >= maxWall(c) - 0.01;
     const apply = (units, loss) => { for (const u of units) u.s = Math.round(u.s * (1 - clamp(loss * rnd(0.75, 1.25), 0, 0.95))); };
     let r, wallLoss = 0;
-    if (M.aMorale) a.morale = clamp(a.morale + M.aMorale, 5, 100);
-    if (M.dMorale && defArmy) defArmy.morale = clamp(defArmy.morale + M.dMorale, 5, 100);
+    if (M.aMorale) a.morale = clamp(a.morale + M.aMorale, 5, moraleCap(a.f));
+    if (M.dMorale && defArmy) defArmy.morale = clamp(defArmy.morale + M.dMorale, 5, moraleCap(defF));
     if (M.preA) apply(A.units, M.preA);
     if (M.preD) apply(D.units, M.preD);
-    if (M.wallHit && c && c.f === defF) c.wall = Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit));
+    if (M.wallHit && c && c.f === defF) c.wall = Math.max(0, c.wall - Math.round(maxWall(c) * M.wallHit * siegeDamage(a.f)));
     if (opts.manual) {
       r = opts.manual.r;
       if (c && c.f === defF && opts.manual.wall != null) { wallLoss = Math.max(0, Math.round(c.wall - opts.manual.wall)); c.wall = Math.max(0, opts.manual.wall); }
@@ -1592,7 +2091,10 @@ var GAME = (function () {
       const lossD = (0.08 + 0.55 * r * r) * ls, lossA = (0.08 + 0.55 * (1 - r) * (1 - r)) * ls;
       apply(A.units, lossA);
       apply(D.units, lossD);
-      if (c && c.f === defF) { wallLoss = Math.round(pa.siegeP * 0.6 + Pa * 0.08 * r); c.wall = Math.max(0, c.wall - wallLoss); }
+      if (c && c.f === defF) {
+        wallLoss = Math.round((pa.siegeP * 0.6 + Pa * 0.08 * r) * siegeDamage(a.f));
+        c.wall = Math.max(0, c.wall - wallLoss);
+      }
     }
     // 清除残兵
     const prune = arr => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i].s < 10) arr.splice(i, 1); };
@@ -1608,19 +2110,30 @@ var GAME = (function () {
       tile, att: a.f, def: defF, attName: armyName(a), attGen: a.gen, defGen: D.gen, defName: defArmy ? armyName(defArmy) : (c ? c.name + '守军' : ''),
       city: c ? c.name : null, before, after: { a: sumStr(a.units), d: sumStr(D.units.filter(u => u.s >= 10)), wall: c ? c.wall : 0 }, ratio: r, result: '', captured: null, wallLoss,
     };
+    rep.attDeputy = A.deputy ?? null;
+    rep.defDeputy = D.deputy ?? null;
     if (unitBefore) rep.unitStrength = { before: unitBefore, after: { a: strengthByType(A.units), d: strengthByType(D.units, 10) } };
     a.mp = 0;
     const F_a = fac(a.f), F_d = fac(defF);
     if (!draw) addWarScore(a.f, defF, attWin ? 2 : -2);
-    if (attWin) { a.morale = Math.min(100, a.morale + 8); bumpExp(a.gen, true); }
-    const xk = S.scale < 30 ? 0.8 : 1.2;
+    if (attWin) { a.morale = Math.min(moraleCap(a.f), a.morale + 8); bumpExp(a.gen, true); }
+    const xk = 1.2;
     gainExp(a.gen, Math.round((attWin ? 12 + (before.d - sumStr(D.units.filter(u => u.s >= 10))) / 150 : 6) * xk));
     if (D.gen != null) gainExp(D.gen, Math.round((attWin ? 6 : 12 + (before.a - sumStr(a.units)) / 150) * xk));
     else { a.morale = Math.max(5, a.morale - 15); }
+    if (!draw) {
+      const loser = attWin ? defArmy : a, captor = attWin ? a.f : defF;
+      const deputy = gen(loser?.deputy);
+      if (deputy && captor !== 'rebel' && Math.random() < 0.175) {
+        takeCaptive(deputy, captor, tile, rep);
+        rep.deputyCaptured = deputy.name;
+        if (deputy.f === S.player || captor === S.player) log(`${deputy.name}兵败被俘。`, 'war', tile);
+      }
+    }
     // 处理守方野战军
     if (defArmy) {
       if (attWin) defArmy.morale = Math.max(5, defArmy.morale - 20);
-      else if (!draw) { defArmy.morale = Math.min(100, defArmy.morale + 8); bumpExp(defArmy.gen, true); }
+      else if (!draw) { defArmy.morale = Math.min(moraleCap(defF), defArmy.morale + 8); bumpExp(defArmy.gen, true); }
       if (camp) {
         if (attWin || !defArmy.units.length) {
           rep.result = '寨破，守军溃散';
@@ -1649,6 +2162,23 @@ var GAME = (function () {
     if (!rep.result) rep.result = attWin ? '获胜' : '失利';
     rep.win = attWin;
     if (draw) rep.draw = true;
+    if (!draw && opts.manual?.winner !== 'none') {
+      const [lost, deputy] = attWin ? [rep.defGen, rep.defDeputy] : [rep.attGen, rep.attDeputy];
+      for (const id of new Set([lost, deputy])) {
+        const g = gen(id);
+        if (!g || !['idle', 'army', 'gov', 'court', 'captive'].includes(g.status)) continue;
+        if (g.f !== S.player) g.loyalty = Math.max(0, (g.loyalty ?? 80) - 7);
+        if (!(g.wound > 0) && Math.random() < 0.20) {
+          woundGeneral(g, ri(2, 4));
+          (rep.wounded ||= []).push(g.id);
+        }
+      }
+    }
+    battleProgress(rep, entrants, opts.manual?.attended || entrants, new Set(opts.manual?.counterWins),
+      [S.armies.includes(a) ? a.units : [], [
+        ...(defArmy && S.armies.includes(defArmy) ? defArmy.units : []),
+        ...(c?.f === defF ? c.garrison : []),
+      ]], foes, opts.manual);
     if (!draw && ((rep.att === S.player && !attWin) || (rep.def === S.player && attWin))) {
       const losses = S.flags.songDefeats;
       losses.push(S.T);
@@ -1704,13 +2234,14 @@ var GAME = (function () {
   const STAT_NAME = { tong: '统', wu: '武', zhi: '智', zheng: '政' };
   const ITEM_STATS = Object.keys(STAT_NAME);
   function levelOptions(g) {
-    const stats = ['tong', 'wu', 'zhi', 'zheng'].sort((a, b) => (g[b] + Math.random() * 25) - (g[a] + Math.random() * 25));
-    const opts = [{ k: 'stat', s: stats[0], v: 3 }, { k: 'stat', s: stats[1], v: 3 }];
+    const stats = ITEM_STATS.map(s => ({ s, score: g[s] + Math.random() * 25 }));
+    stats.sort((a, b) => b.score - a.score);
+    const opts = [{ k: 'stat', s: stats[0].s, v: 3 }, { k: 'stat', s: stats[1].s, v: 3 }];
     const own = skillList(g);
-    const mil = g.tong + g.wu >= g.zhi + g.zheng;
+    const mil = !civil(g);
     const pool = DATA.SKILL_POOL.filter(x => !own.includes(x) && (mil ? !['治世', '理财', '劝农', '教化'].includes(x) || Math.random() < 0.2 : ['治世', '理财', '劝农', '教化', '运筹', '坚守'].includes(x) || Math.random() < 0.3));
     if (own.length < 3 && pool.length) opts.push({ k: 'skill', s: pick(pool) });
-    else opts.push({ k: 'stat', s: stats[2], v: 4 });
+    else opts.push({ k: 'stat', s: stats[2].s, v: 4 });
     return opts;
   }
   function optText(o) { return o.k === 'stat' ? `${STAT_NAME[o.s]} +${o.v}` : `习得特技【${o.s}】`; }
@@ -1718,8 +2249,12 @@ var GAME = (function () {
     if (o.k === 'stat') g[o.s] = Math.min(120, g[o.s] + o.v);
     else if (!g.skill) g.skill = o.s; else { g.skills = g.skills || []; if (!g.skills.includes(o.s)) g.skills.push(o.s); }
   }
-  function gainExp(gid, amt) {
+  function gainExp(gid, amt, share = true) {
     const g = gen(gid); if (!g || g.status === 'dead') return;
+    if (share && g.status === 'army') {
+      const a = army(g.loc);
+      if (a?.gen === g.id && a.deputy != null && a.deputy !== g.id) gainExp(a.deputy, amt / 2, false);
+    }
     g.lv = g.lv || 1; g.exp = (g.exp || 0) + amt;
     while (g.lv < 10 && g.exp >= nextLv(g)) {
       g.lv++;
@@ -2062,7 +2597,7 @@ var GAME = (function () {
     let msg = '', short = '', big = false;
     switch (st.type) {
       case 'battlefield': gainExp(g.id, 80); st.gens.push(g.id); msg = `${g.name}凭吊${st.name}，遥想当年金戈铁马，于兵法若有所悟。`; short = '经验+80'; break;
-      case 'temple': st.cd[a.f] = S.T + 1; a.morale = 100; for (const u of a.units) u.s = Math.min(100, u.s + 20); msg = `大军驻于${st.name}，将士焚香祈福，士气大振。`; short = '士气全满'; break;
+      case 'temple': st.cd[a.f] = S.T + 1; a.morale = moraleCap(a.f); for (const u of a.units) refillUnit(u, Math.min(100, u.s + 20)); msg = `大军驻于${st.name}，将士焚香祈福，士气大振。`; short = '士气全满'; break;
       case 'hermit': {
         st.used = true; big = true;
         const own = skillList(g);
@@ -2111,6 +2646,7 @@ var GAME = (function () {
   }
   function destroyArmy(a, byF, rep) {
     const g = gen(a.gen);
+    releaseCommand(a);
     if (g) {
       const roll = Math.random();
       const famous = g.hist && g.tong >= 90;
@@ -2127,8 +2663,8 @@ var GAME = (function () {
     rec({ k: 'die', id: a.id });
   }
   function killGeneral(g, why) {
-    if (g.status === 'army') { const a = army(g.loc); if (a) a.gen = null; }
-    if (g.status === 'gov') { const c = S.cities.find(c => c.governor === g.id); if (c) c.governor = null; }
+    if (g.status === 'army') leaveCommand(g);
+    if (g.status === 'gov') clearGovernor(city(g.loc));
     if (g.status === 'court' && S.court) { for (const k in S.court.offices) if (S.court.offices[k] === g.id) delete S.court.offices[k]; }
     if (g.f === S.player && g.hist && ['idle','army','gov','court'].includes(g.status)) S.flags.lastOfficerDeath = { gen: g.id, t: S.T };
     if (g.status === 'captive') clearCaptivity(g);
@@ -2136,6 +2672,7 @@ var GAME = (function () {
     if (g.f === S.player) log(`${g.name}${why}。`, why === '阵亡' ? 'war' : 'info');
   }
   function captureCity(c, f, byArmy, rep) {
+    if (c.f !== f && f !== S.player && steppeProtected(c)) return false;
     const old = c.f, F_old = fac(old), F_new = fac(f);
     const hostileCapital = f === S.player && old !== 'rebel' && old !== f && c.cap;
     const wasCap = c.cap;
@@ -2148,8 +2685,12 @@ var GAME = (function () {
       g.status = 'idle'; g.loc = null;
       if (Math.random() < 0.4 && f !== 'rebel') takeCaptive(g, f, c.tile, rep);
     }
-    c.governor = null;
+    clearGovernor(c);
     for (const a of S.armies.filter(x => x.tile === c.tile && x.f === old)) destroyArmy(a, f);
+    for (const order of c.queue) if (order.kind === 'change') {
+      const { u } = upgradeSubject(c, order);
+      if (u) delete u.training;
+    }
     c.garrison = []; c.queue = [];
     const loot = c.pop * 12;
     F_new.gold += loot;
@@ -2212,6 +2753,22 @@ var GAME = (function () {
     if (citiesOf(old).length === 0 && old !== 'rebel') factionDies(old, f, false, rep);
     else if (hostileCapital) conquestOpinion();
     if (old === S.player || f === S.player) checkVictory();
+    if (old !== f && mongolCampaign(f) && byArmy) {
+      const rule = DATA.MONGOL_RISE;
+      if (f !== S.player) F_new.mongolCaptureT = S.T;
+      for (let i = 0; i < rule.garrison; i++) {
+        const type = i < 2 ? 'mongol_keshig_guard' : 'hbow';
+        c.garrison.push(mkUnit(type, 85));
+      }
+      recordUnits(c);
+      if ((F_new.mongolReserveT ?? -Infinity) + rule.reserveInterval > S.T + 1e-9) return true;
+      const t = byArmy ? GEO.ring(c.tile, 4).find(t => t !== c.tile && !GEO.isWater(t) && !cityAt(t) && !armyAt(t)) : c.tile;
+      if (t != null) {
+        const reserve = EVENTS.spawnArmy(f, t, ['hbow', 'hbow', 'hbow', 'hbow'], null, c.name + '分军');
+        if (reserve) { reserve.morale = moraleCap(f); F_new.mongolReserveT = S.T; }
+      }
+    }
+    return true;
   }
   function factionDies(f, by, annexed = false, rep) {
     const F = fac(f);
@@ -2250,6 +2807,7 @@ var GAME = (function () {
 
   function mutiny(g, armies) {
     for (const a of armies) {
+      setDeputy(a.id, null);
       rec({ k: 'die', id: a.id });
       a.f = 'rebel'; a.path = []; a.aiGoal = null; a.mp = 0;
       clearSentry(a);
@@ -2264,34 +2822,87 @@ var GAME = (function () {
   }
 
   // ---------- 将领管理 ----------
+  function clearGovernor(c) {
+    if (c) { c.governor = null; c.delegated = false; }
+  }
+  function releaseCommand(a) {
+    for (const id of [a.gen, a.deputy]) {
+      const g = gen(id);
+      if (g?.status === 'army' && g.loc === a.id) { g.status = 'idle'; g.loc = null; }
+    }
+    a.gen = a.deputy = null;
+  }
+  function repairCommands() {
+    const byId = new Map(S.armies.map(a => [a.id, a]));
+    const officers = new Set();
+    for (const a of S.armies) {
+      for (const role of ['gen', 'deputy']) {
+        const g = gen(a[role]), preferred = byId.get(g?.loc);
+        const shouldKeepOther = preferred && preferred !== a && preferred.f === g.f &&
+          (preferred.gen === g.id || preferred.deputy === g.id);
+        if (!g || g.status !== 'army' || g.wound > 0 || g.f !== a.f || officers.has(g.id) || shouldKeepOther) { a[role] = null; continue; }
+        officers.add(g.id);
+        g.loc = a.id;
+      }
+      if (a.gen == null && a.deputy != null) { a.gen = a.deputy; a.deputy = null; }
+    }
+    for (const g of S.generals) if (g.status === 'army' && !officers.has(g.id)) { g.status = 'idle'; g.loc = null; }
+  }
+  function leaveCommand(g) {
+    const a = army(g.loc);
+    if (!a) return;
+    if (a.deputy === g.id) a.deputy = null;
+    if (a.gen !== g.id) return;
+    a.gen = a.deputy;
+    a.deputy = null;
+    if (a.gen != null && a.f === S.player) log(`${gen(a.gen).name}接掌${a.name || g.name + '部'}。`, 'mil', a.tile);
+  }
+  function setDeputy(aid, gid) {
+    const a = army(aid), g = gen(gid);
+    if (!a || (gid != null && (a.frontier != null || a.gen == null || g?.status !== 'idle' || g.wound > 0 || g.f !== a.f || a.gen === gid))) return false;
+    const old = gen(a.deputy);
+    if (old) { old.status = 'idle'; old.loc = null; }
+    a.deputy = gid ?? null;
+    if (g) { g.status = 'army'; g.loc = aid; }
+    return true;
+  }
   function assignGovernor(gid, cid) {
     const g = gen(gid), c = city(cid);
     if (!g || !c || g.f !== c.f) return false;
+    if (c.governor === gid) return true;
     unassign(gid);
-    if (c.governor != null) { const og = gen(c.governor); og.status = 'idle'; og.loc = null; }
+    if (c.governor != null) unassign(c.governor);
     c.governor = gid; g.status = 'gov'; g.loc = cid;
     return true;
   }
   function unassign(gid) {
     const g = gen(gid);
     if (g.status === 'court' && S.court) { for (const k in S.court.offices) if (S.court.offices[k] === gid) delete S.court.offices[k]; }
-    if (g.status === 'gov') { const c = city(g.loc); if (c) c.governor = null; }
-    if (g.status === 'army') { const a = army(g.loc); if (a) a.gen = null; }
+    if (g.status === 'gov') clearGovernor(city(g.loc));
+    if (g.status === 'army') leaveCommand(g);
     g.status = 'idle'; g.loc = null;
   }
   function setArmyGeneral(aid, gid) {
-    const a = army(aid);
-    if (a.gen != null) { const og = gen(a.gen); og.status = 'idle'; og.loc = null; }
-    a.gen = null;
-    if (gid != null) { unassign(gid); a.gen = gid; const g = gen(gid); g.status = 'army'; g.loc = a.id; }
-    while (a.units.length > armyCap(a)) { const u = a.units.pop(); const c = cityAt(a.tile); if (c && c.f === a.f) c.garrison.push(u); }
+    const a = army(aid), g = gen(gid);
+    if (!a || (gid != null && (!g || g.wound > 0 || g.f !== a.f || !['idle', 'army', 'gov', 'court'].includes(g.status)))) return false;
+    if (a.gen === gid) return true;
+    if (gid == null) { if (a.gen != null) unassign(a.gen); return true; }
+    const previous = gen(a.gen);
+    if (previous) { previous.status = 'idle'; previous.loc = null; }
+    unassign(gid);
+    a.gen = gid; g.status = 'army'; g.loc = a.id;
+    return true;
   }
   // 由城中守军组建军团
   function formArmy(cid, gid, unitIdx) {
     const c = city(cid);
     if (armyAt(c.tile)) return null;
+    const g = gen(gid);
+    if (gid != null && (!g || g.f !== c.f || g.wound > 0 || !['idle', 'army', 'gov', 'court'].includes(g.status))) return null;
     const cap = capFor(gid);
-    const idx = unitIdx.slice().sort((a, b) => b - a).slice(0, cap);
+    let elite = 0;
+    const idx = [...new Set(unitIdx)].filter(i => c.garrison[i] && c.garrison[i].training == null &&
+      (!eliteUnit(c.garrison[i].t) || ++elite <= 3)).sort((a, b) => b - a).slice(0, cap);
     const units = [];
     for (const i of idx) if (c.garrison[i]) units.unshift(c.garrison.splice(i, 1)[0]);
     if (!units.length) return null;
@@ -2301,17 +2912,23 @@ var GAME = (function () {
     emit('change');
     return a;
   }
+  function woundGeneral(g, seasons) {
+    if (g.status === 'army') unassign(g.id);
+    g.wound = Math.max(g.wound || 0, seasons);
+    if (g.f === S.player) log(`${g.name}负创，须静养${Math.ceil(g.wound)}季。`, 'mil');
+  }
   function transferToArmy(aid, gidx) {
     const a = army(aid), c = cityAt(a.tile);
     if (!c || c.f !== a.f) return false;
-    if (a.units.length >= armyCap(a) || !c.garrison[gidx]) return false;
+    if (a.units.length >= armyCap(a) || !c.garrison[gidx] || c.garrison[gidx].training != null) return false;
+    if (eliteUnit(c.garrison[gidx].t) && remainingElite(a) <= 0) return false;
     a.units.push(c.garrison.splice(gidx, 1)[0]);
     clearSentry(a);
     return true;
   }
   function transferToCity(aid, uidx) {
     const a = army(aid), c = cityAt(a.tile);
-    if (!c || c.f !== a.f || !a.units[uidx]) return false;
+    if (!c || c.f !== a.f || !a.units[uidx] || a.units[uidx].training != null) return false;
     c.garrison.push(a.units.splice(uidx, 1)[0]);
     clearSentry(a);
     if (!a.units.length) disband(aid);
@@ -2319,10 +2936,11 @@ var GAME = (function () {
   }
   function disband(aid) {
     const a = army(aid); if (!a) return;
+    if (trainingArmy(a)) return;
     clearSentry(a);
     const c = cityAt(a.tile);
     if (c && c.f === a.f) c.garrison.push(...a.units);
-    if (a.gen != null) { const g = gen(a.gen); g.status = 'idle'; g.loc = null; }
+    releaseCommand(a);
     S.armies = S.armies.filter(x => x !== a);
     rec({ k: 'die', id: a.id, quiet: true });
   }
@@ -2378,7 +2996,7 @@ var GAME = (function () {
     if (!result.ok) return result;
     const F = fac(owner.f), units = owner.units || owner.garrison;
     for (const [key, amount] of Object.entries(result.cost)) if (amount) F[key] = Math.max(0, F[key] - amount);
-    for (const i of result.indices) { units[i].s = 100; units[i].refT = S.T; }
+    for (const i of result.indices) { refillUnit(units[i], 100); units[i].refT = S.T; }
     recordUnits(owner);
     return result;
   }
@@ -2389,6 +3007,7 @@ var GAME = (function () {
     if (owner.battleTurn === S.turn) return { ok: false, msg: '此回合已交战，未可合营' };
     const selected = unitIndices(units, indices).sort((a, b) => a - b);
     if (selected.length < 2) return { ok: false, msg: '须选两营或以上' };
+    if (selected.some(i => units[i].training != null)) return { ok: false, msg: '待换装毕方可合营' };
     const type = units[selected[0]].t;
     if (selected.some(i => units[i].t !== type)) return { ok: false, msg: '兵种不同，不可合营' };
     if (selected.some(i => units[i].s >= 100)) return { ok: false, msg: '须选未满编之营' };
@@ -2406,9 +3025,11 @@ var GAME = (function () {
     const units = owner.units || owner.garrison;
     const { indices: selected, retained } = result;
     let left = result.strength;
+    const xp = measureXP(selected.reduce((sum, i) => sum + (units[i].xp || 0) * units[i].s, 0) / result.strength);
     const lastRefill = selected.reduce((latest, i) => Math.max(latest, units[i].refT ?? -Infinity), -Infinity);
     for (const i of selected.slice(0, retained)) {
       units[i].s = Math.min(100, left);
+      units[i].xp = xp;
       units[i].refT = Number.isFinite(lastRefill) ? lastRefill : null;
       left -= units[i].s;
     }
@@ -2433,6 +3054,7 @@ var GAME = (function () {
     const indices = unitIndices(units, idxs);
     if (!indices.length) return { ok: false, msg: '未选兵营' };
     const selected = indices.map(i => units[i]);
+    if (selected.some(u => u.training != null)) return { ok: false, msg: '换装中的兵营不可遣散' };
     const home = tileOwner(owner.tile) === S.player ? city(S.tileCity[owner.tile]) : null;
     const man = home ? selected.reduce((n, u) => n + unitCost(home, u.t).man * u.s / 100 * 0.5, 0) : 0;
     return { ok: true, indices, man, abroad: !home, upkeep: owner.units ? armyUpkeep(owner, selected) : null };
@@ -2451,14 +3073,51 @@ var GAME = (function () {
     }
     return result;
   }
+  function mergeIndices(a, units) {
+    const places = armyCap(a) - a.units.length, indices = [];
+    let elite = remainingElite(a);
+    for (let i = 0; i < units.length && indices.length < places; i++) {
+      const u = units[i], guard = eliteUnit(u.t);
+      if (u.training != null || (guard && elite <= 0)) continue;
+      if (guard) elite--;
+      indices.push(i);
+    }
+    return indices;
+  }
+  function moveMergeUnits(a, units, indices) {
+    a.units.push(...indices.map(i => units[i]));
+    for (let i = indices.length - 1; i >= 0; i--) units.splice(indices[i], 1);
+  }
+  function planMerge(a, b) {
+    const fail = msg => ({ ok: false, moved: 0, left: b?.units.length ?? 0, msg });
+    if (!a || !b) return fail('一军已不在册');
+    if (a === b) return fail('不可自并');
+    if (a.f !== b.f) return fail('异国军团不可并入');
+    if (GEO.dist(a.tile, b.tile) !== 1) return fail('两军不相邻');
+    const cap = armyCap(a);
+    if (a.units.length >= cap) return fail(`本军已满编（${a.units.length}/${cap} 营）`);
+    if (!b.units.length) return fail('彼军已无可并之营');
+    const indices = mergeIndices(a, b.units);
+    if (!indices.length) return fail(trainingArmy(b) && b.units.every(u => u.training != null) ? '彼军诸营正在换装' : '背嵬已足三营');
+    const moved = indices.length, left = b.units.length - moved;
+    const msg = left ? `并入 ${moved} 营，余 ${left} 营留彼军` : `并入 ${moved} 营，合为一军`;
+    return { ok: true, moved, left, msg, indices };
+  }
+  function mergeInfo(aid, bid) {
+    const { indices, ...result } = planMerge(army(aid), army(bid));
+    return result;
+  }
   function mergeArmies(aid, bid) { // b 并入 a（相邻）
-    const a = army(aid), b = army(bid);
-    if (!a || !b || a.f !== b.f || GEO.dist(a.tile, b.tile) > 1) return false;
-    if (a === b || a.units.length >= armyCap(a) || !b.units.length) return false;
+    const a = army(aid), b = army(bid), { indices, ...result } = planMerge(a, b);
+    if (!result.ok) return result;
+    const sourceName = armyName(b);
+    moveMergeUnits(a, b.units, indices);
     clearSentry(a); clearSentry(b);
-    while (b.units.length && a.units.length < armyCap(a)) a.units.push(b.units.shift());
-    if (!b.units.length) { if (b.gen != null) { const g = gen(b.gen); g.status = 'idle'; g.loc = null; } S.armies = S.armies.filter(x => x !== b); }
-    return true;
+    recordUnits(a);
+    if (!b.units.length) { releaseCommand(b); S.armies = S.armies.filter(x => x !== b); rec({ k: 'die', id: b.id, quiet: true }); }
+    else recordUnits(b);
+    if (a.f === S.player) log(`${sourceName}拨营入${armyName(a)}。${result.msg}。`, 'mil', a.tile);
+    return result;
   }
   function nearestJail(f, tile) {
     const capital = city(fac(f)?.capital);
@@ -2473,6 +3132,7 @@ var GAME = (function () {
     return best?.id ?? null;
   }
   function takeCaptive(g, f, tile, rep) {
+    if (g.status === 'army' || g.status === 'gov') unassign(g.id);
     g.status = 'captive'; g.capBy = f; g.loc = null;
     g.jail = nearestJail(f, tile); g.capT = S.T;
     delete g.capRansomT;
@@ -2521,6 +3181,31 @@ var GAME = (function () {
     }
     g.loyalty -= 10;
     return false;
+  }
+  function bribeTerms(gid, f = S.player) {
+    const g = gen(gid);
+    if (!g || g.f === 'rebel' || !fac(g.f)?.alive || !atWar(f, g.f) || !(g.loyalty < 50) ||
+        !['idle', 'army', 'gov', 'court'].includes(g.status)) return { msg: '唯与我朝交兵且忠诚不足五十之将可招' };
+    const cost = Math.round(500 + Math.max(g.tong, g.wu, g.zheng, g.zhi) * 16 + (g.rank || 0) * 100);
+    const chance = clamp(0.45 + (50 - g.loyalty) / 75 + getRel(f, g.f).op / 250, 0.05, 0.85);
+    if (g.bribedT != null && !coalitionDue(g.bribedT + 4)) return { cost, chance, msg: '使者方归，一年内不可再遣' };
+    return fac(f).gold < cost ? { cost, chance, msg: '府库不足' } : { cost, chance, ok: true };
+  }
+  function bribeGeneral(gid, f = S.player) {
+    const terms = bribeTerms(gid, f);
+    if (!terms.ok) return terms;
+    const g = gen(gid);
+    fac(f).gold -= terms.cost;
+    g.bribedT = S.T;
+    const joined = Math.random() < terms.chance;
+    const msg = joined ? `${g.name}密受金帛，解印来归。` : `${g.name}受了金帛，终不肯来。`;
+    if (joined) {
+      unassign(g.id);
+      g.f = f; g.loyalty = 55; g.rank = 0;
+      if (f === S.player) S.flags.achievementProgress.recruits++;
+    }
+    if (f === S.player) log(msg, 'dip');
+    return { ok: true, joined, msg };
   }
   function releaseCaptive(gid) {
     const g = gen(gid);
@@ -2940,7 +3625,8 @@ var GAME = (function () {
   function techCost(f, id) {
     const n = Object.keys(fac(f).techs).length;
     const era = TECH[id].era || 1;
-    return Math.round(TECH[id].cost * 5 * (1 + n * 0.05) * (ERA_COST[era] || 1));
+    const cut = 1 - 0.2 * (fac(f).techLessons[id] || 0);
+    return Math.round(TECH[id].cost * 5 * (1 + n * 0.05) * (ERA_COST[era] || 1) * cut);
   }
   function setResearch(f, id) { fac(f).research = id; }
 
@@ -2988,13 +3674,13 @@ var GAME = (function () {
     if (ratio <= 0) return false;
     let changed = false;
     for (const u of units) if (u.s < 100) {
-      u.s += Math.min(100 - u.s, amount) * ratio;
+      refillUnit(u, u.s + Math.min(100 - u.s, amount) * ratio);
       changed = true;
     }
     return changed;
   }
 
-  function processFaction(f) {
+  function processFaction(f, tributeRelations) {
     const F = fac(f);
     if (!F.alive) return;
     const cs = citiesOf(f);
@@ -3020,21 +3706,57 @@ var GAME = (function () {
         log(`${c.name}仓粮久绌，户口减一万。`, 'eco', c.tile);
       }
       // 生产
-      const q = c.queue[0];
-      if (q) {
-        q.prog += y.prod * e;
+      let q = c.queue[0];
+      while (q?.kind === 'elite' && army(q.army)?.f !== c.f) {
+        dequeue(c.id, 0);
+        if (player) log(`${c.name}原领兵军团已撤，背嵬军资退归府库。`, 'eco', c.tile);
+        q = c.queue[0];
+      }
+      let change = q?.kind === 'change' ? upgradeSubject(c, q) : null;
+      if (change && (!change.u || change.owner.tile !== c.tile || change.owner.f !== f)) {
+        dequeue(c.id, 0);
+        if (player) log(`${c.name}换装之营已散，军资退归府库。`, 'eco', c.tile);
+        q = c.queue[0];
+        change = q?.kind === 'change' ? upgradeSubject(c, q) : null;
+      }
+      const reinforce = q?.kind === 'elite' ? army(q.army) : null;
+      if (q && (q.kind !== 'elite' || (eliteOrder(reinforce).c === c && reinforce.units.length < armyCap(reinforce) &&
+          reinforce.units.filter(u => eliteUnit(u.t)).length < 3)) &&
+          (q.kind !== 'change' || (c.buildings.barracks && change.u && change.owner.tile === c.tile && change.owner.f === f &&
+            (q.id !== 'elite' || !change.owner.units || (eliteOrder(change.owner).c === c && change.owner.units.filter(u => eliteUnit(u.t)).length < 3)) &&
+            (q.id !== 'beiwei_guard' || guardRefitReady(change.owner))))) {
+        const speed = !player && q.kind === 'u' ? rules.command.recruitSpeed ?? 1 : 1;
+        q.prog += y.prod * e * speed;
         if (q.prog >= q.cost) {
           c.queue.shift();
           if (q.kind === 'b') { c.buildings[q.id] = 1; if (q.id === 'walls') c.wall = maxWall(c); if (f === S.player) log(`${c.name}建成${B[q.id].name}。`, 'eco'); }
+          else if (q.kind === 'work') {
+            (c.works ||= {})[q.id] = { f, date: dateStr() };
+            if (player) {
+              S.flags.achievementProgress.works++;
+              const text = `${c.name}${DATA.GREAT_WORKS[q.id].name}竣工。`;
+              log(text, 'eco', c.tile);
+              S.pending.push({ ev: 'info', title: '百工告成', text });
+            }
+          }
           else if (q.kind === 'tier' && q.id === c.tier + 1 && !c.cap) {
             const before = cityTier(c).name;
             c.tier = q.id;
             if (player) {
               log(cityPromotionText(c.name, before, c.tier) + '。', 'eco', c.tile);
-              S.pending.push({ ev: 'cityPromotion', city: c.id, before, tier: c.tier });
+              if (!q.delegated) S.pending.push({ ev: 'cityPromotion', city: c.id, before, tier: c.tier });
             }
           }
-          else if (q.kind === 'u') {
+          else if (q.kind === 'elite') {
+            reinforce.units.push(mkUnit('elite'));
+            recordUnits(reinforce);
+            if (player) log(`${armyName(reinforce)}募得背嵬一营。`, 'mil', c.tile);
+          } else if (q.kind === 'change') {
+            change.u.t = q.id;
+            delete change.u.training;
+            recordUnits(change.owner);
+            if (player) log(`${c.name}练成${U[q.id].name}一营。`, 'mil', c.tile);
+          } else if (q.kind === 'u') {
             const u = mkUnit(q.id, 100);
             c.garrison.push(u);
             c.pop = Math.max(1, c.pop - (U[q.id].man >= 5 ? 0 : 0));
@@ -3050,19 +3772,18 @@ var GAME = (function () {
       // 城防恢复
       const mw = maxWall(c);
       const besieged = GEO.NBR[c.tile].some(n => { const a = armyAt(n); return a && atWar(a.f, f); });
-      if (!besieged) c.wall = Math.min(mw, c.wall + Math.max(3, mw * 0.1) * e);
+      if (!besieged) c.wall = Math.min(mw, c.wall + Math.max(3, mw * 0.1) * e / (1 - officeBonus(f, 'gongbu')));
       // 守军休整
       if (!besieged && recoverUnits(F, c.garrison, DATA.UNIT_RECOVERY.garrison * e)) recordUnits(c);
       // 民变
-      const revolt = (c.loyalty < 25 ? 0.12 : 0) + (c.loyalty < 45 ? rules.occupation.revolt * occupationPressure(c) : 0);
+      const revolt = (c.loyalty < 25 ? 0.12 : 0) + (c.loyalty < 45 ? rules.occupation.revolt * occupationPressure(c) + governorEffects(gen(c.governor)).unrest : 0);
       if (revolt > 0 && f !== 'rebel' && Math.random() < revolt * e) rebellion(c);
     }
     // 军费
     const { gold: upGold, food: upFood, governance } = factionUpkeep(f, cs);
     // 岁币
     let trib = 0, received = false;
-    for (const k in S.rel) {
-      const r = S.rel[k];
+    for (const r of tributeRelations) {
       if (!r.trib) continue;
       if (r.trib.from === f) {
         trib -= r.trib.amt;
@@ -3141,6 +3862,17 @@ var GAME = (function () {
     if (tt === T.JUNGLE && TC.expedition.jungleCultures.includes(culture)) return 0;
     return expeditionTime(tt) > 0 ? rate : 0;
   }
+  function expeditionRetention(rate, time) {
+    if (time === 1) return 1 - rate;
+    // 水土损耗至多每季 3%，二项式十项后的截断误差低于双精度的末位。
+    // 只用基本运算，避免分数幂在各版引擎的末位差异累入兵力。
+    let retained = 1, term = 1;
+    for (let k = 1; k <= 10; k++) {
+      term *= (k - 1 - time) * rate / k;
+      retained += term;
+    }
+    return retained;
+  }
   function warnExpedition(a, rate) {
     if (rate && !a.expeditionWarned) {
       const terrain = GEO.TERRAIN[GEO.terrain[a.tile]].name;
@@ -3172,7 +3904,7 @@ var GAME = (function () {
       const hk = e;
       const rate = expeditionRate(a);
       if (a.f === S.player) warnExpedition(a, rate);
-      const retained = rate ? Math.pow(1 - rate, expeditionTime(GEO.terrain[a.tile])) : 1;
+      const retained = rate ? expeditionRetention(rate, expeditionTime(GEO.terrain[a.tile])) : 1;
       let changed = !!rate;
       if (heal > 0) {
         if (retained !== 1) for (const u of a.units) u.s *= retained;
@@ -3194,13 +3926,13 @@ var GAME = (function () {
         log(`${armyName(a)}欠饷，逃散一营。`, 'mil', a.tile);
       }
       const mr = 5 + (techFx(a.f).morale || 0) + (a.f === S.player && S.court && typeof COURT !== 'undefined' ? COURT.bonus('shumi') * 20 : 0);
-      const moraleRecovery = (a.morale < 75 ? mr : 1) * Math.min(1, e * 2);
+      const moraleRecovery = (a.morale < 75 ? mr : 1) * e * (weakCommand(gen(a.gen)) < 1 ? 0.5 : 1);
       const fortRecovery = inCity && fortified(a, S.T + e) ? 1.5 : 1;
-      a.morale = clamp(a.morale + moraleRecovery * fortRecovery, 5, 100);
+      a.morale = clamp(a.morale + moraleRecovery * fortRecovery, 5, moraleCap(a.f));
       a.mp = armyMP(a);
       if (a.progTo != null && (!a.path || a.path[0] !== a.progTo || GEO.dist(a.tile, a.progTo) !== 1)) { a.prog = 0; a.progTo = null; a.progFrac = 0; }
     }
-    S.armies = S.armies.filter(a => { if (!a.units.length) { if (a.gen != null) { const g = gen(a.gen); g.status = 'idle'; g.loc = null; } return false; } return true; });
+    S.armies = S.armies.filter(a => { if (!a.units.length) { releaseCommand(a); return false; } return true; });
   }
 
   function diplomacyTurn() {
@@ -3228,6 +3960,13 @@ var GAME = (function () {
 
   function generalsTurn() {
     for (const g of S.generals) {
+      if (g.wound > 0 && g.status !== 'dead') {
+        g.wound = Math.max(0, g.wound - E() * (1 + officeBonus(g.f, 'taiyi')));
+        if (g.wound < 1e-8) {
+          g.wound = 0;
+          if (g.f === S.player) log(`${g.name}创愈，可复领兵。`, 'mil');
+        }
+      }
       if (g.status === 'future' && S.year >= g.avail) {
         if (g.f === S.player && fac(g.f).alive && g.zheng > g.wu + 5) continue;
         enterService(g);
@@ -3241,7 +3980,8 @@ var GAME = (function () {
       for (const g of S.generals) {
         if (['dead', 'gone', 'future'].includes(g.status)) continue;
         const age = S.year - g.birth;
-        if (age > 52 && Math.random() < (age - 52) * 0.012) killGeneral(g, `病逝，享年${age}`);
+        const onset = hasOffice(g.f, 'taiyi') ? 54 : 52;
+        if (age > onset && Math.random() < (age - onset) * 0.012) killGeneral(g, `病逝，享年${age}`);
       }
     }
     // AI 自动补将
@@ -3258,8 +3998,11 @@ var GAME = (function () {
     S._defQ = [];
     // AI 行动
     for (const f in S.factions) if (f !== S.player && fac(f).alive) AI.turn(f);
+    AI.delegatedTurn();
     computeInbound();
-    for (const f in S.factions) processFaction(f);
+    // 结算期间可能因亡国停贡，保留关系引用，逐国读取当下的贡约。
+    const tributeRelations = Object.values(S.rel).filter(r => r.trib);
+    for (const f in S.factions) processFaction(f, tributeRelations);
     if (fac(S.player).alive) payVassalTributes();
     armyUpkeepTurn();
     diplomacyTurn();
@@ -3325,7 +4068,7 @@ var GAME = (function () {
     for (const k in S) if (k[0] !== '_') o[k] = S[k];
     o.tileCity = encodeTA(new Int16Array(S.tileCity)); o.tileCityFmt = 16; o.explored = encodeTA(S.explored); o.visible = undefined;
     // 已故/离去的非史实人物只留名
-    o.generals = S.generals.map(g => (!g.hist && !g.items?.length && !g.frontierHold && (g.status === 'dead' || g.status === 'gone')) ? { id: g.id, name: g.name, f: g.f, status: g.status, birth: g.birth, tong: 0, wu: 0, zhi: 0, zheng: 0 } : g);
+    o.generals = S.generals.map(g => (!g.hist && !g.custom && !g.female && !g.items?.length && !g.frontierHold && (g.status === 'dead' || g.status === 'gone')) ? { id: g.id, name: g.name, f: g.f, status: g.status, birth: g.birth, tong: 0, wu: 0, zhi: 0, zheng: 0 } : g);
     const timeShift = Math.round(S.T * 100) / 100 - S.T;
     return JSON.stringify(o, function (k, v) {
       if (k === '_fx' || k === '_bfx') return undefined;
@@ -3343,6 +4086,10 @@ var GAME = (function () {
     o.pending = o.pending || [];
     if (!o.scale) { o.scale = 90; o.doy = o.season * 90 + 1; o.T = o.turn; }
     S = o;
+    S.delegationReserve ??= 500;
+    S.nextUpgrade ??= 1;
+    S.flags.hireYear ??= null;
+    S.hireList ??= null;
     S.settlement ??= null;
     S.vault ??= [];
     S.itemsTaken ??= {};
@@ -3370,18 +4117,41 @@ var GAME = (function () {
     S.flags.autoVassalT ??= null;
     S.flags.recommendYear ??= null;
     // 旧档可能保存了汇总值，按当前版本的建筑与科技数据重算。
+    const inTraining = new Set();
     for (const c of S.cities) {
       delete c._bfx;
       initCityTier(c);
       c.recentCapture ??= null;
       c.lastSiege ??= null;
       c.battleTurn ??= null;
-      for (const u of c.garrison) u.refT ??= null;
+      c.works ??= {};
+      c.delegated = c.governor != null && !!c.delegated;
+      for (const q of c.queue) {
+        if (q.kind === 'change') {
+          const { owner, u } = upgradeSubject(c, q);
+          if (u?.training != null && owner.tile === c.tile && owner.f === c.f) inTraining.add(u);
+        } else if (q.kind === 'work' && q.cost > DATA.GREAT_WORKS[q.id]?.work) {
+          const cost = workCost(c, q.id);
+          q.prog = Math.min(cost, q.prog * cost / q.cost);
+          q.cost = cost;
+        }
+      }
+      for (const u of c.garrison) {
+        u.refT ??= null; u.xp ??= 0;
+        if (u.training != null && !inTraining.has(u)) delete u.training;
+      }
     }
     for (const F of Object.values(S.factions)) {
       delete F._fx;
+      F.techLessons ??= {};
       F.recruitEra ??= reachedEra(F);
       F.lastMainWar ??= -99;
+      F.rewardYear ??= null;
+      F.mongolMusterYear ??= null;
+      F.mongolWestRival ??= null;
+      F.mongolXiaAloneYear ??= null;
+      F.mongolCaptureT ??= null;
+      F.mongolReserveT ??= null;
     }
     for (const r of Object.values(S.rel)) {
       if (r.war) r.since ??= 0;
@@ -3390,16 +4160,25 @@ var GAME = (function () {
     }
     for (const a of S.armies) {
       a.fortT ??= null; a.expeditionWarned ??= false; a.battleTurn ??= null;
-      for (const u of a.units) u.refT ??= null;
+      a.deputy ??= null;
+      for (const u of a.units) {
+        u.refT ??= null; u.xp ??= 0;
+        if (u.training != null && !inTraining.has(u)) delete u.training;
+      }
     }
     const originals = new Map(DATA.GEN.map(row => [row[0], row]));
     for (const g of S.generals) {
       g.rank ??= 0;
+      g.wound ??= Math.max(0, (S.flags.battleEvents?.wounds?.[g.id]?.until ?? S.T) - S.T);
+      g.bribedT ??= null;
+      g.female ??= DATA.FEMALE.has(g.name) && !!g.hist;
+      g.custom ??= false;
       g.powerGuard ??= 0;
       g.powerIgnored ??= 0;
       if (!g.cul) g.cul = fac(g.f)?.culture || 'han';
       migrateItemFx(g, originals);
     }
+    repairCommands();
     for (const g of S.generals) if (g.status === 'captive') repairCaptivity(g);
     // 旧档的封爵奏议与「边将自专」曾共用编号，只有前者在发出时记过 powerLast。
     for (const p of S.pending) {
@@ -3428,14 +4207,17 @@ var GAME = (function () {
   return {
     terrainPower, terrainDefense, battleTerrainRows, tileTerrainRows, expeditionRate,
     equipItem, unequipItem, itemNames, itemOfficer, isItemOldOwner, itemOldOwners, itemMoveReason, itemEquipReason, itemGain, recoverItem, grantItem, sweepItemTransfers,
-    get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, strengthByType, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum, cityPromotionText,
-    fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, maxWall, strategicIncome, luxuryCount,
+    get S() { return S; }, on, emit, newGame, garrisonCap, hooks, donateInfo, donate, reliefCost, reliefReady, relief, rewardCost, rewardReady, rewardArmy, migrateCost, migrateOk, migrate, techFx, bldFx, techEff, bldEff, growthTh, winChance, takeDefenses, defenseValid, previewBattle, strengthByType, battleSides, sidePowerPub: (...x) => sidePower(...x), skillMult: (...x) => skillMult(...x), itemSum: (...x) => itemSum(...x), hasSkill, skillList, levelOptions, optText, applyLevel, gainExp, nextLv, siteAt, siteUsable, continueArmy, STAT_NAME, takeAnim, E, unitName, mpFactor, armyMP, SCALE_NAME, serialize, deserialize, endTurn, log, dateStr, cnNum, cityPromotionText, seasonPulses, seasonPulseTime,
+    fac, city, gen, army, armyAt, cityAt, tileOwner, cityTiles, cityYield, tileYield, loyaltyTarget, governorEffects, civil, versatile, weakCommand, campaignCommand: battleCommand, adviserBonus, maxWall, strategicIncome, luxuryCount,
     frontierAt, foundationOrder, orderFoundation, campSpoils, resolveCampSpoils,
     cityTier, cityRoleFx, setCapital, buildingCount, buildingFull, buildingCost, demolishBuilding, tierUpgrade, canUpgradeCity, queueTier, roleTime, setCityRole,
-    buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueBuilding, dequeue, hurry, hurryCost,
-    createArmyRaw, formArmy, transferToArmy, transferToCity, disband, dismissUnits, dismissalReason, dismissalInfo, enemyAdjacent, armyUpkeep, factionUpkeep, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
+    workOptions, workCost, queueWork, hostReward, bribeTerms, bribeGeneral, borderMarketOpen, moraleCap, siegeDamage, campaignOffense, mongolCampaign, steppeProtected, woundGeneral,
+    buildOptions, unitOptions, unitCost, canAffordUnit, queueUnit, queueElite, eliteInfo, queueBuilding, dequeue, hurry, hurryCost,
+    upgradeInfo, queueUpgrade, trainingArmy, unitRank, primaryType,
+    createArmyRaw, formArmy, transferToArmy, transferToCity, disband, dismissUnits, dismissalReason, dismissalInfo, enemyAdjacent, armyUpkeep, factionUpkeep, mergeInfo, mergeArmies, setSentry, fortified, armyCap, capFor, armyName, armyMP, canSail, findPath, routeStep, advance, moveArmyTo, attack, mkUnit,
     reinforcementInfo, reinforceUnits, consolidationInfo, consolidateUnits,
-    assignGovernor, unassign, setArmyGeneral, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
+    assignGovernor, unassign, setArmyGeneral, setDeputy, recruitCaptive, releaseCaptive, executeCaptive, randomGeneral, addGeneral, killGeneral,
+    customSkills, customName, customInfo, hireCost, openHire, acceptHire,
     ransomCost, ransomInfo, ransomCaptive, exchangeOptions, exchangeCaptive, peaceCaptives, defectCaptive,
     getRel, atWar, allied, warScore, casusBelli, declareWar, peaceTruce, makePeace, meet, sendEnvoy, envoyCost, proposePeace, demandTribute, proposeAlliance, aiWantsPeace,
     leagueMember, coalitionGiftTerms, answerCoalition, intrigueTerms, intrigue,

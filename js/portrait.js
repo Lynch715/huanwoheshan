@@ -26,7 +26,7 @@ var PORTRAIT = (function () {
     const x = c.getContext('2d');
     x.scale(SZ / 64, SZ / 64);
     const R = rnd(g.id * 7 + g.name.length * 131 + (g.name.charCodeAt(0) || 0));
-    const mil = (g.tong + g.wu) >= (g.zhi + g.zheng);
+    const mil = !GAME.civil(g);
     const age = (year || 1140) - g.birth;
     const ink = '#211d18';
     // 底
@@ -66,26 +66,28 @@ var PORTRAIT = (function () {
     x.strokeStyle = 'rgba(60,40,30,0.7)'; x.lineWidth = 0.9;
     x.beginPath(); x.moveTo(32, 32); x.lineTo(31, 36); x.lineTo(33, 36.3); x.stroke();
     if (age > 50) { x.strokeStyle = 'rgba(80,60,40,0.4)'; x.beginPath(); x.moveTo(25, 34); x.lineTo(27, 37); x.moveTo(39, 34); x.lineTo(37, 37); x.stroke(); }
-    // 胡须
     const gray = age > 56;
     let hair = gray ? '#9a948a' : '#1e1a16';
     if (EURO[cul] || cul === 'rus' || cul === 'norse') { const h = R(); hair = gray ? '#a8a298' : h < 0.35 ? '#6b4a2a' : h < 0.55 ? '#b08a4a' : h < 0.7 ? '#8a3a20' : '#2a2018'; }
     const bt = R();
-    x.fillStyle = hair; x.strokeStyle = hair;
-    if (cul === 'han' || cul === 'korean' || cul === 'bai' || cul === 'viet' || cul === 'tangut') {
-      if (age > 26 && bt < 0.85) {
-        x.lineWidth = 1.6; x.beginPath(); x.moveTo(28, 38.5); x.quadraticCurveTo(25, 39.5, 24, 41); x.moveTo(36, 38.5); x.quadraticCurveTo(39, 39.5, 40, 41); x.stroke();
-        if (bt < 0.6) { // 三绺长髯
-          x.lineWidth = 1.4;
-          for (const dx of [-3, 0, 3]) { x.beginPath(); x.moveTo(32 + dx * 0.6, 41); x.quadraticCurveTo(32 + dx, 48, 32 + dx * 1.3, 54 + (dx ? 0 : 3)); x.stroke(); }
+    if (!g.female) {
+      // 胡须
+      x.fillStyle = hair; x.strokeStyle = hair;
+      if (cul === 'han' || cul === 'korean' || cul === 'bai' || cul === 'viet' || cul === 'tangut') {
+        if (age > 26 && bt < 0.85) {
+          x.lineWidth = 1.6; x.beginPath(); x.moveTo(28, 38.5); x.quadraticCurveTo(25, 39.5, 24, 41); x.moveTo(36, 38.5); x.quadraticCurveTo(39, 39.5, 40, 41); x.stroke();
+          if (bt < 0.6) { // 三绺长髯
+            x.lineWidth = 1.4;
+            for (const dx of [-3, 0, 3]) { x.beginPath(); x.moveTo(32 + dx * 0.6, 41); x.quadraticCurveTo(32 + dx, 48, 32 + dx * 1.3, 54 + (dx ? 0 : 3)); x.stroke(); }
+          }
         }
-      }
-    } else if (cul === 'japanese') {
-      if (bt < 0.5) { x.lineWidth = 1.4; x.beginPath(); x.moveTo(28, 38.5); x.lineTo(25, 40); x.moveTo(36, 38.5); x.lineTo(39, 40); x.stroke(); }
-    } else if (bt < 0.8) {
-      x.beginPath(); x.moveTo(32 - fw + 1, 32); x.quadraticCurveTo(32 - fw + 1, 44, 32, 46 + bt * 4); x.quadraticCurveTo(32 + fw - 1, 44, 32 + fw - 1, 32);
-      x.quadraticCurveTo(32 + fw - 3, 41, 32, 40); x.quadraticCurveTo(32 - fw + 3, 41, 32 - fw + 1, 32); x.fill();
-    } else { x.lineWidth = 1.6; x.beginPath(); x.moveTo(28, 38.5); x.quadraticCurveTo(25, 39, 23.5, 37); x.moveTo(36, 38.5); x.quadraticCurveTo(39, 39, 40.5, 37); x.stroke(); }
+      } else if (cul === 'japanese') {
+        if (bt < 0.5) { x.lineWidth = 1.4; x.beginPath(); x.moveTo(28, 38.5); x.lineTo(25, 40); x.moveTo(36, 38.5); x.lineTo(39, 40); x.stroke(); }
+      } else if (bt < 0.8) {
+        x.beginPath(); x.moveTo(32 - fw + 1, 32); x.quadraticCurveTo(32 - fw + 1, 44, 32, 46 + bt * 4); x.quadraticCurveTo(32 + fw - 1, 44, 32 + fw - 1, 32);
+        x.quadraticCurveTo(32 + fw - 3, 41, 32, 40); x.quadraticCurveTo(32 - fw + 3, 41, 32 - fw + 1, 32); x.fill();
+      } else { x.lineWidth = 1.6; x.beginPath(); x.moveTo(28, 38.5); x.quadraticCurveTo(25, 39, 23.5, 37); x.moveTo(36, 38.5); x.quadraticCurveTo(39, 39, 40.5, 37); x.stroke(); }
+    }
     x.strokeStyle = 'rgba(80,40,30,0.8)'; x.lineWidth = 1; x.beginPath(); x.moveTo(30, 39); x.lineTo(34, 39); x.stroke();
     // 冠帽
     hat(x, cul, mil, R, color, hair, fw);
@@ -212,14 +214,17 @@ var PORTRAIT = (function () {
       key = historicalKeys.get(g.name + '\n' + g.birth);
     } else if (!key && g.hist === false) {
       const culture = g.cul || GAME.fac(g.f)?.culture;
-      const role = g.zheng > g.wu + 5 ? 'civil' : 'military';
       const age = (GAME.S?.year || 1140) - g.birth;
-      const band = age >= 50 ? 'old' : age >= 35 ? 'middle' : 'young';
-      const variant = ((Math.imul(g.id, 2654435761) >>> 28) % 4) + 1;
-      key = `generic/${culture}_${role}_${band}_${variant}`;
+      const keys = genericKeys(culture, g.female, GAME.civil(g) ? 'civil' : 'military', age);
+      key = keys[(Math.imul(g.id, 2654435761) >>> 28) % keys.length];
     }
     if (!available.has(key)) return '';
     return 'portraits/' + key.split('/').map(encodeURIComponent).join('/') + '.webp';
+  }
+  function genericKeys(culture, female, role, age) {
+    const band = age >= 50 && !female ? 'old' : age >= 35 ? 'middle' : 'young';
+    const prefix = `generic/${culture}_${female ? 'female_' : ''}${role}_${band}_`;
+    return [1, 2, 3, 4].map(n => prefix + n).filter(key => available.has(key));
   }
 
   function color(g) {
@@ -301,5 +306,5 @@ var PORTRAIT = (function () {
     return `<img class="pimg" src="${path}" loading="lazy" decoding="async" ${fallback} onload="PORTRAIT.onImageLoad(this)" onerror="PORTRAIT.onImageError(this)" style="width:${size}px;height:${size}px;border-color:${color(g)}" ${extra || ''}>`;
   }
   function clear() { cache.clear(); urls.clear(); artCanvases.clear(); }
-  return { get, url, img, clear, onImageLoad, onImageError };
+  return { get, url, img, genericKeys, clear, onImageLoad, onImageError };
 })();

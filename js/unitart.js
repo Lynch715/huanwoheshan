@@ -295,18 +295,29 @@ var UNITART = (function () {
     // 以髋为原点
     const ac = armorCol(st, o.elite) || shade(color, -0.2);
     if (k === 'inf') {
-      line(x, [[-12, 24], [22, -48]], 1.5, '#5a4632');
+      line(x, [[-12, 24], [22, o.pike ? -57 : -48]], o.pike ? 2.2 : 1.5, '#5a4632');
       if (o.axe) {
         poly(x, [[19, -46], [22, -51], [34, -53], [33, -43], [28, -37], [24, -45]], '#98938a', INK, 0.7);
+      } else if (o.pike) {
+        poly(x, [[22, -54], [20, -59], [26, -69], [26, -58]], '#a29d8d', INK, 0.7);
+        ell(x, 22, -54, 2, 1.5, 0, '#ac3931');
       } else {
         poly(x, [[22, -48], [21.6, -55], [25.5, -50.6]], '#8a8984', INK, 0.5);
         ell(x, 21, -46.5, 1.8, 1.4, 0, '#b8352a');
       }
       legs(x, st, color, 'wide');
       torso(x, st, color, sk, o);
+      if (o.armored) {
+        poly(x, [[-10,-22],[-4,-25],[3,-22],[1,-15],[-9,-15]], '#62686a', INK, 0.8);
+        for (const y of [-21,-18,-15]) line(x, [[-8,y],[1,y]], 0.7, '#c0b8a7');
+      }
       head(x, 1, -28.5, st, sk, color, o);
       arm(x, [-6, -17], [-3, -8], [4.2, -12.5], ac, sk);   // 后臂握枪
-      shield(x, st, 9, -7, color, 1);
+      if (o.armored) {
+        poly(x, [[3,-14],[16,-14],[16,7],[9,13],[3,7]], '#363c3c', INK, 1.4);
+        line(x, [[5,-12],[14,-12],[14,6],[9,10],[5,6],[5,-12]], 0.7, '#baaa83');
+        ell(x, 9, -2, 2.5, 2.5, 0, shade(color, 0.15), '#cab78f', 0.7);
+      } else shield(x, st, 9, -7, color, 1);
       if (st === 'wa') arm(x, [5, -17], [9, -10], [10.5, -17.5], ac, sk);
       else arm(x, [5, -17], [8, -12], [8.6, -8], ac, sk);
     } else if (k === 'bow') {
@@ -617,20 +628,32 @@ var UNITART = (function () {
     const id = t;
     const unit = DATA.UNITS[t];
     t = DATA.unitBase(t);
-    const elite = t === 'elite' || !!unit?.home;
-    const o = { elite, great: st === 'euro' && (t === 'hcav' || t === 'elite'), crest: elite, beard: t === 'hcav' || elite, mail: t === 'hcav' };
-    o.axe = id === 'byz_varangian';
-    o.crossbow = id === 'daviet_bow';
-    o.longbow = id === 'england_longbow';
+    const elite = t === 'elite' || !!unit?.home || !!unit?.upgradeOnly;
+    const o = { elite, great: st === 'euro' && (t === 'hcav' || t === 'elite'), crest: elite, beard: t === 'hcav' || elite, mail: t === 'hcav' || id === 'armored_inf' };
+    const tradition = id.replace(/_guard$/, '');
+    o.axe = tradition === 'byz_varangian';
+    o.crossbow = tradition === 'daviet_bow' || id === 'shenbi';
+    o.longbow = tradition === 'england_longbow';
+    o.pike = id === 'pike' || id === 'armored_inf';
+    o.armored = id === 'armored_inf';
     if (unit?.group === 'elephant') {
       elephant(x, st, cul, color, sk);
+    } else if (id === 'bed_bow') {
+      footman(x, 24, 84, 0.75, 'bow', st, cul, color, sk, { ...o, crossbow: true });
+      line(x, [[45, 85], [59, 53], [74, 85]], 3, '#624b34');
+      line(x, [[52, 68], [66, 68]], 2, '#624b34');
+      poly(x, [[39, 55], [83, 47], [86, 51], [42, 60]], '#8b6a45', INK, 1.2);
+      curve(x, [71, 30], [87, 48], [78, 73], 3, '#4e3a2a');
+      line(x, [[71, 30], [56, 54], [78, 73]], 1.1, INK);
+      line(x, [[53, 54], [92, 48]], 1.2, INK);
+      poly(x, [[92, 48], [86, 46], [88, 51]], '#8b8479', INK, 0.7);
     } else if (t === 'inf' || t === 'bow' || t === 'fire') {
       // 后排虚影成阵
       x.save(); x.globalAlpha = 0.28;
       footman(x, 26, 80, 0.72, t, st, cul, '#6b6258', '#9b9080', o);
       footman(x, 76, 78, 0.66, t, st, cul, '#6b6258', '#9b9080', o);
       x.restore();
-      footman(x, 46, 92, 1.05, t, st, cul, color, sk, o);
+      footman(x, 46, 92, o.pike ? 0.92 : 1.05, t, st, cul, color, sk, o);
     } else if (t === 'cav' || t === 'hbow' || t === 'hcav' || t === 'elite') {
       x.save(); x.globalAlpha = 0.22;
       mounted(x, 22, 74, 0.55, t, st, cul, '#6b6258', '#9b9080', o);
@@ -640,7 +663,11 @@ var UNITART = (function () {
     } else if (t === 'siege') {
       siege(x, st, cul, color, sk);
     } else if (t === 'navy') {
-      navy(x, st, cul, color, sk, id === 'venice_galley');
+      navy(x, st, cul, color, sk, tradition === 'venice_galley');
+    }
+    if (id.endsWith('_guard') || id === 'guard_hbow') {
+      poly(x, [[75, 29], [91, 29], [86, 37], [91, 44], [75, 43]], id === 'beiwei_guard' ? '#af884a' : shade(color, 0.15), INK, 0.8);
+      line(x, [[75, 25], [75, 60]], 1.2, '#554532');
     }
     // 边框墨痕
     x.strokeStyle = 'rgba(34,30,25,0.55)'; x.lineWidth = 1.2; x.strokeRect(0.6, 0.6, 98.8, 98.8);
@@ -682,8 +709,12 @@ var UNITART = (function () {
   }
   // 画布上的圆章：用于六角小战场
   const CROP = { inf: [48, 58, 64], bow: [52, 58, 64], fire: [54, 56, 66], cav: [48, 56, 76], hbow: [48, 56, 76], hcav: [50, 54, 78], elite: [46, 52, 80], siege: [52, 52, 90], navy: [50, 46, 92] };
+  Object.assign(CROP, { pike: [49, 52, 76], armored_inf: [49, 51, 78], shenbi: [52, 58, 68], bed_bow: [57, 58, 80],
+    guard_hbow: [49, 54, 78], song_bazi: [48, 58, 64] });
+  for (const id of Object.values(DATA.UPGRADES)) if (id.endsWith('_guard')) CROP[id] = CROP[DATA.unitBase(id)];
+  CROP.beiwei_guard = [51, 48, 86];
   const ELEPHANT_CROP = [55, 50, 88];
-  function crop(t) { return DATA.UNITS[t]?.group === 'elephant' ? ELEPHANT_CROP : CROP[DATA.unitBase(t)] || CROP.inf; }
+  function crop(t) { return DATA.UNITS[t]?.group === 'elephant' ? ELEPHANT_CROP : CROP[t] || CROP[DATA.unitBase(t)] || CROP.inf; }
   function token(ctx, f, t, cx, cy, r, opt) {
     opt = opt || {};
     const c = forFac(f, t);

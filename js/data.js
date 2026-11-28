@@ -83,28 +83,28 @@ var DATA = (function () {
     heirSeasons: 30, heirPower: 0.3, heirChance: 0.06 };
   const UNIT_RECOVERY = { city: 40, home: 16, ally: 8, garrison: 15 };
   const DIFFICULTY = [
-    { name: '宽仁', aiYield: 0.60, aiBattle: 0.52, startReserve: 1.5, northGarrison: -3, northArmy: 0, eraRecruit: 0, ransom: 0.8, requestProtection: 12, regenMan: 1, refillGold: 1,
-      coalition: { threat: 0.21, ratio: 0.08, opinion: 5, rapport: 2, allyAt: 55, peaceRate: 0.3, dislike: 3, warDelay: 6,
-        speedW: 0.5, brokenW: 0.01, leagueGap: 0.12, ratioSlope: 1.5, ratioFloor: 0.5, waveMax: 2, waveCool: 16, giftMult: 0.4 },
-      command: { armies: 0, defenseWeight: 1, unrestWeight: 0.02, assault: 1.12, retreat: 45, morale: 30, reconquest: 2, northPush: 0, siegeInterval: 0.82 },
-      occupation: { seasons: 1, production: 0.02, loyalty: 48, unrest: 8, revolt: 0 },
-      debt: { governance: 0, morale: 1, desertion: 0, hunger: 0.5, famine: 0 } },
-    { name: '中庸', aiYield: 1, aiBattle: 0.90, startReserve: 1.14, northGarrison: -2, northArmy: 0, eraRecruit: 0, ransom: 1, requestProtection: 10, regenMan: 0.65, refillGold: 0.9,
-      coalition: { threat: 0.21, ratio: 0.8, opinion: -12, rapport: 4, allyAt: 42, peaceRate: 0.45, dislike: 5, warDelay: 2,
-        speedW: 1, brokenW: 0.02, leagueGap: 0.10, ratioSlope: 4.1, ratioFloor: 0.3, waveMax: 3, waveCool: 12, giftMult: 1 },
+    { name: '宽仁', aiYield: 1.03, aiBattle: 0.94, startReserve: 1.14, northGarrison: -2, northArmy: 0, eraRecruit: 0, ransom: 0.8, requestProtection: 12, regenMan: 0.65, refillGold: 0.9, mongolOffense: 1.7,
+      coalition: { threat: 0.21, ratio: 0.8, opinion: -12, rapport: 4, allyAt: 42, peaceRate: 0.45, dislike: 3, warDelay: 2,
+        speedW: 1, brokenW: 0.02, leagueGap: 0.10, ratioSlope: 4.1, ratioFloor: 0.3, waveMax: 3, waveCool: 12, giftMult: 0.4 },
       command: { armies: 1, defenseWeight: 1.4, unrestWeight: 0.09, assault: 1.08, retreat: 46, morale: 32, reconquest: 4, northPush: 1, siegeInterval: 0.72 },
       occupation: { seasons: 4, production: 0.2, loyalty: 26, unrest: 35, revolt: 0.06 },
       debt: { governance: 0.013, morale: 10, desertion: 0.09, hunger: 5, famine: 0.035 } },
-    { name: '严苛', aiYield: 1.11, aiBattle: 1.092, startReserve: 1, northGarrison: 1, northArmy: 0, eraRecruit: 4, ransom: 1.15, requestProtection: 6, regenMan: 0.6, refillGold: 0.85,
-      coalition: { threat: 0.16, ratio: 0.6, opinion: 0, rapport: 6, allyAt: 32, peaceRate: 0.65, dislike: 8, warDelay: 1,
-        speedW: 1.3, brokenW: 0.03, leagueGap: 0.08, ratioSlope: 3, ratioFloor: 0.25, waveMax: 4, waveCool: 10, giftMult: 1.15 },
-      command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.50 },
+    { name: '中庸', aiYield: 1.11, aiBattle: 1.092, startReserve: 1.14, northGarrison: 1, northArmy: 0, eraRecruit: 4, ransom: 1, requestProtection: 10, regenMan: 0.6, refillGold: 0.85, mongolOffense: 1.7,
+      coalition: { threat: 0.16, ratio: 0.6, opinion: 0, rapport: 6, allyAt: 32, peaceRate: 0.65, dislike: 5, warDelay: 1,
+        speedW: 1.3, brokenW: 0.03, leagueGap: 0.08, ratioSlope: 3, ratioFloor: 0.25, waveMax: 3, waveCool: 10, giftMult: 1 },
+      command: { armies: 2, defenseWeight: 1.75, unrestWeight: 0.14, assault: 1.02, retreat: 50, morale: 35, reconquest: 6, northPush: 2, siegeInterval: 0.56, focusSong: false, peaceCities: 26 },
       occupation: { seasons: 6, production: 0.32, loyalty: 22, unrest: 42, revolt: 0.11 },
       debt: { governance: 0.023, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
-    { name: '绝境', aiYield: 1.65, aiBattle: 2.15, startReserve: 0.35, northGarrison: 4, northArmy: 4, eraRecruit: 8, ransom: 1.3, requestProtection: 4, regenMan: 1.6, refillGold: 1,
-      coalition: { threat: 0.135, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0,
-        speedW: 1.6, brokenW: 0.04, leagueGap: 0.06, ratioSlope: 3.5, ratioFloor: 0.2, waveMax: 5, waveCool: 8, giftMult: 1.3 },
-      command: { armies: 6, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.95, retreat: 54, morale: 38, reconquest: 10, northPush: 6, siegeInterval: 0.16 },
+    { name: '严苛', aiYield: 1.23, aiBattle: 1.25, startReserve: 0.95, northGarrison: 1, northArmy: 1, eraRecruit: 5, ransom: 1.15, requestProtection: 6, regenMan: 0.9, refillGold: 0.86, mongolOffense: 1.7,
+      coalition: { threat: 0.15, ratio: 0.5, opinion: 0, rapport: 6, allyAt: 32, peaceRate: 0.65, dislike: 8, warDelay: 0,
+        speedW: 1.3, brokenW: 0.03, leagueGap: 0.08, ratioSlope: 3, ratioFloor: 0.25, waveMax: 4, waveCool: 9, giftMult: 1.15 },
+      command: { armies: 3, defenseWeight: 2.05, unrestWeight: 0.17, assault: 1.00, retreat: 54, morale: 38, reconquest: 10, northPush: 3, siegeInterval: 0.58, northHosts: 2, sorties: 3 },
+      occupation: { seasons: 6, production: 0.35, loyalty: 22, unrest: 42, revolt: 0.11 },
+      debt: { governance: 0.027, morale: 15, desertion: 0.20, hunger: 8, famine: 0.055 } },
+    { name: '绝境', aiYield: 2.7, aiBattle: 1.45, startReserve: 0.55, northGarrison: 8, northArmy: 6, eraRecruit: 8, ransom: 1.3, requestProtection: 4, regenMan: 1.6, refillGold: 1, mongolOffense: 1,
+      coalition: { threat: 0.13, ratio: 0.45, opinion: 12, rapport: 9, allyAt: 24, peaceRate: 0.85, dislike: 10, warDelay: 0,
+        speedW: 1.6, brokenW: 0.04, leagueGap: 0.06, ratioSlope: 3.5, ratioFloor: 0.2, waveMax: 7, waveCool: 6, giftMult: 1.3 },
+      command: { armies: 6, defenseWeight: 2.05, unrestWeight: 0.17, assault: 0.77, retreat: 40, morale: 22, reconquest: 10, northPush: 10, siegeInterval: 0.22, lateSiegeInterval: 0.60, finalSiegeCities: 16, finalSiegeInterval: 0.15, finalAssault: 0.48, transports: true, northMarch: 5, northMarchEnd: 1.5, northHosts: 9, sorties: 6, recruitSpeed: 1.6 },
       occupation: { seasons: 8, production: 0.42, loyalty: 18, unrest: 48, revolt: 0.19 },
       debt: { governance: 0.035, morale: 22, desertion: 0.34, hunger: 12, famine: 0.09 } },
   ];
@@ -282,12 +282,12 @@ var DATA = (function () {
 
   // ---------- 兵种 ----------
   const UNITS = {
-    inf: { name: '步卒', atk: 8, def: 11, mv: 3, prod: 8, gold: 15, man: 5, food: 1, desc: '枪盾步阵，克骑兵' },
-    bow: { name: '弓弩', atk: 11, def: 9, mv: 3, prod: 9, gold: 20, man: 5, food: 1, desc: '弓弩手，克步卒' },
-    cav: { name: '骑兵', atk: 13, def: 8, mv: 5, prod: 11, gold: 30, man: 5, food: 2, horse: 3, desc: '轻骑，克弓弩与砲车' },
-    hbow: { name: '弓骑', atk: 12, def: 8, mv: 5, prod: 11, gold: 26, man: 5, food: 2, horse: 3, nomad: true, desc: '游牧弓骑，克步卒' },
+    inf: { name: '步卒', atk: 8, def: 11, mv: 3, prod: 8, gold: 15, man: 5, food: 1, desc: '持枪列盾，长于守阵' },
+    bow: { name: '弓弩', atk: 11, def: 9, mv: 3, prod: 9, gold: 20, man: 5, food: 1, desc: '挽弓张弩，列阵齐射' },
+    cav: { name: '骑兵', atk: 13, def: 8, mv: 5, prod: 11, gold: 30, man: 5, food: 2, horse: 3, desc: '轻骑突阵，长于迂回' },
+    hbow: { name: '弓骑', atk: 12, def: 8, mv: 5, prod: 11, gold: 26, man: 5, food: 2, horse: 3, nomad: true, desc: '游牧骑射，进退自如' },
     hcav: { name: '甲骑', atk: 17, def: 13, mv: 4, prod: 18, gold: 50, man: 6, food: 2, horse: 3, iron: 2, tech: 'jiaqi', desc: '人马俱甲的重骑' },
-    elite: { name: '背嵬军', atk: 19, def: 16, mv: 4, prod: 22, gold: 70, man: 6, food: 2, horse: 3, iron: 2, tech: 'beiwei', desc: '岳家军精锐亲兵' },
+    elite: { name: '背嵬军', atk: 19, def: 16, mv: 4, prod: 22, gold: 70, man: 6, food: 2, horse: 3, iron: 2, tech: 'beiwei', desc: '岳家军亲兵，主将出于岳家军系且驻有军营之城可募，通背嵬法亦可募' },
     siege: { name: '砲车', atk: 5, def: 4, mv: 2, prod: 12, gold: 25, man: 3, food: 1, siege: 3, desc: '攻城器械，破城防' },
     fire: { name: '火器营', atk: 17, def: 15, mv: 3, prod: 17, gold: 45, man: 5, food: 1, iron: 2, tech: 'tuhuoqiang', desc: '突火枪与火药兵' },
     navy: { name: '舟师', atk: 5, def: 6, sea: 16, mv: 6, prod: 14, gold: 30, man: 4, food: 1, tech: 'haichuan', needDock: true, desc: '战船，可载军渡海' },
@@ -310,6 +310,28 @@ var DATA = (function () {
   ];
   for (const [id, home, base, name, stats, desc] of LOCAL_UNITS) {
     UNITS[id] = { ...UNITS[base], nomad: false, ...stats, home, base, name, desc };
+  }
+  UNITS.song_bazi = { ...UNITS.inf, name: '八字军', base: 'inf', home: 'song', only: 'song', desc: '王彦旧部，列阵如步军' };
+  const UPGRADES = { inf: 'pike', pike: 'armored_inf', bow: 'shenbi', shenbi: 'bed_bow', cav: 'hcav', hbow: 'guard_hbow', song_bazi: 'elite', elite: 'beiwei_guard' };
+  const TRAINED_UNITS = [
+    ['pike', 'inf', '枪手', 'lianbing', { atk: 11, def: 14, prod: 14, gold: 30, iron: 1 }, '长枪密阵，较步卒善御轻骑与甲骑'],
+    ['armored_inf', 'inf', '重甲步兵', 'junzheng', { atk: 14, def: 18, mv: 2, prod: 22, gold: 51, iron: 3 }, '重甲枪盾，守阵坚实'],
+    ['shenbi', 'bow', '神臂弓手', 'shenbigong', { atk: 14, def: 10, prod: 15, gold: 34, iron: 1 }, '持神臂弓，发矢劲疾'],
+    ['bed_bow', 'bow', '床子弩营', 'junzheng', { atk: 15, def: 11, mv: 2, prod: 24, gold: 56, iron: 3, siege: 1.65, tacticalRange: 4, tacticalMove: 2 }, '大弩须架床而发，兼攻守城垣'],
+    ['guard_hbow', 'hbow', '射骑精兵', 'junzheng', { atk: 16, def: 11, prod: 18, gold: 46, horse: 4 }, '精选骑射，进退迅疾'],
+    ['beiwei_guard', 'elite', '背嵬亲军', 'beiwei', { atk: 22, def: 20, prod: 29, gold: 89, iron: 4, home: 'song', only: 'song', matchupClass: 'household' }, '持节亲军，甲坚阵整'],
+  ];
+  for (const [id, base, name, tech, stats, desc] of TRAINED_UNITS) {
+    UNITS[id] = { ...UNITS[base], ...stats, base, name, tech, desc, upgradeOnly: true };
+  }
+  const localUpgradedNames = ['铁浮屠精骑', '铁鹞子近卫', '怯薛近卫射骑', '别武班精骑', '御家人弓骑', '交趾精弩', '王家战象', '蒲甘王卫象军', '苏丹近卫甲骑', '瓦兰吉精卫', '王家长弓队', '法兰克王家枪骑', '威尼斯精锐桨战船'];
+  const guardGold = { khmer_elephant: 86, pagan_elephant: 80, byz_varangian: 58 };
+  for (const [index, [id, , base]] of LOCAL_UNITS.entries()) {
+    const target = id + '_guard', spec = UNITS[id];
+    UPGRADES[id] = target;
+    UNITS[target] = { ...spec, base, name: localUpgradedNames[index], tech: 'junzheng', upgradeOnly: true,
+      atk: spec.atk + 3, def: spec.def + 2, prod: spec.prod + 7, gold: guardGold[id] ?? spec.gold + 20,
+      ...(spec.sea ? { sea: spec.sea + 4 } : {}), desc: '本地军制所练精锐' };
   }
   function unitBase(t) { return UNITS[t]?.base || t; }
   // 按交战目标格取值。defBow 仅限守军弓营，siege 列只在野战生效；缺省为一倍。
@@ -335,16 +357,119 @@ var DATA = (function () {
       jungleCultures: ['viet', 'cham', 'khmer', 'burmese', 'filipino', 'indian'],
     },
   };
-  // 克制：a 克 b
-  const BEATS = {
-    inf: ['cav', 'hbow'], bow: ['inf', 'siege'], cav: ['bow', 'siege', 'hbow'], hbow: ['inf', 'siege'],
-    hcav: ['inf', 'bow', 'siege'], elite: ['inf', 'bow', 'cav', 'hbow', 'siege'], fire: ['cav', 'hcav', 'inf', 'hbow'], siege: [], navy: [],
+  const UNIT_GRADES = ['基础', '精兵', '顶级'];
+  const unitTypes = Object.keys(UNITS);
+  const basics = new Set(['inf', 'bow', 'cav', 'hbow', 'siege', 'navy', 'song_bazi']);
+  const top = new Set(['elite', 'beiwei_guard', 'fire']);
+  const counterClass = type => {
+    const unit = UNITS[type], base = unitBase(type);
+    if (unit.group === 'elephant') return 'elephant';
+    if (base === 'hbow') return 'archercav';
+    return base === 'hcav' || base === 'elite' ? 'cav' : base;
   };
-  const baseBeats = { ...BEATS };
-  for (const t of Object.keys(UNITS)) {
-    const base = unitBase(t);
-    TERRAIN_COMBAT.groups[t] = UNITS[t].group || TERRAIN_COMBAT.groups[base];
-    BEATS[t] = baseBeats[base].flatMap(enemy => Object.keys(UNITS).filter(other => unitBase(other) === enemy));
+  for (const type of unitTypes) {
+    const unit = UNITS[type];
+    unit.grade = basics.has(type) ? 0 : top.has(type) || type.endsWith('_guard') ? 2 : 1;
+    unit.matchupClass = counterClass(type);
+    TERRAIN_COMBAT.groups[type] = unit.group || TERRAIN_COMBAT.groups[unitBase(type)];
+  }
+  const TRIANGLE = ['inf', 'cav', 'bow'];
+  const directCounter = { inf: ['cav'], cav: ['bow', 'siege'], archercav: ['bow', 'siege'],
+    bow: ['inf', 'elephant'], fire: ['cav'], elephant: [], siege: [], navy: [] };
+  const BEATS = Object.fromEntries(unitTypes.map(t => [t, unitTypes.filter(other =>
+    directCounter[UNITS[t].matchupClass].includes(UNITS[other].matchupClass))]));
+  function counter(att, def, close = false) {
+    const match = BEATS[att]?.includes(def) ? 1 : BEATS[def]?.includes(att) ? -1 : 0;
+    return close && match && (unitBase(att) === 'fire' || unitBase(def) === 'fire') ? -match : match;
+  }
+  function mountedArchersAgainstSpears(a, b) {
+    const first = UNITS[a].matchupClass, second = UNITS[b].matchupClass;
+    return first === 'archercav' && second === 'inf' || first === 'inf' && second === 'archercav';
+  }
+  const COUNTER_MULT = 1.35;
+  const plainPower = Object.fromEntries(unitTypes.map(t => {
+    const u = UNITS[t];
+    const terrain = (TERRAIN_COMBAT.byTerrain.PLAIN[TERRAIN_COMBAT.groups[t]] || 1) *
+      (unitBase(t) === 'navy' ? TERRAIN_COMBAT.water.landNavy : 1);
+    return [t, { att: u.atk * terrain, def: u.def * terrain }];
+  }));
+  // 以平原满营的攻守战力标定兵种交锋倍率。山川、水域、军势仍按实战结算。
+  function matchupFactor(a, b, match) {
+    const gap = UNITS[a].grade - UNITS[b].grade;
+    if (gap < 0 || gap === 0 && match < 0) return 1 / matchupFactor(b, a, -match);
+    const A = plainPower[a], B = plainPower[b];
+    const center = Math.sqrt(B.att * B.def / (A.att * A.def));
+    if (gap === 1 && match < 0 || gap === 0 && mountedArchersAgainstSpears(a, b)) return center;
+    const minimum = Math.min(A.att / B.def, A.def / B.att);
+    if (gap === 2) return Math.max(match > 0 ? COUNTER_MULT : 1, (match < 0 ? 1.045 : 1.095) / minimum);
+    if (gap === 1 || match > 0) return Math.max(match > 0 ? COUNTER_MULT : 1, 1.095 / minimum);
+    return 1;
+  }
+  const matchupFactors = Object.fromEntries(unitTypes.map(a => [a, Object.fromEntries(unitTypes.map(b =>
+    [b, [-1, 0, 1].map(match => matchupFactor(a, b, match))]))]));
+  function counterFactor(match, att, def) { return matchupFactors[att]?.[def]?.[match + 1] ?? 1; }
+  const combatIndex = Object.fromEntries(unitTypes.map((type, index) => [type, index]));
+  const combatMatches = unitTypes.map(a => Int8Array.from(unitTypes, b => counter(a, b)));
+  const closeMatches = unitTypes.map(a => Int8Array.from(unitTypes, b => counter(a, b, true)));
+  const combatFactors = matches => unitTypes.map((a, i) => Float64Array.from(unitTypes, (b, j) => counterFactor(matches[i][j], a, b)));
+  const openFactors = combatFactors(combatMatches);
+  const COMBAT = { index: combatIndex, matches: combatMatches, closeMatches, factors: openFactors, closeFactors: combatFactors(closeMatches),
+    weights: openFactors.map(row => row.map(factor => Math.sqrt(factor) - 1)) };
+  // 每营实测由 tools/equal-cost.cjs 生成，每个数字为二百场中的胜场数。
+  // battalion-wins:start
+  const BATTALION_WINS = [
+    [100,0,178,100,100,0,200,0,200,100,100,1,100,1,0,0,0,100,24,0,100,24,100,24,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,24],
+    [200,100,21,21,0,0,200,0,200,0,0,1,0,0,21,100,100,0,100,21,0,41,200,100,100,21,21,0,0,0,0,0,0,0,21,0,0,0,0,21,0,22],
+    [22,179,100,100,21,1,200,0,200,1,21,21,21,21,100,21,0,21,0,100,21,21,22,0,0,100,100,21,0,0,21,21,21,21,33,5,0,1,0,33,21,21],
+    [100,179,100,100,21,0,200,14,200,0,21,21,21,21,100,14,0,6,22,100,21,21,100,22,0,100,100,21,0,0,6,21,21,21,33,0,0,0,1,33,6,21],
+    [100,200,179,179,100,21,200,21,200,68,100,130,130,150,200,98,62,95,39,200,100,200,100,39,1,200,200,104,5,21,21,21,21,21,100,21,21,21,8,100,21,21],
+    [200,200,199,200,179,100,200,21,200,179,179,188,188,199,200,179,178,179,100,200,179,200,200,100,100,200,200,179,30,65,100,132,132,150,200,96,69,91,37,200,100,200],
+    [0,0,0,0,0,0,100,0,200,0,0,0,0,0,0,0,0,0,0,0,0,37,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,21],
+    [200,200,200,186,179,179,200,100,200,179,179,179,200,179,192,179,176,179,195,179,179,200,200,195,175,179,179,179,179,179,179,102,179,101,131,50,5,179,142,116,179,200],
+    [0,0,0,0,0,0,0,0,100,0,0,0,0,0,0,0,0,0,0,0,0,24,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [100,200,199,200,132,21,200,21,200,100,102,188,188,199,200,107,124,108,25,200,102,200,100,25,25,200,200,150,18,21,21,21,21,21,100,21,22,21,42,100,21,25],
+    [100,200,179,179,100,21,200,21,200,98,100,113,113,126,200,100,96,100,21,200,100,200,100,21,19,200,195,101,21,21,21,21,21,21,100,21,21,21,21,100,21,21],
+    [199,199,179,179,70,12,200,21,200,12,87,100,99,99,179,56,6,50,100,179,87,200,199,100,100,179,179,99,0,0,21,21,21,21,100,19,0,12,21,100,21,21],
+    [100,200,179,179,70,12,200,0,200,12,87,101,100,108,200,56,6,50,5,194,87,200,100,5,0,194,179,99,0,0,21,21,21,21,100,19,0,12,0,100,21,21],
+    [199,200,179,179,50,1,200,21,200,1,74,101,92,100,200,33,0,24,100,194,74,200,199,100,100,194,179,91,0,0,21,21,21,21,100,5,0,1,32,100,21,22],
+    [200,179,100,100,0,0,200,8,200,0,0,21,0,0,100,179,179,0,179,100,0,200,200,179,179,99,91,0,0,0,0,0,0,0,21,100,100,0,100,21,0,21],
+    [200,100,179,186,102,21,200,21,200,93,100,144,144,167,21,100,94,100,200,21,100,200,200,200,161,21,21,110,21,21,21,21,21,21,21,21,21,21,21,21,21,21],
+    [200,100,200,200,138,22,200,24,200,76,104,194,194,200,21,106,100,102,199,21,104,200,200,199,150,21,21,158,1,21,21,21,21,21,21,21,31,21,25,21,21,45],
+    [100,200,179,194,105,21,200,21,200,92,100,150,150,176,200,100,98,100,34,200,100,200,100,34,10,200,200,116,21,21,21,21,21,21,100,21,21,21,22,100,21,21],
+    [176,100,200,178,161,100,200,5,200,175,179,100,195,100,21,0,1,166,100,21,179,200,176,100,50,1,0,100,100,100,100,21,100,2,1,0,0,100,24,1,100,24],
+    [200,179,100,100,0,0,200,21,200,0,0,21,6,6,100,179,179,0,179,100,0,200,200,179,179,100,99,6,0,0,0,6,0,0,21,100,100,0,100,21,0,21],
+    [100,200,179,179,100,21,200,21,200,98,100,113,113,126,200,100,96,100,21,200,100,200,100,21,19,200,195,101,21,21,21,21,21,21,100,21,21,21,21,100,21,21],
+    [176,159,179,179,0,0,163,0,176,0,0,0,0,0,0,0,0,0,0,0,0,100,176,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [100,0,178,100,100,0,200,0,200,100,100,1,100,1,0,0,0,100,24,0,100,24,100,24,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,24],
+    [176,100,200,178,161,100,200,5,200,175,179,100,195,100,21,0,1,166,100,21,179,200,176,100,50,1,0,100,100,100,100,21,100,2,1,0,0,100,24,1,100,24],
+    [199,100,200,200,199,100,200,25,200,175,181,100,200,100,21,39,50,190,150,21,181,200,199,150,100,30,35,100,100,100,100,22,100,35,21,2,13,100,24,21,100,24],
+    [200,179,100,100,0,0,200,21,200,0,0,21,6,6,101,179,179,0,199,100,0,200,200,199,170,100,99,6,0,0,0,6,0,0,21,100,100,0,100,21,0,21],
+    [200,179,100,100,0,0,200,21,200,0,5,21,21,21,109,179,179,0,200,101,5,200,200,200,165,101,100,21,0,0,0,21,0,0,21,100,100,0,100,21,0,21],
+    [200,200,179,179,96,21,200,21,200,50,99,101,101,109,200,90,42,84,100,194,99,200,200,100,100,194,179,100,1,15,21,21,21,21,100,21,14,21,21,100,21,21],
+    [200,200,200,200,195,170,200,21,200,182,179,200,200,200,200,179,199,179,100,200,179,200,200,100,100,200,200,199,100,135,114,195,195,199,200,124,161,120,37,200,114,200],
+    [200,200,200,200,179,135,200,21,200,179,179,200,200,200,200,179,179,179,100,200,179,200,200,100,100,200,200,185,65,100,101,171,171,185,200,106,119,103,41,200,101,200],
+    [200,200,179,194,179,100,200,21,200,179,179,179,179,179,200,179,179,179,100,200,179,200,200,100,100,200,200,179,86,99,100,105,105,116,200,100,98,100,21,199,100,200],
+    [200,200,179,179,179,68,200,98,200,179,179,179,179,179,200,179,179,179,179,194,179,200,200,179,178,194,179,179,5,29,95,100,99,99,179,80,26,68,100,179,95,200],
+    [200,200,179,179,179,68,200,21,200,179,179,179,179,179,200,179,179,179,100,200,179,200,200,100,100,200,200,179,5,29,95,101,100,103,199,80,26,68,8,186,95,200],
+    [200,200,179,179,179,50,200,99,200,179,179,179,179,179,200,179,179,179,198,200,179,200,200,198,165,200,200,179,1,15,84,101,97,100,199,60,14,50,100,186,84,200],
+    [200,179,167,167,100,0,200,69,200,100,100,100,100,100,179,179,179,100,199,179,100,200,200,199,179,179,179,100,0,0,0,21,1,1,100,179,179,0,179,100,0,200],
+    [200,200,195,200,179,104,200,150,200,179,179,181,181,195,100,179,179,179,200,100,179,200,200,200,198,100,100,179,76,94,100,120,120,140,21,100,97,100,199,21,100,200],
+    [200,200,200,200,179,131,200,195,200,178,179,200,200,200,100,179,169,179,200,100,179,200,200,200,187,100,100,186,39,81,102,174,174,186,21,103,100,98,199,21,102,200],
+    [200,200,199,200,179,109,200,21,200,179,179,188,188,199,200,179,179,179,100,200,179,200,200,100,100,200,200,179,80,97,100,132,132,150,200,100,102,100,22,200,100,200],
+    [199,200,200,199,192,163,200,58,200,158,179,179,200,168,100,179,175,178,176,100,179,200,199,176,176,100,100,179,163,159,179,100,192,100,21,1,1,178,100,21,179,200],
+    [200,179,167,167,100,0,200,84,200,100,100,100,100,100,179,179,179,100,199,179,100,200,200,199,179,179,179,100,0,0,1,21,14,14,100,179,179,0,179,100,1,200],
+    [200,200,179,194,179,100,200,21,200,179,179,179,179,179,200,179,179,179,100,200,179,200,200,100,100,200,200,179,86,99,100,105,105,116,200,100,98,100,21,199,100,200],
+    [176,178,179,179,179,0,179,0,199,175,179,179,179,178,179,179,155,179,176,179,179,199,176,176,176,179,179,179,0,0,0,0,0,0,0,0,0,0,0,0,0,100],
+  ];
+  // battalion-wins:end
+  const matchupIndex = Object.fromEntries(unitTypes.map((id, i) => [id, i]));
+  function matchup(att, def) {
+    const rate = (BATTALION_WINS[matchupIndex[att]]?.[matchupIndex[def]] ?? 100) / 2;
+    const gap = UNITS[att].grade - UNITS[def].grade, match = counter(att, def);
+    if (Math.abs(gap) === 2) return { rate, label: gap > 0 ? '强于' : '弱于' };
+    if (!gap && match) return { rate, label: match > 0 ? '克' : '畏' };
+    const label = rate >= 65 && gap >= 0 ? '强于' : rate <= 35 && gap <= 0 ? '弱于' : '相持';
+    return { rate, label };
   }
   const CULTURE_UNIT_NAME = {
     han: { inf: '步卒', bow: '神臂弩手', cav: '游奕骑', hbow: '弓马军', hcav: '具装骑',
@@ -431,14 +556,25 @@ var DATA = (function () {
     learning: { name: '文枢', desc: '文 +25%，本城士子更易登第', sciPct: 0.25, keju: 1 },
   };
   const CITY_ROLE_CHANGE = { gold: 80, cooldown: 8, delay: 2 };
+  const GREAT_WORKS = {
+    canal: { name: '大运河段', gold: 4500, work: 240, eff: { foodPct: 0.20, prodPct: 0.10 }, desc: '粮 +20%，工 +10%' },
+    seawall: { name: '海塘长堤', gold: 3000, work: 180, eff: { foodPct: 0.15, wall: 30 }, desc: '粮 +15%，城防 +30' },
+    avenue: { name: '御街', gold: 9600, work: 330, eff: { goldPct: 0.15, happy: 8 }, desc: '钱 +15%，民心目标 +8' },
+    colleges: { name: '书院群', gold: 6500, work: 320, eff: { sciPct: 0.25, happy: 5 }, desc: '文教 +25%，民心目标 +5' },
+  };
+  const STATE_ECONOMY = { songTax: 0.15, borderMarketGold: 8, rewardTroopsPerGold: 28, projectReserve: 9000 };
+  const MONGOL_RISE = { tribes: ['mongol', 'kerait', 'naiman'], start: 1206, end: 1260,
+    opponents: ['jin', 'xia'], musterEnd: 1235, armyShare: 1.20, gold: 3000, morale: 20, wallDamage: 0.20,
+    westCities: 25, sorties: 6, garrison: 6, captureInterval: 1, reserveInterval: 2, songWarYear: 1235, march: 7, assault: 0.48, fieldFloor: 65000 };
 
   // ---------- 建筑 ----------
   const BUILDINGS = {
     walls: { name: '城墙', prod: 55, desc: '城防 +40' },
     farm: { name: '圩田', prod: 45, tech: 'weitian', desc: '粮 +3（临河再 +2）' },
     granary: { name: '常平仓', prod: 50, tech: 'changping', desc: '粮 +2，民心 +5，免饥荒' },
-    market: { name: '草市', prod: 50, desc: '钱 +25%' },
-    shibosi: { name: '市舶司', prod: 80, tech: 'zhinanzhen', coastal: true, desc: '钱 +3，可开海贸航线 1 条' },
+    market: { name: '草市', prod: 50, desc: '钱 +32.5%' },
+    shibosi: { name: '市舶司', prod: 80, tech: 'zhinanzhen', coastal: true, desc: '钱 +3.9，可开海贸航线 1 条' },
+    quechang: { name: '榷场', prod: 55, desc: '与和约国接壤时每季钱 +8，和约终止即停' },
     smithy: { name: '冶铁务', prod: 65, tech: 'yetie', desc: '工 +3，铁 +1/季' },
     academy: { name: '书院', prod: 55, tech: 'shuyuan', desc: '文 +3，民心 +2，科举多一名候选' },
     barracks: { name: '军营', prod: 55, tech: 'lianbing', desc: '征兵工耗 -25%，新兵士气 +10' },
@@ -462,7 +598,7 @@ var DATA = (function () {
     wengcheng: { name: '瓮城', prod: 100, tech: 'wengcheng', needB: 'walls', minPop: 9,
       desc: '城防 +40，民心 +4，钱 +1', eff: { wall: 40, happy: 4, gold: 1 } },
     zhenshi: { name: '镇市', prod: 75, tech: 'shiyi', needB: 'market', minPop: 6,
-      desc: '钱 +5，本城钱产 +15%', eff: { gold: 5, goldPct: 0.15 } },
+      desc: '钱 +6.5，本城钱产 +19.5%', eff: { gold: 6.5, goldPct: 0.195 } },
     jiaoyinpu: { name: '交引铺', prod: 105, tech: 'yanchao', needB: 'zhenshi', minPop: 8, only: ['song', 'jin', 'xia', 'goryeo', 'daviet'],
       desc: '钱 +7，本城钱产 +18%，限宋、金、西夏、高丽、交趾', eff: { gold: 7, goldPct: 0.18 } },
     zhouxue: { name: '州学', prod: 80, tech: 'zhoukuan', needB: 'academy', minPop: 7,
@@ -492,7 +628,7 @@ var DATA = (function () {
     shenbigong: { name: '神臂弓', branch: '兵学', era: 1, cost: 80, desc: '弓弩 +25%' },
     lianbing: { name: '练兵法', branch: '兵学', era: 1, cost: 110, desc: '可建军营，士气恢复加快' },
     jiaqi: { name: '甲骑', branch: '兵学', era: 1, cost: 180, desc: '可募甲骑' },
-    beiwei: { name: '背嵬法', branch: '兵学', era: 1, cost: 280, req: ['lianbing', 'jiaqi'], desc: '可募背嵬军（仅宋）' },
+    beiwei: { name: '背嵬法', branch: '兵学', era: 1, cost: 280, req: ['lianbing', 'jiaqi'], desc: '宋军诸将驻有军营之城可募背嵬军，非岳家军系多费三成' },
     chengfang: { name: '城防术', branch: '兵学', era: 1, cost: 150, desc: '城防 +50%' },
     wujing: { name: '武经总要', branch: '兵学', era: 1, cost: 320, req: ['lianbing'], desc: '全军战力 +10%' },
     shuyuan: { name: '书院', branch: '文治', era: 1, cost: 60, desc: '可建书院' },
@@ -549,8 +685,9 @@ var DATA = (function () {
     jinhaidu: { name: '海舶护航', branch: '航海', era: 3, cost: 1370, req: ['qianxing', 'huojian', 'caoyun'], desc: '舟师 +15%，军粮消耗 -12%', eff: { unit: { navy: 0.15 }, supply: 0.12 } },
     sihai: { name: '四海舆程', branch: '航海', era: 3, cost: 1900, req: ['hangcheng', 'jinhaidu', 'yichuan'], desc: '航速 +1，陆路行军 +0.6，海贸 +10%', eff: { seaMP: 1, landMP: 0.60, tradePct: 0.10 } },
   };
+  for (const tech of Object.values(TECHS)) if (tech.branch === '兵学' && tech.era === 1) tech.cost = Math.round(tech.cost * 0.7);
   const START_TECH = {
-    song: ['weitian', 'yetie', 'huoyao', 'shenbigong', 'shuyuan', 'zhinanzhen', 'haichuan'],
+    song: ['weitian', 'yetie', 'huoyao', 'shenbigong', 'shuyuan', 'zhinanzhen', 'haichuan', 'lianbing'],
     jin: ['weitian', 'yetie', 'jiaqi', 'shuyuan', 'lianbing'],
     xia: ['yetie', 'jiaqi'], goryeo: ['weitian', 'shuyuan'], japan: ['yetie', 'haichuan'], byz: ['yetie', 'jiaqi', 'chengfang', 'haichuan'],
     seljuk: ['jiaqi', 'yetie'], fatimid: ['haichuan', 'weitian'], venice: ['haichuan', 'zhinanzhen'], sicily: ['haichuan', 'jiaqi'],
@@ -1250,15 +1387,27 @@ var DATA = (function () {
     ['哈贝', 'abyssinia', 1126, 73, 70, 77, 78, '守险', 1152], // 生年约。
     ['耶特巴拉克', 'abyssinia', 1225, 74, 69, 74, 75, '守险', 1255], // 生年约。
   ];
+  GEN_ADDITIONS.push(
+    ['梁红玉', 'song', 1102, 81, 78, 76, 57, '水战', 1129], // 生年约，采绍兴十年在世的晚卒设定。
+    ['李清照', 'song', 1084, 40, 33, 94, 85, '教化', 1140], // 录用于绍兴十年，为本局设定。
+    ['巴御前', 'japan', 1157, 75, 91, 62, 43, '骁勇', 1180], // 生年约，事迹取《平家物语》。
+    ['北条政子', 'japan', 1157, 68, 44, 87, 94, '治世', 1199],
+    ['梅丽桑德', 'crusader', 1105, 67, 45, 84, 91, '治世', 1131], // 生年约。
+    ['阿基坦的埃莉诺', 'france', 1122, 64, 46, 88, 92, '运筹', 1137], // 生年约。
+  );
   GEN.push(...GEN_ADDITIONS);
+  const FEMALE = new Set(['梁红玉', '李清照', '杨妙真', '巴御前', '北条政子', '塔玛尔', '梅丽桑德', '阿基坦的埃莉诺']);
+  const YUE_GUARD = new Set(['岳飞', '岳云', '岳雷', '张宪', '杨再兴', '牛皋', '王贵', '徐庆']);
   const SKILLS = {
     '撼山': '全军攻守 +20%，士气不易溃', '水战': '水上与临河作战 +40%', '坚守': '守城 +35%', '守险': '山地丘陵防守 +30%', '理财': '任知州时钱 +30%',
     '骁勇': '进攻 +15%', '铁骑': '骑兵 +25%', '神射': '弓弩与弓骑 +30%', '运筹': '军粮消耗减半，行军 +1，脱囚几率每季 +1 个百分点', '治世': '任知州效果 ×1.5', '劝农': '任知州时粮 +30%',
-    '教化': '任知州时民心 +10、文 +3', '攻城': '攻城 +40%', '疾行': '行军 +2', '大汗': '全军攻守 +25%，行军 +1',
+    '教化': '任知州时民心 +10，文官政务满六十另得文 +3', '攻城': '攻城 +40%', '疾行': '行军 +2', '大汗': '全军攻守 +25%，行军 +1',
   };
 
   // ---------- 人名生成 ----------
   const NAME_INITIAL_EXCLUSIONS = new Set('买卖相守请令使可将为以与自所');
+  const HAN_SURNAMES = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞';
+  const HAN_COMPOUND_SURNAMES = ['欧阳', '司马', '上官', '诸葛', '东方', '皇甫', '尉迟', '公孙'];
   const NAMES = {
     han: { s: '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜谢邹章苏潘葛范彭鲁韦马方任袁柳鲍史唐费薛雷贺倪汤罗毕郝安常傅齐康余顾孟黄萧尹姚邵汪毛狄米贝明臧计伏成戴宋庞熊纪舒屈项祝董梁杜阮蓝闵季贾路江童颜郭梅盛林钟徐邱骆高夏蔡田胡凌霍虞万柯卢莫房解应宗丁宣邓单杭洪包左石崔吉龚程邢裴陆荣翁荀甄家封储靳段侯全班仰秋仲伊宫宁仇栾甘厉戎祖武符刘景詹龙叶幸司黎溥印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟谭贡劳姬申扶堵冉宰郦雍桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公阿哀爱柏拜保葆薄闭卞卜布才岑车谌迟淳丛寸代但刁典鼎冬窦端多恩樊凡繁斐芾风奉佛福付干皋根弓苟谷固辜官管贯圭贵归衮海黑赫花滑环皇淮徽惠基蓟稽祭甲焦角揭介晋京经井敬境鸠巨隗郐邝库乐隶栗练励廉濂莲凉良聊列留楼露鹿落麻买麦茂茅茆密宓麋麴苗名墨牟木沐穆牧纳南年念辇庖盆逄皮毗平朴杞祁綦漆戚岐祈契千潜强侨桥樵郗郄郤钦芩覃青清庆丘求裘区渠曲泉阙阕仁仍如儒汝润芮赛山闪陕善商赏韶少审深神胜生时守受疏帅霜水四寺似颂粟素肃随隋遂锁台谈桃滕藤特铁佟同涂徒土吐拓佗外危委味位尉问乌巫吾伍务戊希奚席洗冼鲜宪乡肖信新星刑杏休修续玄轩学雅闫延言仵尧瑶冶野衣夷仪义意佚弋殷隐英郢营邕永尤邮由攸俞于於愚渔禹羽隅玉郁宇元员原源爰岳云郧恽郓蔗展湛占仉仝肇折臻针贞征知支植直郅挚执种重舟诸主渚竹涿濯拙兹淄纵佐胙阼作逢洑虢郇邬睦菅藺夙俟卬娄闾馀綝', g: '世忠彦文武德明光远道宗元正之仲伯叔安国邦华士良信义仁礼智勇刚毅弘谦泰俊杰英豪雄伟卿相廷亮成章思孝立显达观恕宣辅弼韬略甫翼克允珪璋璞璟璠珩琛琦钰珏玮琰玠珣琮琚琇璧琬璘璨琢瑜瑾瑛琏璜琨珉瑑玙瑀瑄璇韫蕴昶晟昀煜晖晔晏晞晗晁旭昉曜昕熹炳炜烨炯烜敏俭廉清恭厚朴质' },
     jurchen: { s: ['完颜', '纥石烈', '仆散', '徒单', '乌古论', '夹谷', '蒲察', '温迪罕', '术虎', '裴满', '纳兰', '纥石', '乌林答', '斜卯', '唐括', '忒里辟', '兀颜', '术甲', '颜盏', '移剌', '石抹'], g: ['阿骨', '斡离', '宗', '撒', '阿鲁', '迪古', '讹可', '胡沙', '合喜', '蒲鲁', '兀', '突合', '习不失', '阿里', '粘没', '蒲家奴', '骨赧', '银术可', '银可术', '阿邻', '本睹', '阿琐', '合住', '胡剌', '溪列', '吾都补', '斜钵', '宗秀', '宗道', '宗望'] },
@@ -1410,9 +1559,18 @@ var DATA = (function () {
   ];
   const SKILL_POOL = ['骁勇', '坚守', '守险', '铁骑', '神射', '攻城', '疾行', '水战', '运筹', '治世', '理财', '劝农', '教化'];
 
+  const femaleNames = {
+    han: '二娘 三娘 四娘 五娘 六娘 七娘 八娘 九娘 十娘 惠娘 月娘 玉娘 英娘 妙娘 贞娘 婉娘 淑娘 春娘 秀娘 福娘 珠娘 莲娘 云娘 兰娘 瑞娘 淑真 淑英 淑惠 淑贞 端淑 妙清 妙真 妙仪 妙珠 妙英 玉英 玉真 玉容 玉娟 玉贞 玉莲 玉珠 惠卿 惠贞 惠英 惠清 惠真 宝珠 明珠 小珠 婉容 婉贞 婉清 婉如 贞英 贞静 贞柔 贞仪 静淑 静真 德贞 慧英 春英 蒹葭',
+    jurchen: '阿敏 乌林 瑟瑟 阿鲁', tangut: '阿宁 莫伊 阿缨 珍达', mongol: '孛尔帖 也速干 阿兰 忽兰', khitan: '余里衍 骨欲 斡里朵 阿里', tibetan: '央金 卓玛 德吉 拉姆', bai: '阿月 阿婉 阿滢 阿兰',
+    korean: '秀妍 贞和 明淑 德兰', japanese: '千代 常盘 静 鸣濑 初音 玉藻', viet: '玉兰 芳莲 明珠 碧霞', cham: '兰妮 玛雅 娜兰 提雅', khmer: '提薇 玛丽 索法 索玛', burmese: '丹妲 美雅 诗梨 德瑞', indian: '拉丽塔 莲陀 舍弥 罗陀 苏弥',
+    turkic: '阿伊莎 古丽 阿尔腾 乃蛮', persian: '希琳 阿娜希塔 玛赫 迪拉拉', arab: '法蒂玛 宰纳卜 萨尔玛 阿伊莎', greek: '安娜 伊琳娜 佐伊 索菲娅', georgian: '鲁苏丹 凯特万 玛丽亚姆 妮诺', rus: '奥莉加 安娜 玛丽娅 普拉斯科维娅',
+    cuman: '阿依古丽 阿勒坦 萨日娜 苟兰', magyar: '埃尔热贝特 伊洛娜 玛尔吉特 阿格奈什', polish: '雅德维加 多布拉娃 安娜 埃尔兹别塔', german: '希尔德加德 海德薇格 阿德莱德 艾格尼丝', frankish: '阿黛勒 布朗什 玛丽 伊莎贝尔', english: '玛蒂尔达 埃迪丝 玛格丽特 阿黛拉',
+    iberian: '乌拉卡 特蕾莎 莱奥诺尔 桑查', moorish: '宰娜卜 哈芙莎 阿伊莎 萨菲娅', italian: '贝亚特丽切 康斯坦察 阿涅塞 琪娅拉', norse: '英格丽 西格丽德 阿斯特丽德 居德伦', ethiopian: '玛克达 塞布勒 达娜 伊莱妮', filipino: '玛拉娅 玛妮卡 达莉赛 阿米罕',
+  };
+  for (const [culture, given] of Object.entries(femaleNames)) NAMES[culture].female = given.split(' ');
   const HAN_NAME_INITIALS = [...NAMES.han.g].filter(ch => !NAME_INITIAL_EXCLUSIONS.has(ch)).join('');
 
-  return { HAN_NAME_INITIALS, ITEMS, ITEM_SLOTS, FRONTIER, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
-    CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, UNITS, unitBase, TERRAIN_COMBAT, BEATS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, SKILLS, NAMES };
+  return { HAN_NAME_INITIALS, HAN_SURNAMES, HAN_COMPOUND_SURNAMES, ITEMS, ITEM_SLOTS, FRONTIER, SITES, LANDMARKS, SKILL_POOL, FACTIONS, FACTION_INFO, DIFFICULTY, SONG_RECLAIM, RANKS, OVERMIGHTY, VASSAL, MARRIAGE, UNIT_RECOVERY,
+    CITIES, CITY_TIERS, CITY_ROLES, CITY_ROLE_CHANGE, GREAT_WORKS, STATE_ECONOMY, MONGOL_RISE, UNITS, UPGRADES, unitBase, TERRAIN_COMBAT, BEATS, UNIT_GRADES, TRIANGLE, COUNTER_MULT, counter, counterFactor, COMBAT, matchup, BATTALION_WINS, CULTURE_UNIT_NAME, NOMAD, BUILDINGS, ERAS, TECHS, START_TECH, GEN, GEN_ADDITIONS, FEMALE, YUE_GUARD, SKILLS, NAMES };
 })();
 if (typeof module !== 'undefined') module.exports = DATA;

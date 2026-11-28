@@ -6,7 +6,7 @@ var EVENTS = (function () {
   const genByName = n => G().generals.find(g => g.name === n);
   const alive = f => fac(f) && fac(f).alive;
   const P = () => G().player;
-  const r = Math.random;
+  const r = () => Math.random();
 
   function nearestOwnCity(f, tile) {
     let best = null, bd = 1e9;
@@ -22,7 +22,7 @@ var EVENTS = (function () {
     if (GAME.armyAt(t) || GEO.isWater(t) || (GAME.cityAt(t) && GAME.cityAt(t).f !== f)) t = freeTileNear(nearTile, 4);
     if (t < 0) return null;
     let g = genName ? genByName(genName) : null;
-    if (g && (!['idle', 'future'].includes(g.status) || g.f === P() && f !== P())) g = null;
+    if (g && (!['idle', 'future'].includes(g.status) || g.wound > 0 || g.f === P() && f !== P())) g = null;
     if (g) { g.f = f; g.status = 'idle'; }
     else g = GAME.randomGeneral(f, 'mil', 62);
     const a = GAME.createArmyRaw(f, t, units.map(u => GAME.mkUnit(u)), g.id, name || '');
@@ -63,6 +63,105 @@ var EVENTS = (function () {
     const army = spawnArmy(a, city.tile, units, g && g.f === a && active(g) ? leader : null, name);
     if (army) GAME.declareWar(a, b, true);
     return army;
+  }
+  function mongolCampaignOrders(stage) {
+    if (!GAME.mongolCampaign('mongol')) return;
+    const F = fac('mongol'), seats = GAME.citiesOf('mongol');
+    if (!seats.length) return;
+    const east = DATA.MONGOL_RISE.opponents.slice().reverse().find(alive);
+    const west = ['xiliao', 'khwarazm', F.mongolWestRival, westernSuccessor()].find(f => alive(f) && !GAME.allied('mongol', f));
+    const south = G().year >= DATA.MONGOL_RISE.songWarYear && alive('song') &&
+      GAME.totalPower('song') > GAME.totalPower('jin') && r() < 0.30;
+    const openWest = G().year >= 1211 && east === 'jin' && GAME.citiesOf('jin').length <= 3;
+    const target = (openWest && west) || east || (south ? 'song' : west);
+    if (!target) return;
+    F.mongolFront = target;
+    if (!GAME.atWar('mongol', target)) GAME.declareWar('mongol', target, true);
+    if (stage === 'west' && target === west) {
+      const seat = seats.reduce((a, b) => GEO.colOf(a.tile) <= GEO.colOf(b.tile) ? a : b);
+      spawnArmy('mongol', seat.tile, rep(['hbow', 'hbow', 'hcav', 'cav'], 9), '哲别');
+      spawnArmy('mongol', seat.tile, rep(['hbow', 'hbow', 'hcav', 'siege'], 9), '拖雷');
+    }
+    worldLog(`蒙古诸军誓师，兵锋指向${fac(target).name}。`, ['mongol', target]);
+  }
+  function westernSuccessor() {
+    const holdings = {};
+    for (const c of G().cities) {
+      if (!['xiliao', 'khwarazm'].includes(c.origF) || ['mongol', 'rebel', P()].includes(c.f) || !alive(c.f)) continue;
+      holdings[c.f] = (holdings[c.f] || 0) + 1;
+    }
+    return Object.keys(holdings).sort((a, b) => holdings[b] - holdings[a])[0] || null;
+  }
+  function mongolMuster(first = false) {
+    const rule = DATA.MONGOL_RISE, year = G().year;
+    if (!GAME.mongolCampaign('mongol') || (!first && year >= rule.musterEnd)) return;
+    const F = fac('mongol');
+    if (first && !alive('jin')) F.mongolWestRival = westernSuccessor();
+    const west = F.mongolWestRival;
+    if (!first && !alive('jin') && !alive('xia') && !alive(west)) return;
+    const cities = GAME.citiesOf('mongol');
+    if (!cities.length || F.mongolMusterYear === year) return;
+    F.mongolMusterYear = year;
+    const front = alive('xia') ? 'xia' : alive('jin') ? 'jin' : west;
+    if (!F.mongolFront || !alive(F.mongolFront) || front && !GAME.atWar('mongol', front)) mongolCampaignOrders('annual');
+    // 奉诸部岁馈养兵，以实际军费补窠缺，避免扩军后连年欠饷。
+    const { gold = 0, upkeep = 0, food = 0, foodUp = 0 } = F.income;
+    F.gold += Math.max(0, upkeep - gold) * 4;
+    F.food += Math.max(0, foodUp - food) * 4;
+    if (first) F.gold += rule.gold;
+    // 诸部原属城留足戍军，野战兵额另算。
+    for (const c of cities) {
+      if (!rule.tribes.includes(c.origF)) continue;
+      while (c.garrison.length < rule.garrison) c.garrison.push(GAME.mkUnit('hbow', 85));
+    }
+    const totals = { mongol: 0, jin: 0, xia: 0 };
+    if (alive(west)) totals[west] = 0;
+    for (const a of G().armies) if (Object.hasOwn(totals, a.f) && a.frontier == null) totals[a.f] += GAME.sumStr(a.units);
+    const rival = rule.opponents.concat(alive(west) ? west : []).reduce((a, b) => totals[a] >= totals[b] ? a : b);
+    const xia = GAME.citiesOf('xia');
+    // 孤城可受近军招抚。久战无援时，即使远离牙帐也可遣使纳附。
+    F.mongolXiaAloneYear = xia.length === 1 ? F.mongolXiaAloneYear ?? year : null;
+    const host = Math.max(totals.mongol, rule.fieldFloor);
+    const nearby = xia.length === 1 && totals.xia * 4 < host && cities.some(c => GEO.dist(c.tile, xia[0].tile) <= 12);
+    const stranded = F.mongolXiaAloneYear != null && year - F.mongolXiaAloneYear >= 2 && totals.xia * 2 < host;
+    if (xia.length === 1 && GAME.atWar('mongol', 'xia') && (nearby || stranded)) {
+      GAME.captureCity(xia[0], 'mongol');
+      F.mongolCaptureT = G().T;
+      worldLog(`西夏孤城失援，${xia[0].name}纳附蒙古。`, ['mongol', 'xia']);
+      mongolCampaignOrders('annual');
+    }
+    const target = Math.max(totals[rival] * rule.armyShare, rule.fieldFloor);
+    const units = Math.max(0, Math.ceil((target - totals.mongol) / 500));
+    if (!units) return;
+    const leaders = first ? ['铁木真', '木华黎', '哲别', '速不台', '博尔术'] : [];
+    const formations = Math.ceil(units / 7);
+    const types = ['siege', 'mongol_keshig_guard', 'mongol_keshig', 'hbow', 'hcav', 'cav', 'hbow'];
+    const focus = F.mongolFront && alive(F.mongolFront) ? F.mongolFront : rival;
+    const frontier = GAME.citiesOf(focus);
+    const distance = c => frontier.reduce((nearest, target) => Math.min(nearest, GEO.dist(c.tile, target.tile)), Infinity);
+    cities.sort((a, b) => distance(a) - distance(b));
+    const bases = cities.slice(0, Math.max(2, Math.ceil(cities.length / 2)));
+    let mobilized = 0;
+    for (let i = 0, remaining = units; i < formations; i++) {
+      const count = Math.ceil(remaining / (formations - i));
+      remaining -= count;
+      const a = spawnArmy('mongol', bases[i % bases.length].tile, types.slice(0, count), leaders[i]);
+      if (a) { a.morale = GAME.moraleCap('mongol'); mobilized += count; }
+    }
+    F.gold += mobilized * 36;
+    F.horse = Math.min(300, F.horse + mobilized * 3);
+    F.man += mobilized * 5;
+    F.food += mobilized * 12;
+  }
+  function plagueLoss(p, pop, morale, spread) {
+    const origin = GAME.city(p.city);
+    if (origin?.f !== P()) return;
+    const factor = COURT.holder('taiyi') ? 0.5 : 1;
+    const affected = spread ? GAME.citiesOf(P()).filter(c => GEO.dist(c.tile, origin.tile) <= 5) : [origin];
+    for (const c of affected) {
+      c.pop = Math.max(1, c.pop - (c === origin ? pop : 2) * factor);
+      changeLoyalty(c, -(c === origin ? morale : 6) * factor);
+    }
   }
 
   // ---------- 玩家抉择事件 ----------
@@ -180,7 +279,7 @@ var EVENTS = (function () {
     },
     battleCaptive: {
       title: '阵前获将',
-      text: p => `敌将${p.name}已押至军前。${p.loot?.length ? `缴得${GAME.itemNames(p.loot)}，已入府库。` : ''}诸将请定去留。其人或可为我用，然心志未明，须审其言。`,
+      text: p => `敌将${p.name}已押至军前。${p.loot?.length ? `缴得${GAME.itemNames(p.loot)}，已入府库。` : ''}诸将请定去留。此人或可为我用，然心志未明，须审其言。`,
       choices: [
         { t: '晓以恩义，试令来降', d: '俘将越忠于故主、越有智略，越难招降', fn: p => {
           const g = battlePrisoner(p.gen);
@@ -212,16 +311,16 @@ var EVENTS = (function () {
     },
     battleWound: {
       title: '大将负创',
-      text: p => `${p.name}力战突围，身负重创。医者言须静养，今统 −${p.tong}、武 −${p.wu}，三季后可复。`,
+      text: p => `${p.name}力战负创。医者请留之调养，创愈方可复领兵。`,
       choices: [
         { t: '遣良医调治', d: '钱 −45，伤期缩短一季', fn: p => {
-          const wound = G().flags.battleEvents?.wounds[p.gen];
-          if (!wound || !playerGeneral(p.gen) || fac(P()).gold < 45) return;
+          const g = playerGeneral(p.gen);
+          if (!g || !(g.wound > 0) || fac(P()).gold < 45) return;
           fac(P()).gold -= 45;
-          wound.until = Math.max(G().T, wound.until - 1);
+          g.wound = Math.max(0, g.wound - 1);
           recoverBattleWounds();
         } },
-        { t: '令随军养伤', d: '按原期休养', fn: () => {} },
+        { t: '令归家养伤', d: '按原期休养', fn: () => {} },
       ],
     },
     battleDeath: {
@@ -461,6 +560,11 @@ var EVENTS = (function () {
       choices: [
         { t: '开常平仓放粮', d: '粮 -60，民心 +6', fn: p => { fac(P()).food -= 60; GAME.city(p.city).loyalty += 6; } },
         { t: '减免赋税', d: '钱 -40，民心 +3', fn: p => { fac(P()).gold -= 40; GAME.city(p.city).loyalty += 3; } },
+        { t: '捐资赈灾，平粜济民', d: '钱 −160，民心 +12', fn: p => {
+          if (fac(P()).gold < 160) return;
+          fac(P()).gold -= 160;
+          changeLoyalty(GAME.city(p.city), 12);
+        } },
         { t: '置之不理', d: '人口 -1，民心 -12', fn: p => { const c = GAME.city(p.city); c.pop = Math.max(1, c.pop - 1); c.loyalty -= 12; } },
       ],
     },
@@ -485,8 +589,12 @@ var EVENTS = (function () {
       title: p => GAME.city(p.city).name + '疫疠',
       text: p => `${GAME.city(p.city).name}疫疠渐炽，里巷闭户，市井寥落。医者请置药局，给贫民汤剂，又令病家暂勿出入。府吏言仓帑皆有常额，须请旨发之；若只令各乡自救，恐沿河诸邑亦闻疫耗。`,
       choices: [
-        { t: '遣太医局施药', d: '钱 -50，人口 -1', fn: p => { fac(P()).gold -= 50; const c = GAME.city(p.city); c.pop = Math.max(1, c.pop - 1); } },
-        { t: '听天由命', d: '人口 -3', fn: p => { const c = GAME.city(p.city); c.pop = Math.max(1, c.pop - 3); c.loyalty -= 5; } },
+        { t: '捐资赈灾，设药局救民', d: '钱 −150，本城损户，疫止于城', fn: p => {
+          if (fac(P()).gold < 150) { plagueLoss(p, 4, 10, true); return; }
+          fac(P()).gold -= 150;
+          plagueLoss(p, 2, 4, false);
+        } },
+        { t: '令诸县各自安辑', d: '本城及邻城损户、民心下降', fn: p => plagueLoss(p, 4, 10, true) },
       ],
     },
     tribute: {
@@ -511,8 +619,12 @@ var EVENTS = (function () {
       title: '铁木真来归',
       text: () => '斡难河已入我版图。乞颜部少年铁木真率部众来归，愿为大宋守边。此人雄才大略，非池中之物。',
       choices: [
-        { t: '授以节度使，令守北疆', d: '获得将领铁木真', fn: () => { const g = genByName('铁木真'); if (g) { g.f = P(); g.status = 'idle'; } } },
-        { t: '此人不可留', d: '', fn: () => { const g = genByName('铁木真'); if (g) g.status = 'dead'; } },
+        { t: '授以节度使，令守北疆', d: '获得将领铁木真', fn: () => {
+          const g = genByName('铁木真');
+          if (g?.status === 'captive' && g.capBy === P()) GAME.defectCaptive(g);
+          else if (g && ['idle', 'future', 'gone'].includes(g.status)) { g.f = P(); g.status = 'idle'; g.loc = null; }
+        } },
+        { t: '此人不可留', d: '', fn: () => { const g = genByName('铁木真'); if (g && (g.capBy === P() || ['idle', 'future', 'gone'].includes(g.status))) GAME.killGeneral(g, '伏诛'); } },
       ],
     },
     victory: { ...ENDINGS.victory, choices: [{ t: '继续经营', fn: () => {} }] },
@@ -856,30 +968,26 @@ var EVENTS = (function () {
     { y: 1206, s: 0, fn: () => {
       const S = G(), tm = genByName('铁木真');
       const onan = byName('斡难河');
+      if (onan?.f === P() && P() !== 'mongol') {
+        if (tm && (tm.capBy === P() || ['idle', 'future', 'gone'].includes(tm.status))) S.pending.push({ ev: 'temujinSong' });
+        return;
+      }
       if (!alive('mongol')) {
-        if (onan && onan.f === P()) { if (tm && tm.status !== 'dead') S.pending.push({ ev: 'temujinSong' }); return; }
         if (!onan || onan.f === 'rebel' || !tm || tm.status === 'dead') return;
         const F = fac('mongol'); F.alive = true;
         GAME.captureCity(onan, 'mongol'); GAME.setCapital(onan);
       }
       renameFaction('mongol', '大蒙古国', '蒙');
-      const F = fac('mongol'); F.aggr = 1; F.techs.jiaqi = 1; F.gold += 600; F.horse += 200; F.man += 200;
+      const F = fac('mongol'); F.aggr = 1; F.techs.jiaqi = 1;
       for (const f of ['kerait', 'naiman']) if (alive(f)) for (const c of GAME.citiesOf(f)) GAME.captureCity(c, 'mongol');
-      const cap = GAME.city(F.capital) || onan;
-      for (const n of ['铁木真', '木华黎', '哲别', '速不台', '博尔术']) spawnArmy('mongol', cap.tile, ['hbow', 'hbow', 'hbow', 'hbow', 'hcav', 'hcav', 'cav', 'cav'], n);
       F.mongolBoost = 1;
+      mongolCampaignOrders('initial');
+      mongolMuster(true);
       if (fac(P()).met.mongol || GAME.nearPlayer('mongol')) S.pending.push({ ev: 'temujin' });
       else worldLog('斡难河诸部会盟，漠北改号大蒙古国。', ['mongol']);
     } },
-    { y: 1211, s: 1, fn: () => { if (alive('mongol') && fac('mongol').mongolBoost) { for (const f of ['jin', 'xia']) if (alive(f)) GAME.declareWar('mongol', f, true); worldLog('成吉思汗誓师伐金。', ['mongol', 'jin']); } } },
-    { y: 1218, s: 1, fn: () => {
-      if (!alive('mongol') || !fac('mongol').mongolBoost) return;
-      if (alive('xiliao')) GAME.declareWar('mongol', 'xiliao', true);
-      let west = null, bx = 1e9;
-      for (const c of GAME.citiesOf('mongol')) { const x = GEO.colOf(c.tile); if (x < bx) { bx = x; west = c; } }
-      if (west) { spawnArmy('mongol', west.tile, rep(['hbow', 'hbow', 'hcav', 'cav'], 9), '哲别'); spawnArmy('mongol', west.tile, rep(['hbow', 'hbow', 'hcav', 'siege'], 9), '拖雷'); }
-      worldLog('蒙古西军集于边地，诸部举兵向西辽。', ['mongol', 'xiliao']);
-    } },
+    { y: 1211, s: 1, fn: () => mongolCampaignOrders('east') },
+    { y: 1218, s: 1, fn: () => mongolCampaignOrders('west') },
     { y: 1236, s: 1, fn: () => {
       if (!alive('mongol') || !fac('mongol').mongolBoost) return;
       const targets = ['rus', 'cuman', 'bulgar', 'hungary', 'poland'].filter(f => mayFight('mongol', f));
@@ -1299,6 +1407,8 @@ var EVENTS = (function () {
         worldLog('白藤江拒元：陈朝调集舟军扼守潮汐水道，升龙广备军粮。', ['daviet', 'mongol']);
       } },
     ].map(({ y, s, fn }) => ({ y, s, fn: () => { if (G().year === y) fn(); } })),
+    { y: 1230, s: 1, fn: () => { if (G().year === 1230) mongolCampaignOrders('return'); } },
+    { y: 1235, s: 1, fn: () => { if (G().year === 1235) mongolCampaignOrders('return'); } },
   ];
 
   // ---------- 战后事件 ----------
@@ -1341,7 +1451,7 @@ var EVENTS = (function () {
     if (!wounds) return;
     for (const [id, info] of Object.entries(wounds)) {
       const g = GAME.gen(Number(id));
-      if (g && g.status !== 'dead' && G().T < info.until) continue;
+      if (g && g.status !== 'dead' && g.wound > 0) continue;
       if (g && g.status !== 'dead') {
         g.tong += info.tong;
         g.wu += info.wu;
@@ -1443,20 +1553,16 @@ var EVENTS = (function () {
     const ourEnd = attacking ? rep.after.a : rep.after.d;
     const foeStart = attacking ? rep.before.d : rep.before.a;
     const losses = ourStart ? Math.max(0, 1 - ourEnd / ourStart) : 0;
+    if (!won && g && rep.wounded?.includes(g.id) && cooled('battleWound')) {
+      queue('battleWound', { gen: g.id, name: g.name });
+      return;
+    }
     if (!won && g && losses > 0.5) {
       const roll = r();
       const deathChance = g.hist ? 0.005 : 0.01;
       if (cooled('battleDeath') && roll < deathChance) {
         GAME.killGeneral(g, '阵亡');
         queue('battleDeath', { gen: g.id, name: g.name });
-        return;
-      }
-      if (cooled('battleWound') && !ledger.wounds[g.id] && roll >= deathChance && roll < deathChance + 0.10) {
-        const tong = GAME.ri(10, 20), wu = GAME.ri(10, 20);
-        g.tong -= tong;
-        g.wu -= wu;
-        ledger.wounds[g.id] = { tong, wu, until: S.T + 3 };
-        queue('battleWound', { gen: g.id, name: g.name, tong, wu });
         return;
       }
     }
@@ -1586,7 +1692,25 @@ var EVENTS = (function () {
 
   // ---------- 本纪 ----------
   const ANNALS_LIMIT = 300;
+  const customUnlocks = new Set(['customUnify', 'customNorth', 'customLong']);
+  const customUnlockKey = 'hwhs_custom_unlocks';
+  function customUnlockState() {
+    try { return new Set(JSON.parse(localStorage.getItem(customUnlockKey) || '[]').filter(id => customUnlocks.has(id))); }
+    catch (err) { return new Set(); }
+  }
+  function customSlots() { return Math.min(3, 1 + customUnlockState().size); }
+  function storeCustomUnlocks(honors) {
+    const earned = [...customUnlocks].filter(id => honors[id]);
+    if (!earned.length) return;
+    const past = customUnlockState(), before = past.size;
+    for (const id of earned) past.add(id);
+    if (past.size === before) return;
+    try { localStorage.setItem(customUnlockKey, JSON.stringify([...past])); } catch (err) { /* 禁用本地存储时照常游戏。 */ }
+  }
   const ACHIEVEMENTS = [
+    ['customUnify', '一统天下', '海内一统；以后开局自创名额 +1', f => f.unify, 100, '武功'],
+    ['customNorth', '收复燕云', '占有燕京、大同；以后开局自创名额 +1', f => f.owns.has('燕京') && f.owns.has('大同'), 50, '疆土'],
+    ['customLong', '绝境十年', '绝境开局存续十年；以后开局自创名额 +1', f => f.difficulty === 3 && f.elapsed >= 10 && f.cities > 0, 50, '武功'],
     ['firstWin', '首胜', '取得一场胜利', f => f.wins >= 1, 10, '武功'],
     ['tenWins', '十战奏捷', '取得十场胜利', f => f.wins >= 10, 25, '武功'],
     ['underdog', '以少胜多', '兵力未及敌半而胜十次', f => f.underdogs >= 10, 50, '武功'],
@@ -1643,6 +1767,7 @@ var EVENTS = (function () {
     ['quickUnify', '百载定鼎', '百年之内一统天下', f => f.unify && f.elapsed <= 100, 100, '挑战'],
     ['noTribute', '不输一贯', '一统天下，未曾向外邦纳岁币', f => f.unify && !f.paidTribute, 100, '挑战'],
     ['safeCapital', '社稷无虞', '一统天下，而京师未尝陷落', f => f.unify && !f.capLost, 100, '挑战'],
+    ['greatWork', '百工告成', '竣工一项大工程', f => f.works > 0, 25, '文治'],
   ];
   let recordingHistory = false;
   const BATTLE_TOTALS = {
@@ -1654,7 +1779,7 @@ var EVENTS = (function () {
   function initAchievements(S) {
     S.flags ||= {};
     S.flags.capLost ??= false;
-    const defaults = { recruits: 0, conquests: 0, paidTribute: false, visits: {}, captureTimes: [], lastRevolt: S.T, yueNatural: false };
+    const defaults = { recruits: 0, conquests: 0, paidTribute: false, visits: {}, captureTimes: [], lastRevolt: S.T, yueNatural: false, works: 0 };
     const book = S.flags.annals;
     const progress = S.flags.achievementProgress = Object.assign(defaults, S.flags.achievementProgress);
     if (!progress.capturedCapitals) {
@@ -1785,7 +1910,10 @@ var EVENTS = (function () {
     return book;
   }
   function awardAchievements(book, result) {
-    if (Object.keys(book.honors).length === ACHIEVEMENTS.length) return;
+    if (Object.keys(book.honors).length === ACHIEVEMENTS.length) {
+      storeCustomUnlocks(book.honors);
+      return;
+    }
     const S = G(), p = P(), F = fac(p), cities = GAME.citiesOf(p);
     const progress = S.flags.achievementProgress;
     const owns = new Set(cities.map(c => c.name));
@@ -1804,7 +1932,7 @@ var EVENTS = (function () {
       veteran: maxed > 0, maxed, gold: F.gold, techs, allTechs: techs === Object.keys(DATA.TECHS).length,
       population: cities.reduce((sum, c) => sum + c.pop, 0), cities: cities.length, owns,
       india: cities.some(c => INDIA_CITIES.has(c.name)), capitals: S.victory || S.cities.every(c => !c.origCap || c.f === p),
-      peaceful: S.T - progress.lastRevolt, fullCourt: typeof COURT !== 'undefined' && COURT.OFFICES.every(o => COURT.holder(o.id)),
+      peaceful: S.T - progress.lastRevolt, fullCourt: typeof COURT !== 'undefined' && COURT.OFFICES.slice(0, 6).every(o => COURT.holder(o.id)),
       captureStreak: times.length === 5 && times[4] - times[0] <= 4, visits: Object.keys(progress.visits).length,
       treasures: new Set(S.vault.concat(ranks.flatMap(g => g.items || []))).size, allies, tributes,
       unify: result === 'unify', capLost: S.flags.capLost, difficulty: S.difficulty, elapsed: S.T / 4 };
@@ -1814,6 +1942,7 @@ var EVENTS = (function () {
         GAME.log(`功业 · ${name} +${pts}`, 'big');
       }
     }
+    storeCustomUnlocks(book.honors);
   }
   GAME.on('log', ({ text, type, tile }) => {
     const S = G(), progress = S.flags.achievementProgress;
@@ -1997,7 +2126,7 @@ var EVENTS = (function () {
   function generalBiographies(book) {
     return leadingGenerals(book, 5).map(({ g, service, wins }) => {
       const [tong, wu, zhi, zheng] = biographyStats(g, service);
-      const end = service?.fallen ? '后殁于阵。' : g.status === 'dead' ? '其人已卒。' : '';
+      const end = service?.fallen ? '后殁于阵。' : g.status === 'dead' ? '此人已卒。' : '';
       const text = `${generalBio(g)}，统 ${tong}、武 ${wu}、智 ${zhi}、政 ${zheng}。计胜 ${wins} 阵，本纪记败 ${service?.losses || 0} 阵。${end}`;
       return `<p><b>${annalEsc(g.name)}</b>　${annalEsc(text)}</p>`;
     }).join('');
@@ -2031,6 +2160,8 @@ var EVENTS = (function () {
       `<p class="note">本卷始录于${annalDate(book.start)}。${book.eventCount > book.events.length ? '本卷择录要事，不逾三百条。' : ''}</p>` +
       '<div class="sec">帝纪</div>' + (chapters || '<p class="note">本卷尚待入录。</p>') +
       '<div class="sec">大事年表</div>' + (chronology || '<p class="note">本卷尚无纪年大事。</p>') +
+      '<div class="sec">大工程</div>' + (S.cities.flatMap(c => Object.entries(c.works || {}).filter(([, work]) => work.f === P()).map(([id, work]) =>
+        `<p>${annalEsc(work.date)}　${annalEsc(c.name)}${DATA.GREAT_WORKS[id].name}竣工</p>`)).join('') || '<p class="note">尚无大工程竣工。</p>') +
       '<div class="sec">将相列传</div>' + (generalBiographies(book) || '<p class="note">本卷尚无列传。</p>') +
       `<div class="sec">功业成就</div><p>已成 ${honors} / ${ACHIEVEMENTS.length} 项 <button class="btn sm" data-act="honors">详见功业</button></p>`;
   }
@@ -2047,11 +2178,12 @@ var EVENTS = (function () {
       if (S.year > h.y || (S.year === h.y && S.season >= h.s)) {
         S.flags['h' + i] = 1;
         recordingHistory = true;
-        try { h.fn(); } catch (e) { console.error(e); }
+        try { h.fn(); } catch (cause) { throw new Error(`史事 ${h.y} 年第 ${h.s + 1} 季（${i}）结算失败`, { cause }); }
         finally { recordingHistory = false; }
       }
     }
     historyChoices();
+    if (S.newYear) mongolMuster();
     // 秦桧
     if (S.flags.qin === 'angry' && S.T >= S.flags.qinTurn && !S.flags.qinDone) { S.flags.qinDone = 1; S.pending.push({ ev: 'qinhui' }); }
     if (S.flags.qin === 'kept' && S.season === 3 && S.newSeason) fac(p).gold += 60;
@@ -2236,7 +2368,7 @@ var EVENTS = (function () {
     registry.push(row);
     DEFS[row.id] = { person: row.group === 'person' ? row.people[0] : null, title: row.title, text: p => {
       const city = GAME.city(p.city), g = GAME.gen(p.gen);
-      return [p.news, row.text.replaceAll('{城}', city?.name || '本州').replaceAll('{人}', g?.name || '其人')
+      return [p.news, row.text.replaceAll('{城}', city?.name || '本州').replaceAll('{人}', g?.name || '此人')
         .replaceAll('{迹}', p.site || '道旁旧迹').replaceAll('{学}', DATA.TECHS[p.tech]?.name || '新法')].filter(Boolean).join('\n\n');
     }, choices: row.choices.map(([t, effects]) => ({
       t, d: p => [describeEffects(effects, p)
@@ -2537,7 +2669,7 @@ var EVENTS = (function () {
     '{城}守吏遍巡城脚，数处夯土松裂。差夫急补可省钱，给值雇工则春田少误。',
     ['募工给值', { gold: -50, wall: 20 }], ['按籍差夫', { happy: -4, wall: 16 }]);
   situation('idleScholars', '待阙之臣', '本朝有闲职且政略七十五以上的臣僚', () =>
-    officerWhere(g => g.status === 'idle' && g.zheng >= 75), '{人}久候差遣，旅居费重。其人愿领校书之职，亦可给券还乡访察民事。',
+    officerWhere(g => g.status === 'idle' && g.zheng >= 75), '{人}久候差遣，旅居费重。此人愿领校书之职，亦可给券还乡访察民事。',
     ['廪给校勘', { gold: -35, sci: 40, loyalty: 3 }], ['授券访察乡曲', { food: -30, zheng: 1 }]);
   situation('countySchool', '郡庠缺师', '本城建有书院', cs => townWhere(cs,c => c.buildings.academy),
     '{城}诸生所习经说不一，教谕请延宿儒会讲。州学粮廪有限，亦可令诸生分赴乡塾讲授。',
@@ -2745,6 +2877,8 @@ var EVENTS = (function () {
     ['校印式，存本于官', { gold: -25, sci: 35 }], ['延邻老作证，免其券费', { gold: -20, happy: 5 }]);
 
   function presentable(p) {
+    if (p.ev === 'battleWound') return playerGeneral(p.gen)?.wound > 0;
+    if (p.ev === 'plague') return !!owned(p.city, P());
     if (p.ev === 'frontierSpoils') return !!GAME.campSpoils(p.point);
     if (p.ev === 'cityPromotion') return owned(p.city, P())?.tier === p.tier;
     if (p.ev === 'hdjd') return !!ownedName('汴京', P());
@@ -2786,6 +2920,6 @@ var EVENTS = (function () {
     GAME.emit('change');
   }
   // 自动处理（无人值守/AI）
-  return { presentable, initSchedule, isDecision, offer, offerFormerOfficial, registry, turn, onBattle, annals, generalBio, initAchievements, achievements, finalScore, settlementScore, settlementChronicle, view, resolve, peaceTerms, DEFS, spawnArmy };
+  return { presentable, initSchedule, isDecision, offer, offerFormerOfficial, registry, turn, onBattle, annals, generalBio, initAchievements, achievements, customSlots, finalScore, settlementScore, settlementChronicle, view, resolve, peaceTerms, DEFS, spawnArmy };
 })();
 if (typeof module !== 'undefined') module.exports = EVENTS;
