@@ -1,6 +1,6 @@
 // 界面与交互
 var UI = (function () {
-  const VERSION = '0.22.0';
+  const VERSION = '0.22.1';
   const CREATOR = '大老师', WECHAT = 'lynchrrr';
   const $ = id => document.getElementById(id);
   const U = DATA.UNITS, B = DATA.BUILDINGS, TECH = DATA.TECHS;
@@ -155,6 +155,10 @@ var UI = (function () {
         if ($('modal').querySelector('[data-general-roster]')) showGenerals();
         if ($('modal').querySelector('.court-page')) showCourt();
         if ($('modal').querySelector('.dip-page')) showDiplomacy();
+        if ($('modal').querySelector('.city-overview')) showCities();
+        const armies = $('modal').querySelector('.army-overview');
+        if (armies) showArmies(armies.dataset.sort);
+        if ($('modal').querySelector('.settings-body')) showSettings();
       }
     });
     titleScreen();
@@ -1729,7 +1733,7 @@ var UI = (function () {
 
   const TECH_BRANCHES = ['农桑', '工技', '兵学', '文治', '航海'];
   const techFolds = new Map();
-  let techFilter = 'all';
+  let techFilter = null;
   function filterTabs(action, label, choices, selected) {
     return `<div class="filter-tabs" role="group" aria-label="${label}">${choices.map(([id, name]) =>
       `<button type="button" class="btn ${selected === id ? 'red' : ''}" data-act="${action}" data-arg="${id}" aria-pressed="${selected === id}">${name}</button>`).join('')}</div>`;
@@ -1739,12 +1743,13 @@ var UI = (function () {
     const lessons = GAME.fac(P()).techLessons[id];
     const name = `<b>${esc(t.name)}</b>`;
     const desc = esc(t.desc);
+    const requirements = (t.req || []).filter(key => !phone.matches || !GAME.fac(P()).techs[key]);
     const choose = `data-act="settech" data-arg="${id}"`;
     return `<article class="tech ${known ? 'known' : can ? 'avail' : 'lock'} ${cur ? 'cur' : ''}" ${can ? choose : ''}>
       <div class="tech-title">${can ? `<button type="button" class="tech-pick" ${choose}>${name}</button>` : name}
         ${known ? '<span class="note">已学</span>' : `<span class="cost">${cost}</span>`}</div>
       ${phone.matches ? `<p class="tech-desc">${desc}</p>` : `<button type="button" class="tech-desc" data-act="techdesc" title="${desc}" aria-expanded="false"><span>${desc}</span></button>`}
-      ${t.req && !known ? `<span class="cost tech-req">需 ${t.req.map((r, i) => `<span class="keep">${esc(TECH[r].name)}${i + 1 < t.req.length ? '、' : ''}</span>`).join('')}</span>` : ''}
+      ${requirements.length && !known ? `<span class="cost tech-req">需 ${requirements.map((r, i) => `<span class="keep">${esc(TECH[r].name)}${i + 1 < requirements.length ? '、' : ''}</span>`).join('')}</span>` : ''}
       ${!known && lessons ? `<span class="note pos">缴获习得 · 所需文教 −${lessons * 20}%</span>` : ''}
       ${cur ? meter(sci, cost, 'gold') : ''}</article>`;
   }
@@ -1757,7 +1762,8 @@ var UI = (function () {
     techs.sort((a, b) => a.t.cost - b.t.cost);
     const branchTech = TECH_BRANCHES.map(branch => techs.filter(x => x.t.branch === branch));
     const active = TECH[F.research]?.branch || branchTech.find(group => group.some(x => x.can))?.[0]?.t.branch || TECH_BRANCHES[0];
-    const filtered = list => list.filter(x => techFilter === 'all' || (techFilter === 'available' ? x.can : x.known));
+    const filter = techFilter ?? (phone.matches ? 'available' : 'all');
+    const filtered = list => list.filter(x => filter === 'all' || (filter === 'available' ? x.can : x.known));
     const cards = list => filtered(list).map(x => techCard(x, F.sci)).join('');
     const branchTitle = (br, entries) => `<b>${br}</b> <span class="note">已学 ${entries.filter(x => x.known).length} / 共 ${entries.length}</span>
       ${entries.some(x => x.cur) ? '<span class="tech-current" aria-label="研究中">研</span>' : ''}`;
@@ -1782,12 +1788,20 @@ var UI = (function () {
         return `<section class="tech-era-row"><h2>${era}</h2><div class="techgrid">${row.map((content, col) =>
           `<div class="tech-era-cell" data-column="${col}"><div ${desktopOpen[col] ? '' : 'class="hidden"'}>${content}</div></div>`).join('')}</div></section>`;
       }).join('')}`;
-    const h = `<h1>格物致知</h1><div class="note tech-intro">每季文教 ${F.income.sci || 0}　已积 ${Math.round(F.sci)}</div>
-      <div class="note tech-intro">捐资助学 · 每 ${dn.rate} 贯折文教 1，本季尚可捐 ${dn.left}（上限为半季文教）
-        <div class="tech-donations"><button class="btn sm" data-act="donate" data-arg="part" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>捐 ${Math.min(dn.left, Math.ceil(dn.cap / 4)) * dn.rate} 贯</button>
-        <button class="btn sm" data-act="donate" data-arg="all" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>尽捐 ${dn.cost} 贯</button></div></div>
-      ${filterTabs('techfilter', '科技筛选', [['all', '全部'], ['available', '只看可研'], ['known', '只看已学']], techFilter)}
-      <div class="scroll tech-tree">${phone.matches ? TECH_BRANCHES.map(mobileBranch).join('') : desktopTree()}</div>`;
+    const research = TECH[F.research];
+    const needed = research ? GAME.techCost(P(), F.research) : 0;
+    const donations = `<div class="tech-donation-body"><p class="note">每 ${dn.rate} 贯折文教 1，本季尚可助文教 ${dn.left}。</p>
+      <div class="tech-donations"><button type="button" class="btn sm" data-act="donate" data-arg="part" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>捐 ${Math.min(dn.left, Math.ceil(dn.cap / 4)) * dn.rate} 贯</button>
+      <button type="button" class="btn sm" data-act="donate" data-arg="all" ${dn.left && F.gold >= dn.rate ? '' : 'disabled'}>尽捐 ${dn.cost} 贯</button></div></div>`;
+    const overview = phone.matches ? `<section class="research-summary"><div class="ledger-head"><strong>${research ? esc(research.name) : '尚未择学'}</strong>
+      ${research ? `<span class="ledger-state">研习中</span>` : ''}</div>
+      <div class="ledger-meta"><span>每季文教 ${F.income.sci || 0}</span><span>已积 ${Math.round(F.sci)}${research ? ' / ' + needed : ''}</span></div>
+      ${research ? meter(F.sci, needed, 'gold') : ''}</section>
+      <details class="ledger-fold tech-donate"><summary>捐资助学</summary>${donations}</details>` :
+      `<div class="note tech-intro">每季文教 ${F.income.sci || 0}　已积 ${Math.round(F.sci)}</div><div class="note tech-intro"><b>捐资助学</b>${donations}</div>`;
+    const h = `<h1>格物致知</h1><div class="tech-panel ${phone.matches ? 'ledger tech-ledger' : ''}">${overview}
+      ${filterTabs('techfilter', '科技筛选', [['all', '全部'], ['available', '只看可研'], ['known', '只看已学']], filter)}
+      <div class="scroll tech-tree">${phone.matches ? TECH_BRANCHES.map(mobileBranch).join('') : desktopTree()}</div></div>`;
     openModal(h, { width: '1040px' });
   }
 
@@ -1957,11 +1971,17 @@ var UI = (function () {
     const filters = [['all', '全部 ' + mine.length], ...GEN_STATUSES.map(([id, title]) => [id, title + ' ' + mine.filter(g => g.status === id).length])];
     const sortHead = (key, label) => `<th aria-sort="${genSort === key ? (genDir < 0 ? 'descending' : 'ascending') : 'none'}">${sortControl(key, label)}</th>`;
     const desktopName = g => `${PORTRAIT.img(g, 30, 'alt=""')} <button type="button" class="record-link">${generalName(g)}</button>`;
-    const card = g => recordCard(
-      `${PORTRAIT.img(g, 44, 'alt=""')} <div class="record-name"><div class="roster-name"><button type="button" class="record-link"><b>${esc(g.name)}</b></button>${generalBadges(g)}</div>
-       <span class="note">${g.status === 'captive' ? g.f === P() ? statusText(g) + ' · ' + captiveTenure(g) : esc(facName(g.f)) + ' · 被俘' : statusText(g)}</span></div><span class="chip">${GAME.cnNum(g.lv || 1)}级</span>`,
-      `<div class="chips">${generalStatChips(g)}</div>${generalTags(g) ? `<div class="record-tags">${generalTags(g)}</div>` : ''}`,
-      generalButtons(g), `data-general="${g.id}"`);
+    const card = g => {
+      return `<article class="ledger-entry" data-general="${g.id}">
+        <button type="button" class="ledger-link roster-entry record-link" aria-label="查看${esc(g.name)}">
+          ${PORTRAIT.img(g, 44, 'alt=""')}<span class="roster-info"><span class="roster-name">${generalName(g)}<small>${GAME.cnNum(g.lv || 1)}级</small></span>
+          <span class="ledger-meta">${statusText(g)}</span><span class="ledger-meta ledger-stats">${Object.entries(GAME.STAT_NAME).map(([k, title]) => `<span>${title} ${g[k]}</span>`).join('')}</span></span>
+        </button></article>`;
+    };
+    const captiveCard = g => recordCard(
+      `${PORTRAIT.img(g, 44, 'alt=""')}<div class="record-name"><button type="button" class="record-link"><b>${esc(g.name)}</b></button>${generalBadges(g)}
+      <span class="note">${g.f === P() ? statusText(g) + ' · ' + captiveTenure(g) : esc(facName(g.f)) + ' · 被俘'}</span></div>`,
+      `<div class="chips">${generalStatChips(g)}</div>`, generalButtons(g), `data-general="${g.id}"`);
     const list = phone.matches ? `${pager}<div class="record-list">${cards.map(card).join('')}</div>${pager}` :
       `<table class="t general-table"><tr><th>姓名</th>${sortHead('total', '综合')}${sortHead('age', '年')}${sortHead('lv', '级')}
         ${Object.entries(GAME.STAT_NAME).map(([k, n]) => sortHead(k, n)).join('')}<th>特技 / 宝物</th><th>立场</th>${sortHead('loyalty', '忠诚')}<th>职守</th>${sortHead('wins', '战绩')}<th></th></tr>
@@ -1969,23 +1989,28 @@ var UI = (function () {
         <td>${S().year - g.birth}</td><td>${g.lv || 1}</td>${Object.keys(GAME.STAT_NAME).map(k => `<td>${g[k]}</td>`).join('')}
         <td>${generalTags(g)}</td><td>${stanceTag(g)}</td><td class="${g.loyalty < 40 ? 'neg' : ''}">${Math.round(g.loyalty)}${g.loyal ? ' 忠' : ''}</td>
         <td>${statusText(g)}</td><td>${g.wins || 0} 胜</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
-    const captiveList = phone.matches ? `<div class="record-list">${caps.map(card).join('')}</div>` :
+    const captiveList = phone.matches ? `<div class="record-list">${caps.map(captiveCard).join('')}</div>` :
       `<table class="t"><tr><th>姓名</th><th>原属</th><th>四维</th><th>特技</th><th></th></tr>${caps.map(g =>
         `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${esc(facName(g.f))}</td><td>${generalStatChips(g)}</td><td>${generalTags(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
-    const missingList = phone.matches ? `<div class="record-list">${missing.map(card).join('')}</div>` :
+    const missingList = phone.matches ? `<div class="record-list">${missing.map(captiveCard).join('')}</div>` :
       `<table class="t"><tr><th>姓名</th><th>羁押之所</th><th>时日</th><th>四维</th><th></th></tr>${missing.map(g =>
         `<tr class="card-link" data-general="${g.id}"><td>${desktopName(g)}</td><td>${statusText(g)}</td><td>${captiveTenure(g)}</td>
           <td>${generalStatChips(g)}</td><td class="record-actions-cell">${generalButtons(g)}</td></tr>`).join('')}</table>`;
-    openModal(`<h1>文武百官</h1>
-      ${generalTabs('roster')}
-      <button class="btn sm" data-act="hire">张榜招贤</button>
-      <p class="note governor-count ${vacancies ? 'neg' : ''}">州郡 ${seats.length} 座，知州 ${filled} 员，缺 ${vacancies} 员</p>
-      ${filterTabs('genfilter', '职守筛选', filters, genFilter)}
-      ${phone.matches ? `<div class="sort-chips" role="group" aria-label="将领排序">${GEN_SORT.map(([key, title]) => sortControl(key, title)).join('')}</div>` : ''}
+    const top = `<div class="ledger-head roster-toolbar">${generalTabs('roster')}<button type="button" class="btn sm" data-act="hire">张榜招贤</button></div>
+      <p class="note governor-count">州郡 ${seats.length} 座 · 知州缺 ${vacancies} 员</p>
+      ${filterTabs('genfilter', '职守筛选', filters, genFilter)}`;
+    openModal(`<h1>文武百官</h1><div class="${phone.matches ? 'ledger roster-ledger' : ''}">${top}
+      ${phone.matches ? `<div class="roster-sort"><label>排序 <select aria-label="将领排序" data-roster-order>
+        ${GEN_SORT.map(([key, title]) => `<option value="${key}" ${genSort === key ? 'selected' : ''}>${title}</option>`).join('')}</select></label>
+        <button type="button" class="btn sm" data-g-direction>${genDir < 0 ? '高在先' : '低在先'}</button></div>` : ''}
       <div class="scroll" data-general-roster style="max-height:68vh">${roster.length ? list : '<p class="note">此列暂无将领。</p>'}
       ${missing.length ? '<div class="sec">陷敌诸将</div>' + missingList : ''}
-      ${caps.length ? '<div class="sec">囚中敌将</div>' + captiveList : ''}</div>`, { width: '1040px' });
+      ${caps.length ? '<div class="sec">囚中敌将</div>' + captiveList : ''}</div></div>`, { width: '1040px' });
+    $('modal').querySelector('[data-roster-order]')?.addEventListener('change', e => {
+      genSort = e.target.value; genDir = -1; genPage = 0; showGenerals();
+    });
     $('modal').onclick = e => {
+      if (e.target.closest('[data-g-direction]')) { genDir = -genDir; genPage = 0; showGenerals(); return; }
       const sort = e.target.closest('[data-g-sort]');
       if (sort) {
         const key = sort.dataset.gSort;
@@ -2136,10 +2161,20 @@ var UI = (function () {
   }
   function pickCity(title, filter, cb, onBack) {
     const list = GAME.citiesOf(P()).filter(filter).sort((a, b) => b.pop - a.pop);
-    let h = `<h1>${title}</h1><div class="scroll" style="max-height:60vh"><table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>现任知州</th><th></th></tr>`;
+    const picker = city => {
+      const g = GAME.gen(city.governor);
+      return `<button type="button" class="ledger-link ledger-head" data-pc="${city.id}"><span><strong>${esc(city.name)}</strong>
+        <span class="ledger-meta"><span>${city.pop} 万户</span><span>民心 ${Math.round(city.loyalty)}</span></span></span>
+        <span class="ledger-state">${g ? esc(g.name) : '知州空缺'}</span></button>`;
+    };
+    const group = (label, entries) => entries.length ? `<h2 class="ledger-heading">${label}</h2>${entries.map(picker).join('')}` : '';
+    let h = `<h1>${esc(title)}</h1><div class="scroll" style="max-height:60vh"><table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>现任知州</th><th></th></tr>`;
     for (const c of list) { const g = GAME.gen(c.governor); h += `<tr><td><b>${c.name}</b></td><td>${c.pop}</td><td>${Math.round(c.loyalty)}</td><td>${g ? g.name + '（政' + g.zheng + '）' : '—'}</td><td><button class="btn sm red" data-pc="${c.id}">选</button></td></tr>`; }
     h += `</table></div>`;
-    openModal(h, { width: '600px', onClose: onBack || (() => {}) });
+    const mobile = `<h1>${esc(title)}</h1><div class="ledger city-picker-ledger">
+      ${group('知州空缺', list.filter(c => c.governor == null))}${group('已有知州', list.filter(c => c.governor != null))}
+      ${list.length ? '' : '<p class="note">暂无可任之城。</p>'}</div>`;
+    openModal(phone.matches ? mobile : h, { width: '600px', onClose: onBack || (() => {}) });
     $('modal').onclick = e => {
       const b = e.target.closest('[data-pc]'); if (!b) return;
       if (onBack) modalOnClose = null;
@@ -2290,16 +2325,17 @@ var UI = (function () {
         (GAME.leagueMember(f) ? ' <span class="chip red">合纵</span>' : '') +
         (r.marriage ? ' <span class="chip">姻亲</span>' : '');
       const relation = relText(f), power = powerText(f, myPower), opinion = opinionText(r), tribute = tributeText(r);
-      if (phone.matches) return recordCard(
-        `${facSeal(f)} <div class="record-name">${name}</div><span class="chip">${relation}</span>`,
-        `<div class="chips"><span class="chip">城 ${cities}</span><span class="chip">国力 ${power}</span><span class="chip">好感 ${opinion}</span>
-          <span class="chip">岁币 ${tribute}</span></div>`, diplomacyButtons(f, myPower), `data-nation="${f}"`);
+      if (phone.matches) return `<article class="ledger-entry" data-nation="${f}">
+        <button type="button" class="ledger-link nation-entry" aria-label="${esc(facName(f))}">${facSeal(f)}<span class="nation-entry-info">
+          <span class="ledger-head"><strong>${esc(facName(f))}</strong><span class="ledger-state ${r.war ? 'neg' : ''}">${relation}</span></span>
+          <span class="ledger-meta">${GAME.leagueMember(f) ? '<span class="neg">合纵</span>' : ''}${r.marriage ? '<span>姻亲</span>' : ''}
+            <span>好感 ${sgn(Math.round(r.op))}</span><span>${cities} 城</span><span>国力 ${power}</span></span></span></button></article>`;
       return `<tr class="card-link" data-nation="${f}"><td>${facSeal(f)}</td><td>${name}</td><td>${cities}</td><td>${power}</td><td>${opinion}</td>
         <td>${relation}</td><td>${tribute}</td><td><div class="record-actions">${diplomacyButtons(f, myPower)}</div></td></tr>`;
     }).join('');
-    const listHTML = !rows ? '<p class="note">此列暂无邦国。</p>' : phone.matches ? `<div class="record-list">${rows}</div>` :
+    const listHTML = !rows ? '<p class="note">此列暂无邦国。</p>' : phone.matches ? `<div class="ledger nation-ledger">${rows}</div>` :
       `<table class="t dip-table"><tr><th></th><th>国</th><th>城</th><th>国力</th><th>好感</th><th>关系</th><th>岁币</th><th>操作</th></tr>${rows}</table>`;
-    openModal(`<h1>鸿胪寺</h1><div class="scroll dip-page" style="max-height:70vh">${threatSummary()}
+    openModal(`<h1>鸿胪寺</h1><div class="scroll dip-page ${phone.matches ? 'ledger' : ''}" style="max-height:70vh">${threatSummary()}
       ${filterTabs('dipfilter', '外交筛选', choices, dipFilter)}${listHTML}
       <p class="note">列已结识之邦，邻国以陆地接壤为准。好感随遣使、通商而升。无名出师、背弃和约，近邦及敌之盟国多有非议。</p></div>`, { width: '980px' });
     $('modal').onclick = e => {
@@ -2334,7 +2370,8 @@ var UI = (function () {
     const leaderLinks = leaders.map(g => `<button type="button" class="record-link nation-leader" data-nation-gen="${g.id}">
       ${PORTRAIT.img(g, 36, 'alt=""')} ${generalName(g)}</button>`).join('');
     const row = (label, content) => `<div class="row"><b>${label}</b><span class="grow">${content}</span></div>`;
-    openModal(`<h1>国家简介</h1><div class="scroll nation-detail" style="max-height:72vh">
+    const actions = f !== 'rebel' && F.alive ? diplomacyButtons(f) : '';
+    openModal(`<h1>国家简介</h1><div class="scroll nation-detail" data-nation-detail="${f}" style="max-height:72vh">
       <div class="record-head general-profile">${facSeal(f, 'nation-seal')}<div class="record-name"><h2>${esc(nationName)}</h2>
         <div class="chips"><span class="chip">${esc(CULTURE_NAME[F.culture] || '未详')}</span><span class="chip">${aggr}</span></div></div></div>
       <div class="nation-grid">${row('都城', esc(cap?.name || '未定'))}${row('城数', cs.length)}
@@ -2342,11 +2379,12 @@ var UI = (function () {
       <div class="sec">与我关系</div><div class="chips"><span class="chip">${f === 'rebel' ? '交战' : relText(f)}</span>
         <span class="chip">好感 ${opinionText(r)}</span><span class="chip">岁币 ${tributeText(r)}</span>
         ${r.marriage ? '<span class="chip">姻亲</span>' : ''}</div>
+      ${phone.matches && actions ? `<div class="ledger-actions nation-actions">${actions}</div>` : ''}
       ${row('交战中', esc(front.join('、') || '无'))}${row('盟友', esc(allies.join('、') || '无'))}
       <div class="sec">名将</div><div class="nation-leaders">${leaderLinks || '<span class="note">未闻其将。</span>'}</div>
       <div class="sec">史略</div><p class="nation-history">${esc(history || '此为群起的义军，未有一朝可纪。')}</p>
       <div class="record-actions"><button type="button" class="btn sm" data-nation-back>返回</button><button type="button" class="btn sm" data-nation-map>舆图上查看</button>
-        ${f !== 'rebel' && F.alive ? diplomacyButtons(f) : ''}</div><p class="note" role="status" id="nation-tip"></p>
+        ${phone.matches ? '' : actions}</div><p class="note" role="status" id="nation-tip"></p>
       </div>`, { width: '660px' });
     $('modal').onclick = e => {
       if (e.target.closest('[data-nation-back]')) { showDiplomacy(); return; }
@@ -2396,7 +2434,7 @@ var UI = (function () {
     };
     present();
   }
-  function showCourt() {
+  function showCourt(openOffice) {
     const C = S().court, emp = COURT.emperor(), regent = COURT.regency();
     const fake = { id: 900000 + emp.birth, name: emp.name, f: P(), birth: emp.birth, art: emp.art, tong: 40, wu: 30, zhi: 70, zheng: 75, cul: 'han' };
     const mem = COURT.members().map(x => x[0]);
@@ -2410,9 +2448,14 @@ var UI = (function () {
       const holder = g ? `<button type="button" class="record-link" data-court-gen="${g.id}">${PORTRAIT.img(g, 32, 'alt=""')} ${esc(g.name)}</button>` : '<span class="note">虚位以待</span>';
       const actions = `<button type="button" class="btn sm red" data-o="set" data-k="${o.id}">${g ? '改任' : '任命'}</button>${g ? `<button type="button" class="btn sm" data-o="off" data-k="${o.id}">罢免</button>` : ''}`;
       if (phone.matches) {
-        return recordCard(title + (g ? `<span class="court-effect">${effect}</span>` : ''),
-          `<p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${COURT.officeScore(o, g)}</span>
-          <span class="chip">${stanceTag(g)}</span><span class="chip">忠诚 ${Math.round(g.loyalty)}</span>` : ''}</div>`, actions);
+        if (!g) return `<article class="ledger-entry office-vacant ledger-head">${title}
+          <span class="ledger-state">空缺</span>${actions}</article>`;
+        return `<details class="ledger-entry ledger-fold" ${openOffice === o.id ? 'open' : ''}>
+          <summary class="ledger-head" data-office="${o.id}"><span class="office-name">${title}<span class="ledger-meta">${esc(g.name)}</span></span>
+            <span class="court-effect">${effect}</span></summary>
+          <div class="ledger-detail"><p class="note office-duty">${o.desc}</p><div class="office-holder">${holder}
+            <span class="ledger-meta">看${score} ${COURT.officeScore(o, g)} · ${stanceTag(g)} · 忠诚 ${Math.round(g.loyalty)}</span></div>
+            <div class="ledger-actions">${actions}</div></div></details>`;
       }
       return `<tr><td>${title}</td><td class="note office-duty">${o.desc}</td><td><div class="office-holder">${holder}${g ? `<span class="chip office-score">看${score} ${COURT.officeScore(o, g)}</span>` : ''}</div></td>
         <td>${g ? stanceTag(g) : ''}</td><td>${g ? Math.round(g.loyalty) : ''}</td><td>${g ? effect : ''}</td>
@@ -2420,55 +2463,65 @@ var UI = (function () {
     }).join('');
     const logs = S().log.filter(e => /罢|独断|相位|叛|挂冠|即皇帝位|登第/.test(e.text)).slice(-6).reverse()
       .map(e => `<div><span class="d">${e.d}</span><span>${esc(e.text)}</span></div>`).join('');
-    const h = `<h1>朝　堂</h1><div class="scroll court-page" style="max-height:74vh">
-      <div class="court-top"><div class="court-emperor">${PORTRAIT.img(fake, 80, 'alt=""')}<h2>当今天子</h2><div class="note">${esc(emp.title)} ${esc(emp.name)} · ${S().year - emp.birth}岁<br>时议：${esc(COURT.reignNote(emp.title, emp.note))}</div></div>
-      <div class="court-stats">
-        <div class="row court-metric"><span>皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
-        <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
-        <p class="note">权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受时议、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。</p>
-        <div class="chips court-stances"><span class="chip red">主战 ${cnt('war')}</span><span class="chip">中立 ${cnt('mid')}</span><span class="chip pos">主和 ${cnt('peace')}</span>
-          <span class="chip" title="每六季增一人，最多三人">宗室可下嫁 ${C.clan.brides} 人</span></div>
-      </div></div>
+    const reign = COURT.reignNote(emp.title, emp.note);
+    const stances = `<span class="neg">主战 ${cnt('war')}</span><span>中立 ${cnt('mid')}</span><span class="pos">主和 ${cnt('peace')}</span>`;
+    const tip = '权威决定民心与群臣忠诚，胜仗与克城可增，败绩与独断则减。朝议倾向受时议、朝臣立场与战局影响：与之相背而宣战或议和，须经廷议。';
+    const portrait = PORTRAIT.img(fake, phone.matches ? 44 : 80, 'alt=""');
+    const overview = phone.matches ? `<section class="reign-summary"><div class="ledger-head">${portrait}<div class="grow"><strong>${esc(emp.title)} ${esc(emp.name)}</strong>
+      <div class="ledger-meta"><span>权威 ${Math.round(C.auth)}</span><span>朝议 ${sgn(Math.round(C.lean))}</span></div></div></div>
+      <div class="ledger-meta court-stance-line">${stances}</div>
+      <details class="ledger-fold"><summary>时议与宗室</summary><p class="note">${esc(reign)}</p><p class="note">宗室可下嫁 ${C.clan.brides} 人</p><p class="note">${tip}</p></details></section>` :
+      `<div class="court-top"><div class="court-emperor">${portrait}<h2>当今天子</h2>
+        <div class="note">${esc(emp.title)} ${esc(emp.name)} · ${S().year - emp.birth}岁<br>时议：${esc(reign)}</div></div>
+        <div class="court-stats">
+          <div class="row court-metric"><span>皇帝权威</span><div class="grow">${meter(C.auth, 100, 'gold')}</div><b>${Math.round(C.auth)}</b></div>
+          <div class="row court-metric"><span>朝议倾向</span><div class="grow"><div class="lean big"><i style="left:${(C.lean + 100) / 2}%"></i></div><div class="court-lean-caption"><span class="pos">主和</span><span class="neg">主战</span></div></div><b>${Math.round(C.lean)}</b></div>
+          <p class="note">${tip}</p><div class="chips court-stances">${stances}<span class="chip" title="每六季增一人，最多三人">宗室可下嫁 ${C.clan.brides} 人</span></div>
+        </div></div>`;
+    const h = `<h1>朝　堂</h1><div class="scroll court-page ${phone.matches ? 'ledger' : ''}" style="max-height:74vh">${overview}
       ${regent ? `<div class="row">${PORTRAIT.img(regent, 56, 'alt=""')}<div><b>${esc(regent.title)} ${esc(regent.name)}</b><div class="note">${C.regency ? '垂帘听政' : '太后在朝'}</div></div></div>` : ''}
       <div class="sec">百官</div>
-      ${phone.matches ? `<div class="record-list office-list">${offices}</div>` :
+      ${phone.matches ? `<div class="office-list">${offices}</div>` :
         `<table class="t court-table"><tr><th>官职</th><th>职掌</th><th>现任</th><th>立场</th><th>忠诚</th><th>效果</th><th></th></tr>${offices}</table>`}
       <div class="sec">近日朝堂</div><div class="loglist court-log">${logs || '<div class="note">无事</div>'}</div></div>`;
     openModal(h, { width: '980px' });
     $('modal').onclick = e => {
       const info = e.target.closest('[data-court-gen]');
-      if (info) { showGeneral(+info.dataset.courtGen, { back: showCourt }); return; }
+      if (info) { showGeneral(+info.dataset.courtGen, { back: () => showCourt(info.closest('details')?.querySelector('[data-office]')?.dataset.office) }); return; }
       const b = e.target.closest('[data-o]'); if (!b) return;
       const k = b.dataset.k, O = COURT.OFFICES.find(o => o.id === k);
       if (b.dataset.o === 'off') { const g = COURT.holder(k); COURT.vacate(k); if (g) g.loyalty -= 10; showCourt(); refreshTop(); return; }
       pickGeneral('任' + O.name + '（看' + (O.stat === 'trade' ? '智政均值' : GAME.STAT_NAME[O.stat]) + '）', g => true, g => COURT.officeScore(O, g), gid => {
         if (gid != null) { COURT.assign(k, gid); guide('office'); refreshSide(); refreshTop(); }
-        setTimeout(showCourt, 20);
+        setTimeout(() => showCourt(k), 20);
       });
     };
   }
   function showSettings() {
     const audio = AUDIO.getSettings();
-    const opt = (k, v, label) => `<button class="btn sm ${SET[k] === v ? 'red' : ''}" data-set="${k}" data-v="${v}">${label}</button>`;
-    const row = (name, inner) => `<div class="row"><span style="width:110px">${name}</span><span class="grow" style="display:flex;gap:5px;flex-wrap:wrap">${inner}</span></div>`;
+    const opt = (k, v, label) => `<button type="button" class="btn sm ${SET[k] === v ? 'red' : ''}" aria-pressed="${SET[k] === v}" data-set="${k}" data-v="${v}">${label}</button>`;
+    const row = (name, inner) => `<div class="row setting-row"><span>${name}</span><span class="grow setting-options">${inner}</span></div>`;
     const volume = (key, name) => {
       const value = Math.round(audio[key] * 100);
       return row(name, `<span class="sound-level"><input type="range" min="0" max="100" value="${value}" aria-label="${name}" data-volume="${key}"><output>${value}%</output></span>`);
     };
-    const h = `<h1>设　置</h1><div class="settings-body">
-      ${row('回合动画', [0, 1, 2].map(v => `<button class="btn sm ${animSpeed === v ? 'red' : ''}" data-anim="${v}">${['关闭', '常速', '快速'][v]}</button>`).join(''))}
-      ${row('敌军来犯', opt('defend', 'all', '逐战过问') + opt('defend', 'city', '仅守城时过问') + opt('defend', 'off', '皆交守将'))}
-      ${row('敌方回合镜头', opt('follow', true, '跟随') + opt('follow', false, '不跟随'))}
-      ${row('自动存档', opt('autosave', 'turn', '每回合') + opt('autosave', 'season', '每季') + opt('autosave', 'off', '关闭'))}
-      ${row('委政府库留底', [0,200,500,1000,2000].map(n => `<button class="btn sm ${S().delegationReserve===n?'red':''}" data-reserve="${n}">${n} 贯</button>`).join(''))}
-      ${row('界面字号', opt('ui', 0.9, '小') + opt('ui', 1, '中') + opt('ui', 1.15, '大') + opt('ui', 1.3, '特大'))}
-      ${row('地图显示', opt('showRes', !SET.showRes, SET.showRes ? '隐藏物产' : '显示物产') + opt('showSites', !SET.showSites, SET.showSites ? '隐藏奇遇点' : '显示奇遇点') + opt('showNames', !SET.showNames, SET.showNames ? '隐藏国名' : '显示国名'))}
-      ${volume('master', '总音量')}
-      ${volume('music', '音乐')}
-      ${volume('effects', '音效')}
-      ${row('声音', `<button type="button" class="btn sm" data-act="sound" data-sound-switch aria-label="静音" aria-pressed="${audio.muted}">${audio.muted ? '已静音' : '静音'}</button>`)}
-      ${row('新手引导', `<button class="btn sm" data-guide="1">${S() && S().guide && S().guide.off ? '重新显示' : '隐藏'}</button>`)}
-      ${row('终局', `<button class="btn sm" data-act="retire" ${S().settlement ? 'disabled' : ''}>禅位·盖棺定论</button>`)}
+    const switches = [['showRes', '物产'], ['showSites', '奇遇点'], ['showNames', '国名']];
+    const switchRows = switches.map(([key, label]) => phone.matches
+      ? row(label, `<button type="button" class="settings-switch" role="switch" aria-label="${label}" aria-checked="${SET[key]}" data-set="${key}" data-v="${!SET[key]}"><span>${SET[key] ? '显示' : '隐藏'}</span></button>`)
+      : opt(key, !SET[key], (SET[key] ? '隐藏' : '显示') + label));
+    const group = (title, contents) => `<section class="settings-group"><h2 class="ledger-heading">${title}</h2>${contents}</section>`;
+    const h = `<h1>设　置</h1><div class="settings-body ${phone.matches ? 'ledger' : ''}">
+      ${group('战斗与回合', row('回合动画', [0, 1, 2].map(v => `<button type="button" class="btn sm ${animSpeed === v ? 'red' : ''}" aria-pressed="${animSpeed === v}" data-anim="${v}">${['关闭', '常速', '快速'][v]}</button>`).join('')) +
+        row('敌军来犯', opt('defend', 'all', '逐战过问') + opt('defend', 'city', '仅守城时过问') + opt('defend', 'off', '皆交守将')) +
+        row('敌方回合镜头', opt('follow', true, '跟随') + opt('follow', false, '不跟随')))}
+      ${group('存档与委政', row('自动存档', opt('autosave', 'turn', '每回合') + opt('autosave', 'season', '每季') + opt('autosave', 'off', '关闭')) +
+        row('委政府库留底', [0, 200, 500, 1000, 2000].map(n => `<button type="button" class="btn sm ${S().delegationReserve === n ? 'red' : ''}" aria-pressed="${S().delegationReserve === n}" data-reserve="${n}">${n} 贯</button>`).join('')))}
+      ${group('画面与指引', row('界面字号', opt('ui', 0.9, '小') + opt('ui', 1, '中') + opt('ui', 1.15, '大') + opt('ui', 1.3, '特大')) +
+        (phone.matches ? switchRows.join('') : row('地图显示', switchRows.join(''))) +
+        row('新手引导', `<button class="btn sm" data-guide="1">${S()?.guide?.off ? '重新显示' : '隐藏'}</button>`))}
+      ${group('声音', volume('master', '总音量') + volume('music', '音乐') + volume('effects', '音效') +
+        row('静音', `<button type="button" class="btn sm" data-act="sound" data-sound-switch aria-label="静音" aria-pressed="${audio.muted}">${audio.muted ? '已静音' : '静音'}</button>`))}
+      ${group('终局', `<button class="btn" data-act="retire" ${S().settlement ? 'disabled' : ''}>禅位·盖棺定论</button>`)}
       <p class="note">设置保存在本浏览器中。</p>
       <section class="settings-about" aria-labelledby="about-title">
         <h2 id="about-title" class="sec">关于</h2>
@@ -2480,6 +2533,11 @@ var UI = (function () {
         <p class="note">试玩中，欢迎加微信反馈问题与建议。</p>
       </section></div>`;
     openModal(h, { width: '620px' });
+    const redraw = () => {
+      const top = $('modal').querySelector('.modal-content').scrollTop;
+      showSettings();
+      $('modal').querySelector('.modal-content').scrollTop = top;
+    };
     $('modal').onclick = async e => {
       if (e.target.closest('[data-copy-wechat]')) {
         const wechat = $('about-wechat');
@@ -2499,16 +2557,16 @@ var UI = (function () {
       }
       const a = e.target.closest('[data-anim]');
       const reserve = e.target.closest('[data-reserve]');
-      if (reserve) { S().delegationReserve = +reserve.dataset.reserve; showSettings(); return; }
-      if (a) { animSpeed = +a.dataset.anim; localStorage.setItem('hwhs_anim', animSpeed); showSettings(); return; }
+      if (reserve) { S().delegationReserve = +reserve.dataset.reserve; redraw(); return; }
+      if (a) { animSpeed = +a.dataset.anim; localStorage.setItem('hwhs_anim', animSpeed); redraw(); return; }
       const g = e.target.closest('[data-guide]');
-      if (g && S()) { S().guide = S().guide || {}; S().guide.off = !S().guide.off; refreshSide(); showSettings(); return; }
+      if (g && S()) { S().guide = S().guide || {}; S().guide.off = !S().guide.off; refreshSide(); redraw(); return; }
       const b = e.target.closest('[data-set]'); if (!b) return;
       const k = b.dataset.set; let v = b.dataset.v;
       v = v === 'true' ? true : v === 'false' ? false : isNaN(+v) ? v : +v;
       SET[k] = v; applySettings();
       if (k === 'showNames' && S()) RENDER.buildPolitical();
-      RENDER.markDirty(); showSettings();
+      RENDER.markDirty(); redraw();
     };
   }
   // ---------- 新手引导 ----------
@@ -2528,17 +2586,35 @@ var UI = (function () {
       .sort((a, b) => (citySort === 'tier' ? b.tier - a.tier : 0) || b.pop - a.pop);
     const controls = (items, action, selected) => items.map(([value, label]) =>
       `<button type="button" class="btn sm ${selected === value ? 'red' : ''}" data-act="${action}" data-arg="${value}" aria-pressed="${selected === value}">${label}</button>`).join('');
-    let h = `<h1>州府一览</h1><div class="btns" aria-label="按级别筛选">${controls([['all', '全境'], ...DATA.CITY_TIERS.map((tier, i) => [String(i), tier.name])], 'city-filter', cityFilter)}</div>
-      <div class="btns" aria-label="排序">${controls([['pop', '按户口排序'], ['tier', '按级别排序']], 'city-sort', citySort)}</div>
-      <div class="btns"><button class="btn sm" data-act="delegate-all" data-arg="on">诸州委政</button><button class="btn sm" data-act="delegate-all" data-arg="off">诸州收回委政</button></div>
-      <div class="scroll" style="max-height:60vh"><table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>粮</th><th>工</th><th>钱</th><th>文</th><th>守军（营）</th><th>营造</th><th>知州</th><th>委政</th></tr>`;
-    for (const c of cs) {
+    const tiers = controls([['all', '全境'], ...DATA.CITY_TIERS.map((tier, i) => [String(i), tier.name])], 'city-filter', cityFilter);
+    const orders = controls([['pop', '按户口排序'], ['tier', '按级别排序']], 'city-sort', citySort);
+    const delegation = '<button type="button" class="btn sm" data-act="delegate-all" data-arg="on">诸州委政</button><button type="button" class="btn sm" data-act="delegate-all" data-arg="off">诸州收回委政</button>';
+    const mobile = phone.matches;
+    const items = cs.map(c => {
       const y = GAME.cityYield(c), q = c.queue[0], g = GAME.gen(c.governor);
-      h += `<tr class="click" data-act="goto" data-arg="c:${c.id}" style="cursor:pointer"><td><b>${cityTitle(c)}</b></td><td>${c.pop}</td><td class="${c.loyalty < 30 ? 'neg' : ''}">${Math.round(c.loyalty)}</td><td>${sgn(y.food - y.foodNeed)}</td><td>${y.prod}</td><td>${y.gold}</td><td>${y.sci}</td><td>${c.garrison.length}</td><td>${q ? cityQueueName(c, q) : '<span class=neg>空闲</span>'}</td><td>${g ? esc(g.name) : ''}</td><td>${c.delegated ? '已委' : '未委'}</td></tr>`;
-    }
-    if (!cs.length) h += '<tr><td colspan="11" class="note">境内暂无此等城池。</td></tr>';
-    h += `</table></div>`;
-    openModal(h, { width: '900px' });
+      const queue = q ? cityQueueName(c, q) : '营造空闲';
+      const food = sgn(y.food - y.foodNeed);
+      const loyalty = Math.round(c.loyalty);
+      if (mobile) return `<details class="ledger-entry ledger-fold" data-city-row="${c.id}">
+        <summary><span class="ledger-head"><span><strong>${esc(c.name)}</strong> <small class="city-tier">${GAME.cityTier(c).name}</small></span>
+          <span class="ledger-state ${c.delegated ? 'pos' : ''}">${c.delegated ? '已委政' : '未委政'}</span></span>
+          <span class="ledger-meta"><span>${queue}</span><span>${g ? '知州 ' + esc(g.name) : '知州空缺'}</span></span>
+          <span class="ledger-meta"><span>${c.pop} 万户</span><span class="${loyalty < 30 ? 'neg' : ''}">民心 ${loyalty}</span></span></summary>
+        <div class="ledger-detail"><p class="ledger-meta"><span>余粮 ${food}</span><span>工 ${y.prod}</span><span>钱 ${y.gold}</span><span>文 ${y.sci}</span><span>守军 ${c.garrison.length} 营</span></p>
+        <button type="button" class="btn sm" data-act="goto" data-arg="c:${c.id}">查看城池</button></div></details>`;
+      return `<tr class="click" data-act="goto" data-arg="c:${c.id}" style="cursor:pointer"><td><b>${cityTitle(c)}</b></td><td>${c.pop}</td>
+        <td class="${loyalty < 30 ? 'neg' : ''}">${loyalty}</td><td>${food}</td><td>${y.prod}</td><td>${y.gold}</td><td>${y.sci}</td><td>${c.garrison.length}</td>
+        <td>${q ? queue : '<span class=neg>空闲</span>'}</td><td>${g ? esc(g.name) : ''}</td><td>${c.delegated ? '已委' : '未委'}</td></tr>`;
+    }).join('');
+    const empty = '<p class="note">境内暂无此等城池。</p>';
+    const rows = mobile ? items || empty : `<table class="t city-list"><tr><th>城</th><th>户口（万）</th><th>民心</th><th>粮</th><th>工</th><th>钱</th><th>文</th><th>守军（营）</th><th>营造</th><th>知州</th><th>委政</th></tr>
+      ${items || '<tr><td colspan="11">' + empty + '</td></tr>'}</table>`;
+    openModal(`<h1>州府一览</h1><div class="city-overview ${mobile ? 'ledger' : ''}">
+      <div class="btns ledger-tabs" aria-label="按级别筛选">${tiers}</div>
+      ${mobile ? `<details class="ledger-fold ledger-tools"><summary>排序与委政 <small>${citySort === 'tier' ? '按级别' : '按户口'}</small></summary>
+        <div class="ledger-actions" aria-label="排序">${orders}</div><div class="ledger-actions" aria-label="批量委政">${delegation}</div></details>` :
+        `<div class="btns" aria-label="排序">${orders}</div><div class="btns">${delegation}</div>`}
+      <div class="scroll" style="max-height:60vh">${rows}</div></div>`, { width: '900px' });
   }
   function showArmies(sort) {
     const rows = S().armies.filter(a => a.f === P()).map(a => ({ a, upkeep: GAME.armyUpkeep(a) }));
@@ -2547,15 +2623,26 @@ var UI = (function () {
       `<button class="btn sm ${sort === key ? 'red' : ''}" type="button" data-act="armies" data-arg="${key}" aria-pressed="${sort === key}">${label}</button>`).join('');
     const ready = rows.filter(({ a }) => a.path?.length && a.mp > 0).length;
     const march = ready ? `<button type="button" class="btn sm red" data-act="contall-panel">${ready} 军待续 · 全军继续</button>` : '';
-    let h = `<h1>诸军</h1><div class="btns">${sortButtons}${march}</div><div class="scroll" style="max-height:65vh"><table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th><th>每季军饷</th></tr>`;
-    for (const { a, upkeep } of rows) {
+    const mobile = phone.matches;
+    const items = rows.map(({ a, upkeep }) => {
       const c = GAME.cityAt(a.tile), own = GAME.tileOwner(a.tile);
       const goal = a.path?.at(-1);
       const route = goal == null ? '' : `${a.mp > 0 ? '待续' : '已定路线'} · ${esc(GAME.cityAt(goal)?.name || GEO.TERRAIN[GEO.terrain[goal]]?.name || '野外')}`;
-      h += `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${esc(GAME.armyName(a))}</b></td><td>${a.gen != null ? GAME.gen(a.gen).name : '—'}</td><td>${a.units.length}</td><td>${fmt(GAME.sumStr(a.units))}</td><td>${Math.round(a.morale)}</td><td>${c ? c.name : (own ? facName(own) + '境内' : '荒野')}</td><td>${route || (a.sentry ? '驻守' : a.mp > 0 ? '<span class=pos>待命</span>' : '已动')}</td><td class="army-upkeep">${upkeepText(upkeep)}</td></tr>`;
-    }
-    h += `</table></div>`;
-    openModal(h, { width: '760px' });
+      const name = esc(GAME.armyName(a)), leader = esc(GAME.gen(a.gen)?.name || '主将空缺');
+      const troops = fmt(GAME.sumStr(a.units)), morale = Math.round(a.morale);
+      const where = esc(c?.name || (own ? facName(own) + '境内' : '荒野'));
+      const state = route || (a.sentry ? '驻守' : a.mp > 0 ? '<span class="pos">待命</span>' : '已动');
+      if (mobile) return `<details class="ledger-entry ledger-fold" data-army-row="${a.id}"><summary>
+        <span class="ledger-head"><strong>${name}</strong><span class="ledger-state">${where}</span></span>
+        <span class="ledger-meta"><span>${state}</span><span>${troops} 人</span><span>士气 ${morale}</span></span></summary>
+        <div class="ledger-detail"><p class="ledger-meta"><span>${leader}</span><span>${a.units.length} 营</span><span>每季军饷 ${upkeepText(upkeep)}</span></p>
+        <button type="button" class="btn sm" data-act="goto" data-arg="a:${a.id}">查看军团</button></div></details>`;
+      return `<tr data-act="goto" data-arg="a:${a.id}" style="cursor:pointer"><td><b>${name}</b></td><td>${a.gen != null ? leader : '—'}</td>
+        <td>${a.units.length}</td><td>${troops}</td><td>${morale}</td><td>${where}</td><td>${state}</td><td class="army-upkeep">${upkeepText(upkeep)}</td></tr>`;
+    }).join('');
+    const list = mobile ? items || '<p class="note">暂无军团。</p>' : `<table class="t"><tr><th>军</th><th>主将</th><th>营</th><th>兵力</th><th>士气</th><th>位置</th><th>状态</th><th>每季军饷</th></tr>${items}</table>`;
+    openModal(`<h1>诸军</h1><div class="army-overview ${mobile ? 'ledger' : ''}" data-sort="${sort === 'gold' || sort === 'food' ? sort : ''}">
+      <div class="btns ledger-tabs">${sortButtons}${march}</div><div class="scroll" style="max-height:65vh">${list}</div></div>`, { width: '760px' });
   }
   function logRow(e) { return `<div class="${e.type}" ${e.tile != null ? `data-act="gototile" data-arg="${e.tile}" style="cursor:pointer"` : ''}><span class="d">${e.d}</span>${esc(e.text)}${e.tile != null ? ' ◎' : ''}</div>`; }
   // 史册：「大事」为逐条记事；「本纪」由 EVENTS.annals() 提供（若有）
@@ -3227,7 +3314,24 @@ var UI = (function () {
       RENDER.flash(r.tile);
       return;
     }
-    openModal(`<h1>本${TU()}战报</h1><div class="scroll" style="max-height:65vh"><table class="t"><tr><th>攻方</th><th>兵力</th><th></th><th>守方</th><th>兵力</th><th>结果</th></tr>${list.map(battleRow).join('')}</table></div>`, { width: '900px', onClose: () => setTimeout(processPending, 10) });
+    const rows = list.map(r => {
+      const loss = side => fmt(Math.max(0, r.before[side] - r.after[side]));
+      const result = esc(myResult(r)), win = r.att === P() ? r.win : !r.win;
+      const deputy = id => GAME.gen(id) ? ' · 副将 ' + esc(GAME.gen(id).name) : '';
+      const wounded = battleWounds(r);
+      const notes = [r.captured, r.deputyCaptured && r.deputyCaptured + '被俘', wounded && '负伤：' + wounded, battleLoot(r)].filter(Boolean);
+      return `<details class="ledger-entry ledger-fold"><summary>
+        <span class="ledger-head"><strong class="${r.draw ? '' : win ? 'pos' : 'neg'}">${result}</strong><span class="ledger-state">${esc(r.city || '野战')}</span></span>
+        <span class="report-match"><span>${esc(r.attName)}</span><span>攻</span><span>${esc(r.defName)}</span></span>
+        <span class="ledger-meta"><span>攻折损 ${loss('a')} 人</span><span>守折损 ${loss('d')} 人</span></span></summary>
+        <div class="ledger-detail"><p class="note">攻方兵力 ${fmt(r.before.a)} → ${fmt(r.after.a)}${deputy(r.attDeputy)}</p>
+        <p class="note">守方兵力 ${fmt(r.before.d)} → ${fmt(r.after.d)}${deputy(r.defDeputy)}</p>
+        ${notes.map(note => '<p class="note">' + esc(note) + '</p>').join('')}</div></details>`;
+    }).join('');
+    openModal(`<h1>本${TU()}战报</h1><div class="scroll report-index" style="max-height:65vh">
+      <div class="ledger ledger-mobile">${rows}</div>
+      <div class="ledger-desktop"><table class="t"><tr><th>攻方</th><th>兵力</th><th></th><th>守方</th><th>兵力</th><th>结果</th></tr>${list.map(battleRow).join('')}</table></div></div>`,
+      { width: '900px', onClose: () => setTimeout(processPending, 10) });
   }
 
   // ---------- 回合 ----------
